@@ -47,7 +47,7 @@ impl<S: StateStore> KernelEngine<S> {
         updated.version += 1;
         self.store.put_state(updated.clone())?;
         let record = VectorRecordV1::new(
-            make_record_id("certify", vector_id),
+            make_record_id("certify", vector_id, format!("version={};auth={}", updated.version, updated.certification.auth_ratio)),
             vector_id.to_string(),
             Some(state),
             updated.clone(),
@@ -83,7 +83,7 @@ impl<S: StateStore> KernelEngine<S> {
         state.certification = certify_state(&state, true, true);
         self.store.put_state(state.clone())?;
         let record = VectorRecordV1::new(
-            make_record_id("origin", &state.vector_id),
+            make_record_id("origin", &state.vector_id, format!("difficulty={};version={}", difficulty, state.version)),
             state.vector_id.clone(),
             None,
             state.clone(),
@@ -132,13 +132,14 @@ impl<S: StateStore> KernelEngine<S> {
         state.updated_at_ms = now_ms();
         state.version += 1;
         self.store.put_state(state.clone())?;
+        let record_params = serde_json::json!({ "basis_points": basis_points, "remaining": state.components.clone() });
         let record = VectorRecordV1::new(
-            make_record_id("drain", vector_id),
+            make_record_id("drain", vector_id, record_params.to_string()),
             vector_id.to_string(),
             None,
             state.clone(),
             OperationKind::Drain,
-            serde_json::json!({ "basis_points": basis_points, "drained": drained }),
+            record_params,
         );
         if accept_record(&record, &self.consensus) {
             self.store.put_record(record)?;
@@ -158,7 +159,7 @@ impl<S: StateStore> KernelEngine<S> {
         after.certification = certify_state(&after, true, true);
         self.store.put_state(after.clone())?;
         let record = VectorRecordV1::new(
-            make_record_id("project", vector_id),
+            make_record_id("project", vector_id, serde_json::to_string(&serde_json::json!({ "projected_components": projected_components })).unwrap_or_default()),
             vector_id.to_string(),
             Some(before),
             after.clone(),
@@ -178,16 +179,20 @@ impl<S: StateStore> KernelEngine<S> {
     ) -> Result<VectorStateV1, KernelXError> {
         let state = self.store.get_state(vector_id)?.ok_or(KernelXError::VectorNotFound)?;
         let before = state.clone();
+        let outcome_tag = outcome.outcome_tag.clone();
+        let gains = outcome.gains.clone();
+        let losses = outcome.losses.clone();
         let mut after = reconstruct_vector(state, outcome)?;
         after.certification = certify_state(&after, true, true);
         self.store.put_state(after.clone())?;
+        let record_params = serde_json::json!({ "outcome_tag": outcome_tag, "gains": gains, "losses": losses });
         let record = VectorRecordV1::new(
-            make_record_id("reconstruct", vector_id),
+            make_record_id("reconstruct", vector_id, record_params.to_string()),
             vector_id.to_string(),
             Some(before),
             after.clone(),
             OperationKind::Reconstruct,
-            serde_json::json!({}),
+            record_params,
         );
         if accept_record(&record, &self.consensus) {
             self.store.put_record(record)?;

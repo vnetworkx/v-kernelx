@@ -1,0 +1,14 @@
+C:\Users\A.M TECH\Desktop\HOME\vNetwork\v-kernelx\target\debug\deps\serde-fb345f472fd7a827.d: C:\Users\A.M\ TECH\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs C:\Users\A.M\ TECH\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs C:\Users\A.M\ TECH\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs C:\Users\A.M\ TECH\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs C:\Users\A.M\ TECH\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs C:\Users\A.M\ TECH\Desktop\HOME\vNetwork\v-kernelx\target\debug\build\serde-9902bda3ef1d28e8\out/private.rs
+
+C:\Users\A.M TECH\Desktop\HOME\vNetwork\v-kernelx\target\debug\deps\libserde-fb345f472fd7a827.rlib: C:\Users\A.M\ TECH\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs C:\Users\A.M\ TECH\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs C:\Users\A.M\ TECH\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs C:\Users\A.M\ TECH\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs C:\Users\A.M\ TECH\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs C:\Users\A.M\ TECH\Desktop\HOME\vNetwork\v-kernelx\target\debug\build\serde-9902bda3ef1d28e8\out/private.rs
+
+C:\Users\A.M TECH\Desktop\HOME\vNetwork\v-kernelx\target\debug\deps\libserde-fb345f472fd7a827.rmeta: C:\Users\A.M\ TECH\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs C:\Users\A.M\ TECH\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs C:\Users\A.M\ TECH\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs C:\Users\A.M\ TECH\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs C:\Users\A.M\ TECH\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs C:\Users\A.M\ TECH\Desktop\HOME\vNetwork\v-kernelx\target\debug\build\serde-9902bda3ef1d28e8\out/private.rs
+
+C:\Users\A.M\ TECH\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs:
+C:\Users\A.M\ TECH\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs:
+C:\Users\A.M\ TECH\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs:
+C:\Users\A.M\ TECH\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs:
+C:\Users\A.M\ TECH\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs:
+C:\Users\A.M\ TECH\Desktop\HOME\vNetwork\v-kernelx\target\debug\build\serde-9902bda3ef1d28e8\out/private.rs:
+
+# env-dep:OUT_DIR=C:\\Users\\A.M TECH\\Desktop\\HOME\\vNetwork\\v-kernelx\\target\\debug\\build\\serde-9902bda3ef1d28e8\\out

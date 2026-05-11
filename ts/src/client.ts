@@ -117,6 +117,7 @@ export class VectorKernelX {
   drain(vectorId: string, basisPoints: number): VectorStateV1 {
     const state = this.states.get(vectorId);
     if (!state) throw new Error("vector not found");
+    if (basisPoints > 10_000) throw new Error("drain too large");
     const discount = state.certification.authRatio >= state.certification.threshold ? Math.floor(basisPoints / 2) : basisPoints;
     state.components = state.components.map((c) => c - Math.floor((c * discount) / 10_000));
     state.certification = this.certifyState(state);
@@ -158,7 +159,7 @@ export class VectorKernelX {
       if (value < 0) throw new Error("settlement rejected");
       return value;
     });
-    state.components.push(...settled);
+    state.components = state.components.map((c, i) => c + settled[i]);
     state.projection.settledComponents = settled;
     state.projection.settlementAtMs = now();
     state.projection.outcomeTag = outcomeTag;
@@ -234,7 +235,7 @@ export class VectorKernelX {
   }
 
   private record(before: VectorStateV1 | null, after: VectorStateV1, operation: string, parameters: unknown) {
-    const recordId = hash(`${after.vectorId}:${operation}:${now()}:${this.records.size}:${Math.random()}`);
+    const recordId = hash(JSON.stringify([after.vectorId, operation, before, after, parameters]));
     const payload = JSON.stringify([recordId, after.vectorId, before, after, operation, parameters, after.certification, now()]);
     const proof = hash(payload);
     const record: VectorRecordV1 = {

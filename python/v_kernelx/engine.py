@@ -112,7 +112,11 @@ class VectorKernel:
             if value < 0:
                 raise ValueError("settlement rejected")
             settled.append(value)
-        state.components.extend(settled)
+        for idx, value in enumerate(settled):
+            if idx < len(state.components):
+                state.components[idx] += value
+            else:
+                state.components.append(value)
         state.projection.settled_components = settled
         state.projection.settlement_at_ms = self._now()
         state.projection.outcome_tag = outcome_tag
@@ -175,7 +179,9 @@ class VectorKernel:
 
     def _record(self, before, after: VectorStateV1, operation: str, parameters: dict):
         before_obj = before if isinstance(before, VectorStateV1) else before
-        record_id = hashlib.sha256(f"{after.vector_id}:{operation}:{self._now()}:{len(self.records)}".encode()).hexdigest()
+        before_payload = None if before is None else json.dumps(asdict(before), sort_keys=True, default=str)
+        after_payload = json.dumps(asdict(after), sort_keys=True, default=str)
+        record_id = hashlib.sha256(json.dumps([after.vector_id, operation, before_payload, after_payload, parameters], sort_keys=True, default=str).encode()).hexdigest()
         record = VectorRecordV1.new(record_id, after.vector_id, before_obj, after, operation, parameters)
         self.records[record_id] = record
 

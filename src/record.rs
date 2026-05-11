@@ -74,10 +74,11 @@ impl VectorRecordV1 {
     }
 }
 
-pub fn make_record_id(prefix: &str, vector_id: &str) -> String {
+pub fn make_record_id(prefix: &str, vector_id: &str, discriminator: impl AsRef<str>) -> String {
     let mut hasher = Sha256::new();
     hasher.update(prefix.as_bytes());
     hasher.update(vector_id.as_bytes());
-    hasher.update(now_ms().to_le_bytes());
+    hasher.update(b":");
+    hasher.update(discriminator.as_ref().as_bytes());
     hex::encode(hasher.finalize())
 }

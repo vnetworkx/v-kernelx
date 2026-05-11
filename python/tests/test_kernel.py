@@ -25,6 +25,7 @@ class KernelSmokeTests(unittest.TestCase):
         self.assertGreaterEqual(len(records), 5)
         self.assertTrue(any(v.vector_id == "v-a" for v in vectors))
         self.assertTrue(any(v.vector_id == "v-b" for v in vectors))
+        self.assertTrue(all(len(v.components) == 2 for v in vectors))
 
     def test_zero_vector_normalization_guard(self):
         state = VectorStateV1.new("zero", "pk", "space-1", [0, 0], VectorType.STANDARD)

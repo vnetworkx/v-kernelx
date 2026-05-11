@@ -26,11 +26,12 @@ pub fn reconstruct_vector(
     let mut restored = state.components.clone();
     let mut settled = Vec::with_capacity(projection.projected_components.len());
 
-    for ((principal, gain), loss) in projection
+    for (index, ((principal, gain), loss)) in projection
         .projected_components
         .iter()
         .zip(outcome.gains.iter())
         .zip(outcome.losses.iter())
+        .enumerate()
     {
         let after_gain = principal.saturating_add(*gain);
         if *loss > after_gain {
@@ -40,7 +41,11 @@ pub fn reconstruct_vector(
         }
         let net = after_gain - *loss;
         settled.push(net);
-        restored.push(net);
+        if let Some(slot) = restored.get_mut(index) {
+            *slot = slot.saturating_add(net);
+        } else {
+            restored.push(net);
+        }
     }
 
     state.components = restored;

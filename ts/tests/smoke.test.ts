@@ -26,6 +26,7 @@ test("end-to-end vector flow", () => {
   assert.ok(records.length >= 5);
   assert.ok(vectors.some((v) => v.vectorId === "v-a"));
   assert.ok(vectors.some((v) => v.vectorId === "v-b"));
+  assert.ok(vectors.every((v) => v.components.length === 2));
 });
 
 test("zero vector normalization is rejected", () => {

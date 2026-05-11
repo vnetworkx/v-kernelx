@@ -1,164 +1,155 @@
 # v-kernelx
 
-`v-kernelx` is a multi-runtime vector ledger prototype. The repo keeps one canonical state model and reuses it across:
+`v-kernelx` is the Rust-first kernel for the Vector Network prototype. The repository keeps one canonical state model and mirrors it in TypeScript and Python so the same protocol flow can be exercised in three runtimes.
 
-- Rust core engine and rules
-- TypeScript SDK/runtime
-- Python simulation and developer tooling
+Canonical schema:
 
-The shared canonical schema is `v.kernelx/VectorStateV1`.
+- `v.kernelx/VectorStateV1`
+- `v.kernelx/VectorRecordV1`
 
-## What the system does
+## What the kernel does
 
-A wallet owns a vector, and every operation updates that vector through a state machine. The core lifecycle is:
+The kernel is the source of truth for the protocol lifecycle:
 
-1. **Origin creation**: a new vector is created only after proof-style work succeeds.
-2. **Certification**: the vector is checked against the network’s auth rules.
-3. **Transfer**: vector components move from one wallet to another.
-4. **Drain**: a protocol fee is removed before or during movement.
-5. **Projection**: part of the vector is locked into escrow/risk logic.
-6. **Reconstruction**: projected value settles back into the wallet with gains or losses.
-7. **Recordkeeping**: every state change creates an immutable vector record.
-8. **Querying**: the current state and history can be read back through the SDKs and interpreter.
+1. **Create** a new origin vector after proof-of-work style origin validation.
+2. **Certify** the state against the network’s validity rules.
+3. **Transfer** value between wallets or spaces.
+4. **Drain** a protocol fee or movement cost.
+5. **Project** part of a vector into escrow or a contract-like environment.
+6. **Reconstruct** the settled value back into the wallet.
+7. **Record** every successful state mutation as an immutable ledger entry.
+8. **Query** live state and history without mutating the ledger.
 
-Zero vectors are guarded during normalization, so normalization is never attempted on an all-zero state.
+## Canonical state format
 
-## Canonical state model
+The repository uses one shared runtime model across Rust, TypeScript, and Python.
 
-Every runtime uses the same fields conceptually:
+### Vector state
 
-- `schema`
-- `vector_id`
-- `owner_pubkey`
-- `space_id`
-- `vector_type`
-- `status`
-- `components`
-- `type_metadata`
-- `certification`
-- `projection`
-- `origin`
-- `version`
-- `created_at_ms`
-- `updated_at_ms`
+```text
+V = (schema, vector_id, owner_pubkey, space_id, vector_type, status,
+     components, type_metadata, certification, projection, origin,
+     version, created_at_ms, updated_at_ms)
+```
 
-The record format is also shared:
+### Record state
 
-`R = (before, after, operation, parameters, certification, timestamp_ms, proof)`
+```text
+R = (schema, record_id, vector_id, before, after, operation,
+     parameters, certification, timestamp_ms, proof)
+```
 
-## Runtime roles
+### Blueprint mapping
 
-### Rust
-The Rust crate is the closest thing to the reference implementation. It defines the state structs, validation helpers, record hashes, consensus filter, execution engine, interpreter, and SDK wrapper.
+The blueprint’s `tau` operational tag is represented in the implementation by `vector_type`, and additional protocol metadata lives in `type_metadata`.
 
-### TypeScript
-The TypeScript layer mirrors the same state model for client-side usage and scripted demos.
+## Mathematical rules
 
-### Python
-The Python package is a simulation harness and reference workflow runner. It is useful for fast iteration and smoke testing.
+- `magnitude` is the sum of all components.
+- `direction_shares` returns the normalized component ratios.
+- Zero vectors are safe to store, but normalization is rejected.
+- Drain uses a basis-point reduction.
+- Projection subtracts the projected slice and stores it in escrow metadata.
+- Reconstruction restores the settled result back into the remaining state.
 
 ## How the flow works
 
-### 1. Origin creation
-The origin engine verifies a nonce against a seed and difficulty. In the current implementation, the proof is a SHA-256 hash of `seed:nonce`, and the runtime searches for a nonce when a test or demo needs a guaranteed valid origin.
+### Create
+The origin engine checks a nonce against a seed and difficulty. If the proof hash satisfies the difficulty, the vector enters the network as an origin vector.
 
-### 2. Certification
-Certification computes an auth ratio from the state and marks the vector certified when the ratio meets or exceeds the threshold. In the current code, a valid owner public key is the primary signal and the threshold defaults to `700`.
+### Certify
+Certification computes an auth ratio and marks the state certified when the threshold is met. The current prototype uses a fixed-point ratio in the `0..=1000` range so it can be shared cleanly between Rust, Python, and TypeScript.
 
-### 3. Transfer
-Transfer requires matching dimensions. The sender loses exactly the transferred components and the receiver gains the same components.
+### Transfer
+Transfer requires matching dimensions. The sender loses the requested amount and the receiver gains the same amount.
 
-### 4. Drain
-Drain applies a basis-point fee. Certified vectors can receive a reduced effective drain rate.
+### Drain
+Drain applies a basis-point fee. Certified vectors receive a reduced effective drain rate in the current prototype.
 
-### 5. Projection
-Projection moves a chosen slice into escrow, stores the escrow metadata, and changes the vector type/status to projected.
+### Projection
+Projection removes the projected slice from the live balance and stores the escrow state in `projection`.
 
-### 6. Reconstruction
-Reconstruction validates the projected slice, applies gains and losses, appends the settled value back into the vector, and marks the state as settled.
+### Reconstruction
+Reconstruction settles the projected slice and adds the settled result back into the remaining vector state without changing the component count.
 
-### 7. Records
-Every mutation creates a record with before/after snapshots and a proof hash so the history can be audited.
+### Records
+Every successful mutation writes a record with before/after snapshots and a proof hash.
 
-### 8. Query and script execution
-The kernel exposes direct query methods and a small opcode interpreter so scripts can drive the same operations.
+### Queries and scripts
+The kernel exposes direct query methods plus a compact opcode interpreter so scripts can run the same state transitions.
+
+## Repository layout
+
+- `src/` — Rust kernel, validation, records, storage, SDK, interpreter
+- `ts/src/` — TypeScript mirror of the canonical model and smoke runner
+- `python/v_kernelx/` — Python simulation harness and smoke runner
+- `tests/` — Rust smoke tests
+- `ts/tests/` — TypeScript smoke tests
+- `python/tests/` — Python smoke tests
 
 ## Formal test suite plan
 
-The test strategy is split into five layers so the same behavior is checked at the state, operation, record, storage, and runtime levels.
+The project is tested in layers so the same protocol rules are checked from the model outward.
 
-### A. Canonical model tests
-These verify the immutable shape of `VectorStateV1` and `VectorRecordV1`.
+### 1. Canonical model tests
+These verify the shared state shape and math.
 
-Coverage:
-- schema constant is correct
-- magnitude is the sum of components
-- direction shares are computed correctly
-- zero vectors reject normalization
-- default certification fields are initialized correctly
+Checks:
+- schema constant matches `v.kernelx/VectorStateV1`
+- magnitude is a component sum
+- direction shares are correct for non-zero vectors
+- normalization rejects the zero vector
+- record schema is stable
 
-### B. Validation tests
-These verify the rule engine rejects invalid inputs before state changes happen.
+### 2. Validation tests
+These verify invalid inputs fail before mutation.
 
-Coverage:
-- empty vectors are rejected
+Checks:
 - missing IDs are rejected
+- empty component vectors are rejected
 - dimension mismatch is rejected
-- insufficient balance is rejected
-- zero normalization is rejected
+- over-transfer is rejected
+- over-projection is rejected
+- oversized drain values are rejected
 - invalid origin proof is rejected
 
-### C. Operation tests
-These verify each state transition works and preserves accounting integrity.
+### 3. Operation tests
+These verify each state transition preserves accounting.
 
-Coverage:
-- origin creation
-- transfer out/in symmetry
-- drain calculations
-- projection escrow setup
-- reconstruction settlement
-- certification refresh after each mutation
+Checks:
+- origin creation produces a certified origin state
+- transfer subtracts and adds matching amounts
+- drain reduces balance by the expected basis-point amount
+- projection stores escrow metadata and reduces the live balance
+- reconstruction restores settled value without changing vector length
 
-Assertions:
-- no component is created or destroyed except by the explicit operation
-- transfer is value-preserving across sender and receiver
-- drain reduces total magnitude by the expected basis-point amount
-- reconstruction appends the settled value and stores settlement metadata
+### 4. Record and storage tests
+These verify history and persistence behavior.
 
-### D. Record and storage tests
-These verify all mutations generate immutable records and can be queried back.
+Checks:
+- every successful mutation appends a record
+- record IDs are stable for the same logical payload
+- proof hashes are content-derived
+- query APIs can read current state and history
+- in-memory storage round-trips states and records
 
-Coverage:
-- record count increases after operations
-- record proof hashes are stable for a given snapshot
-- before/after snapshots serialize correctly
-- query APIs return the current state and history
-- in-memory store round-trips states and records
+### 5. Interpreter and SDK tests
+These verify script-driven execution matches direct method calls.
 
-### E. Interpreter and SDK tests
-These verify the script interface and public API behave the same as the direct engine calls.
-
-Coverage:
+Checks:
 - opcode parsing
-- script dispatch
-- query opcode output
-- SDK wrapper methods
-- simulation harness flow
+- origin, transfer, drain, project, reconstruct, certify, query dispatch
+- SDK wrappers call the same engine logic
+- smoke flow is reproducible across runtimes
 
-### F. Cross-runtime parity tests
-These verify Rust, TypeScript, and Python are doing the same logical work.
+### 6. Cross-runtime parity tests
+These verify Rust, TypeScript, and Python stay aligned.
 
-Coverage:
-- canonical schema name matches in all runtimes
-- same field names and enum values are used
-- origin proof search behaves consistently
-- end-to-end smoke flow produces the same operation sequence
-
-## Test files in this repo
-
-- `tests/smoke.rs` — Rust smoke test
-- `python/tests/test_kernel.py` — Python smoke test
-- `ts/tests/smoke.test.ts` — TypeScript smoke test
+Checks:
+- shared schema names match
+- same canonical field names are present
+- zero-vector guards behave the same way
+- the smoke flow uses the same operation sequence
 
 ## How to run the tests
 
@@ -183,17 +174,9 @@ From `ts/` on Node 22.16+:
 npm test
 ```
 
-The TypeScript test script uses Node's native TypeScript stripping mode to run the `.ts` test file directly.
+## Notes on the current prototype
 
-## File map
-
-- `src/` — Rust core modules
-- `ts/src/` — TypeScript SDK/runtime
-- `python/v_kernelx/` — Python simulation package
-- `tests/` — Rust smoke tests
-- `python/tests/` — Python smoke tests
-- `ts/tests/` — TypeScript smoke tests
-
-## Notes
-
-The repo currently uses in-memory storage. If you later add disk persistence or network consensus, the same canonical state format can stay unchanged and the test matrix can be extended with persistence and multi-node integration cases.
+- Storage is in-memory.
+- Consensus is a simple acceptance filter, not a full distributed protocol.
+- Timestamps are local execution timestamps.
+- The canonical state model is stable, but the higher layers are still prototype-grade and meant for simulation, SDK work, and kernel validation.
