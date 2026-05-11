@@ -15,6 +15,13 @@ pub fn verify_origin(seed: &str, nonce: u64, difficulty: u32) -> bool {
     leading_zero_nibbles >= difficulty
 }
 
+pub fn find_valid_nonce(seed: &str, difficulty: u32, max_attempts: u64) -> Option<u64> {
+    if difficulty == 0 {
+        return Some(0);
+    }
+    (0..max_attempts).find(|nonce| verify_origin(seed, *nonce, difficulty))
+}
+
 pub fn create_origin_vector(
     vector_id: impl Into<String>,
     owner_pubkey: impl Into<String>,
@@ -30,6 +37,7 @@ pub fn create_origin_vector(
     }
     let timestamp = now_ms();
     let vector_id = vector_id.into();
+    let proof_hash = origin_proof_hash(&seed, nonce);
     let mut state = VectorStateV1::new(
         vector_id.clone(),
         owner_pubkey,
@@ -42,7 +50,7 @@ pub fn create_origin_vector(
         seed,
         nonce,
         difficulty,
-        proof_hash: origin_proof_hash(&seed, nonce),
+        proof_hash,
     });
     state.certification.certified = true;
     state.certification.auth_ratio = 1000;

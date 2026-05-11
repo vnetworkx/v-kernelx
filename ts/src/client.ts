@@ -1,18 +1,28 @@
-import {
+import type {
   CertificationState,
   OriginState,
   ProjectionState,
-  STATE_SCHEMA_V1,
   VectorRecordV1,
   VectorStateV1,
   VectorStatus,
   VectorType,
   SimulationReport,
-} from "./types";
-import { createHash, randomUUID } from "node:crypto";
+} from "./types.ts";
+import { STATE_SCHEMA_V1 } from "./types.ts";
+import { createHash } from "node:crypto";
 
 const now = () => Date.now();
 const hash = (input: string): string => createHash("sha256").update(input).digest("hex");
+
+export function findValidNonce(seed: string, difficulty: number, maxAttempts = 1_000_000): number | null {
+  if (difficulty <= 0) return 0;
+  for (let nonce = 0; nonce < maxAttempts; nonce += 1) {
+    const proof = hash(`${seed}:${nonce}`);
+    const leadingZeros = proof.match(/^0*/)?.[0].length ?? 0;
+    if (leadingZeros >= difficulty) return nonce;
+  }
+  return null;
+}
 
 export class VectorKernelX {
   private states = new Map<string, VectorStateV1>();
@@ -71,8 +81,12 @@ export class VectorKernelX {
   }
 
   originCreate(vectorId: string, ownerPubkey: string, spaceId: string, components: number[], seed: string, nonce: number, difficulty: number): VectorStateV1 {
-    const proof = hash(`${seed}:${nonce}:${randomUUID()}`);
+    const proof = hash(`${seed}:${nonce}`);
     const state = this.newVector(vectorId, ownerPubkey, spaceId, components, "Origin");
+    const leadingZeros = proof.match(/^0*/)?.[0].length ?? 0;
+    if (leadingZeros < difficulty) {
+      throw new Error("origin proof rejected");
+    }
     state.origin = { seed, nonce, difficulty, proofHash: proof };
     state.certification = this.certifyState(state);
     this.states.set(vectorId, state);
@@ -238,13 +252,3 @@ export class VectorKernelX {
     this.records.set(recordId, record);
   }
 }
-
-export const runSimulation = (): SimulationReport => {
-  const kernel = new VectorKernelX();
-  kernel.originCreate("v-a", "pk-a", "space-1", [1000, 2000], "seed-a", 1, 1);
-  kernel.originCreate("v-b", "pk-b", "space-1", [50, 75], "seed-b", 2, 1);
-  kernel.transfer("v-a", "v-b", [250, 250]);
-  kernel.drain("v-a", 100);
-  kernel.project("v-b", [10, 10], "escrow-1");
-  return { vectors: kernel.queryVectors(), records: kernel.queryRecords() };
-};

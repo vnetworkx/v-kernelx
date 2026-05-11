@@ -16,6 +16,17 @@ from .model import (
     VectorType,
 )
 
+
+def find_valid_nonce(seed: str, difficulty: int, max_attempts: int = 1_000_000) -> Optional[int]:
+    if difficulty <= 0:
+        return 0
+    for nonce in range(max_attempts):
+        proof = hashlib.sha256(f"{seed}:{nonce}".encode()).hexdigest()
+        if len(proof) - len(proof.lstrip("0")) >= difficulty:
+            return nonce
+    return None
+
+
 class VectorKernel:
     def __init__(self):
         self.states: Dict[str, VectorStateV1] = {}
