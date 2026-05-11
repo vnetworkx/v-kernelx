@@ -1,0 +1,51 @@
+use crate::error::KernelXError;
+use crate::state::{now_ms, OriginState, VectorStateV1, VectorType};
+use sha2::{Digest, Sha256};
+
+pub fn origin_proof_hash(seed: &str, nonce: u64) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(seed.as_bytes());
+    hasher.update(nonce.to_le_bytes());
+    hex::encode(hasher.finalize())
+}
+
+pub fn verify_origin(seed: &str, nonce: u64, difficulty: u32) -> bool {
+    let proof = origin_proof_hash(seed, nonce);
+    let leading_zero_nibbles = proof.chars().take_while(|c| *c == '0').count() as u32;
+    leading_zero_nibbles >= difficulty
+}
+
+pub fn create_origin_vector(
+    vector_id: impl Into<String>,
+    owner_pubkey: impl Into<String>,
+    space_id: impl Into<String>,
+    components: Vec<u128>,
+    seed: impl Into<String>,
+    nonce: u64,
+    difficulty: u32,
+) -> Result<VectorStateV1, KernelXError> {
+    let seed = seed.into();
+    if !verify_origin(&seed, nonce, difficulty) {
+        return Err(KernelXError::OriginRejected);
+    }
+    let timestamp = now_ms();
+    let vector_id = vector_id.into();
+    let mut state = VectorStateV1::new(
+        vector_id.clone(),
+        owner_pubkey,
+        space_id,
+        components,
+        VectorType::Origin,
+        timestamp,
+    );
+    state.origin = Some(OriginState {
+        seed,
+        nonce,
+        difficulty,
+        proof_hash: origin_proof_hash(&seed, nonce),
+    });
+    state.certification.certified = true;
+    state.certification.auth_ratio = 1000;
+    state.certification.reason = None;
+    Ok(state)
+}
