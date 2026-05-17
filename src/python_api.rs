@@ -93,14 +93,11 @@ impl PyKernelEngine {
         gains: Vec<u128>,
         losses: Vec<u128>,
     ) -> PyResult<String> {
-        let outcome_value = serde_json::json!({
-            "outcome_tag": outcome_tag,
-            "gains": gains,
-            "losses": losses,
-        });
-
-        let outcome: SettlementOutcome = serde_json::from_value(outcome_value)
-            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        let outcome = SettlementOutcome {
+            outcome_tag,
+            gains,
+            losses,
+        };
 
         let state = self
             .inner
