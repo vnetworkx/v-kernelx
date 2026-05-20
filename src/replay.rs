@@ -80,11 +80,11 @@ fn order_entity_events(events: &[&VectorEvent]) -> Result<Vec<VectorEvent>, Stri
 
     let mut by_hash: HashMap<String, &VectorEvent> = HashMap::new();
     for event in events {
-        if by_hash
-            .insert(event.event_hash.clone(), *event)
-            .is_some()
-        {
-            return Err(format!("duplicate event_hash detected: {}", event.event_hash));
+        if by_hash.insert(event.event_hash.clone(), *event).is_some() {
+            return Err(format!(
+                "duplicate event_hash detected: {}",
+                event.event_hash
+            ));
         }
     }
 
@@ -131,7 +131,7 @@ fn order_entity_events(events: &[&VectorEvent]) -> Result<Vec<VectorEvent>, Stri
         .map(|(hash, _)| hash.clone())
         .collect();
 
-    ready.sort_by(|a, b| sort_key(by_hash.get(a).unwrap()).cmp(&sort_key(by_hash.get(b).unwrap())));
+    ready.sort_by_key(|a| sort_key(by_hash.get(a).unwrap()));
 
     let mut ordered = Vec::with_capacity(events.len());
 
@@ -145,9 +145,7 @@ fn order_entity_events(events: &[&VectorEvent]) -> Result<Vec<VectorEvent>, Stri
         ordered.push((*ev).clone());
 
         let mut next_children = children.get(&node).cloned().unwrap_or_default();
-        next_children.sort_by(|a, b| {
-            sort_key(by_hash.get(a).unwrap()).cmp(&sort_key(by_hash.get(b).unwrap()))
-        });
+        next_children.sort_by_key(|a| sort_key(by_hash.get(a).unwrap()));
 
         for child in next_children {
             if let Some(entry) = indegree.get_mut(&child) {
@@ -158,11 +156,13 @@ fn order_entity_events(events: &[&VectorEvent]) -> Result<Vec<VectorEvent>, Stri
             }
         }
 
-        ready.sort_by(|a, b| sort_key(by_hash.get(a).unwrap()).cmp(&sort_key(by_hash.get(b).unwrap())));
+        ready.sort_by_key(|a| sort_key(by_hash.get(a).unwrap()));
     }
 
     if ordered.len() != events.len() {
-        return Err("entity replay ordering failed due to unresolved ancestry or cycle".to_string());
+        return Err(
+            "entity replay ordering failed due to unresolved ancestry or cycle".to_string(),
+        );
     }
 
     Ok(ordered)
@@ -173,7 +173,10 @@ pub fn replay_events(events: &[VectorEvent]) -> Result<ReplayResult, String> {
 
     let mut by_entity: BTreeMap<String, Vec<&VectorEvent>> = BTreeMap::new();
     for event in events {
-        by_entity.entry(event.entity_id.clone()).or_default().push(event);
+        by_entity
+            .entry(event.entity_id.clone())
+            .or_default()
+            .push(event);
     }
 
     let mut state = BTreeMap::<String, VectorState>::new();

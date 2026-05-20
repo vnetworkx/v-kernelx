@@ -129,6 +129,7 @@ impl VectorStateV1 {
         if magnitude == 0 {
             return Err(KernelXError::ZeroNormalization);
         }
+
         Ok(self
             .components
             .iter()
@@ -351,6 +352,7 @@ pub fn validate_canonical_state(state: &VectorStateV1) -> Result<(), KernelXErro
 
 pub fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
+
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)

@@ -20,6 +20,7 @@ impl VectorKernel {
         WalletContext::generate()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn origin_create(
         &mut self,
         vector_id: impl Into<String>,
@@ -30,8 +31,15 @@ impl VectorKernel {
         nonce: u64,
         difficulty: u32,
     ) -> Result<VectorStateV1, KernelXError> {
-        self.engine
-            .origin_create(vector_id, owner_pubkey, space_id, components, seed, nonce, difficulty)
+        self.engine.origin_create(
+            vector_id,
+            owner_pubkey,
+            space_id,
+            components,
+            seed,
+            nonce,
+            difficulty,
+        )
     }
 
     pub fn transfer(
@@ -43,7 +51,11 @@ impl VectorKernel {
         self.engine.transfer(from_id, to_id, amount)
     }
 
-    pub fn drain(&mut self, vector_id: &str, basis_points: u16) -> Result<VectorStateV1, KernelXError> {
+    pub fn drain(
+        &mut self,
+        vector_id: &str,
+        basis_points: u16,
+    ) -> Result<VectorStateV1, KernelXError> {
         self.engine.drain(vector_id, basis_points)
     }
 
@@ -53,7 +65,8 @@ impl VectorKernel {
         projected_components: Vec<u128>,
         escrow_id: impl Into<String>,
     ) -> Result<VectorStateV1, KernelXError> {
-        self.engine.project(vector_id, projected_components, escrow_id)
+        self.engine
+            .project(vector_id, projected_components, escrow_id)
     }
 
     pub fn reconstruct(
@@ -80,13 +93,17 @@ impl VectorKernel {
         self.engine.query_records()
     }
 
-    pub fn replay_canonical_history(
-        &self,
-    ) -> Result<crate::replay::ReplayResult, KernelXError> {
+    pub fn replay_canonical_history(&self) -> Result<crate::replay::ReplayResult, KernelXError> {
         self.engine.replay_canonical_history()
     }
 
     pub fn current_state_root(&self) -> Result<crate::state::StateRoot, KernelXError> {
         self.engine.current_state_root()
+    }
+}
+
+impl Default for VectorKernel {
+    fn default() -> Self {
+        Self::new()
     }
 }

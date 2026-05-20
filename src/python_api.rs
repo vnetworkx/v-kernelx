@@ -9,9 +9,19 @@ fn to_json<T: Serialize>(value: &T) -> PyResult<String> {
     serde_json::to_string(value).map_err(|err| PyValueError::new_err(err.to_string()))
 }
 
+fn map_err<E: ToString>(err: E) -> PyErr {
+    PyValueError::new_err(err.to_string())
+}
+
 #[pyclass(unsendable)]
 pub struct PyKernelEngine {
     inner: KernelEngine<MemoryStore>,
+}
+
+impl Default for PyKernelEngine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[pymethods]
@@ -23,6 +33,7 @@ impl PyKernelEngine {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn origin_create(
         &mut self,
         vector_id: String,
@@ -44,8 +55,13 @@ impl PyKernelEngine {
                 nonce,
                 difficulty,
             )
-            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+            .map_err(map_err)?;
 
+        to_json(&state)
+    }
+
+    pub fn certify(&mut self, vector_id: String) -> PyResult<String> {
+        let state = self.inner.certify(&vector_id).map_err(map_err)?;
         to_json(&state)
     }
 
@@ -58,7 +74,7 @@ impl PyKernelEngine {
         let result = self
             .inner
             .transfer(&from_id, &to_id, amount)
-            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+            .map_err(map_err)?;
 
         to_json(&result)
     }
@@ -67,8 +83,7 @@ impl PyKernelEngine {
         let state = self
             .inner
             .drain(&vector_id, basis_points)
-            .map_err(|err| PyValueError::new_err(err.to_string()))?;
-
+            .map_err(map_err)?;
         to_json(&state)
     }
 
@@ -81,7 +96,7 @@ impl PyKernelEngine {
         let state = self
             .inner
             .project(&vector_id, projected_components, escrow_id)
-            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+            .map_err(map_err)?;
 
         to_json(&state)
     }
@@ -102,35 +117,23 @@ impl PyKernelEngine {
         let state = self
             .inner
             .reconstruct(&vector_id, outcome)
-            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+            .map_err(map_err)?;
 
         to_json(&state)
     }
 
     pub fn query_vector(&self, vector_id: String) -> PyResult<String> {
-        let result = self
-            .inner
-            .query_vector(&vector_id)
-            .map_err(|err| PyValueError::new_err(err.to_string()))?;
-
+        let result = self.inner.query_vector(&vector_id).map_err(map_err)?;
         to_json(&result)
     }
 
     pub fn query_vectors(&self) -> PyResult<String> {
-        let result = self
-            .inner
-            .query_vectors()
-            .map_err(|err| PyValueError::new_err(err.to_string()))?;
-
+        let result = self.inner.query_vectors().map_err(map_err)?;
         to_json(&result)
     }
 
     pub fn query_records(&self) -> PyResult<String> {
-        let result = self
-            .inner
-            .query_records()
-            .map_err(|err| PyValueError::new_err(err.to_string()))?;
-
+        let result = self.inner.query_records().map_err(map_err)?;
         to_json(&result)
     }
 
@@ -138,26 +141,24 @@ impl PyKernelEngine {
         let result = self
             .inner
             .query_event_by_hash(&event_hash)
-            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+            .map_err(map_err)?;
 
         to_json(&result)
     }
 
     pub fn replay_canonical_history(&self) -> PyResult<String> {
-        let result = self
-            .inner
-            .replay_canonical_history()
-            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        let result = self.inner.replay_canonical_history().map_err(map_err)?;
 
         to_json(&result)
     }
 
     pub fn current_state_root(&self) -> PyResult<String> {
-        let result = self
-            .inner
-            .current_state_root()
-            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        let result = self.inner.current_state_root().map_err(map_err)?;
+        to_json(&result)
+    }
 
+    pub fn metrics(&self) -> PyResult<String> {
+        let result = self.inner.metrics().map_err(map_err)?;
         to_json(&result)
     }
 }

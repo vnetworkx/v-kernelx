@@ -14,7 +14,11 @@ pub fn transfer_components(
         return Err(KernelXError::DimensionMismatch);
     }
 
-    if amount.iter().zip(from.components.iter()).any(|(a, b)| a > b) {
+    if amount
+        .iter()
+        .zip(from.components.iter())
+        .any(|(a, b)| a > b)
+    {
         return Err(KernelXError::InsufficientBalance);
     }
 
@@ -63,7 +67,11 @@ pub fn transfer_record(
     });
 
     let sender = VectorRecordV1::new(
-        make_record_id("transfer-out", &after_from.vector_id, sender_params.to_string()),
+        make_record_id(
+            "transfer-out",
+            &after_from.vector_id,
+            sender_params.to_string(),
+        ),
         after_from.vector_id.clone(),
         Some(before_from.clone()),
         after_from.clone(),
@@ -71,7 +79,11 @@ pub fn transfer_record(
         sender_params,
     );
     let receiver = VectorRecordV1::new(
-        make_record_id("transfer-in", &after_to.vector_id, receiver_params.to_string()),
+        make_record_id(
+            "transfer-in",
+            &after_to.vector_id,
+            receiver_params.to_string(),
+        ),
         after_to.vector_id.clone(),
         Some(before_to.clone()),
         after_to.clone(),

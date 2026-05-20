@@ -43,7 +43,12 @@ pub fn parse_script(script: &str) -> Result<Vec<Instruction>, KernelXError> {
             "RECONSTRUCT" => Opcode::Reconstruct,
             "CERTIFY" => Opcode::Certify,
             "QUERY" => Opcode::Query,
-            _ => return Err(KernelXError::Rejected(format!("unknown opcode: {}", opcode_str))),
+            _ => {
+                return Err(KernelXError::Rejected(format!(
+                    "unknown opcode: {}",
+                    opcode_str
+                )))
+            }
         };
 
         let params: Value = serde_json::from_str(params)
@@ -64,7 +69,8 @@ fn param_u64(params: &Value, key: &str, default: u64) -> u64 {
 }
 
 fn param_u16(params: &Value, key: &str, default: u16) -> u16 {
-    params.get(key)
+    params
+        .get(key)
         .and_then(|v| v.as_u64())
         .map(|v| v as u16)
         .unwrap_or(default)
@@ -116,7 +122,13 @@ pub fn execute_script<S: KernelStore>(
                 let amount = param_u128_vec(&ins.params, "amount");
 
                 let (a, b) = engine.transfer(from_id, to_id, amount)?;
-                format!("transfer:{}->{}:{}|{}", from_id, to_id, a.magnitude(), b.magnitude())
+                format!(
+                    "transfer:{}->{}:{}|{}",
+                    from_id,
+                    to_id,
+                    a.magnitude(),
+                    b.magnitude()
+                )
             }
             Opcode::Drain => {
                 let vector_id = param_str(&ins.params, "vector_id", "");
@@ -130,7 +142,8 @@ pub fn execute_script<S: KernelStore>(
                 let projected_components = param_u128_vec(&ins.params, "projected_components");
                 let escrow_id = param_str(&ins.params, "escrow_id", "escrow");
 
-                let state = engine.project(vector_id, projected_components, escrow_id.to_string())?;
+                let state =
+                    engine.project(vector_id, projected_components, escrow_id.to_string())?;
                 format!("project:{}", state.vector_id)
             }
             Opcode::Reconstruct => {
@@ -150,7 +163,10 @@ pub fn execute_script<S: KernelStore>(
             Opcode::Certify => {
                 let vector_id = param_str(&ins.params, "vector_id", "");
                 let state = engine.certify(vector_id)?;
-                format!("certify:{}:{}", state.vector_id, state.certification.auth_ratio)
+                format!(
+                    "certify:{}:{}",
+                    state.vector_id, state.certification.auth_ratio
+                )
             }
             Opcode::Query => {
                 let vector_id = param_str(&ins.params, "vector_id", "");

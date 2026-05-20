@@ -2,8 +2,8 @@ use crate::engine::KernelEngine;
 use crate::error::KernelXError;
 use crate::origin::find_valid_nonce;
 use crate::reconstruction::SettlementOutcome;
-use crate::storage::MemoryStore;
 use crate::state::VectorStateV1;
+use crate::storage::MemoryStore;
 use crate::wallet::WalletContext;
 use serde::{Deserialize, Serialize};
 
@@ -74,5 +74,11 @@ impl SimulationHarness {
         let records = self.engine.query_records()?.len();
 
         Ok(SimulationReport { vectors, records })
+    }
+}
+
+impl Default for SimulationHarness {
+    fn default() -> Self {
+        Self::new()
     }
 }

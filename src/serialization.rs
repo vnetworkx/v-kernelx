@@ -102,6 +102,28 @@ impl CanonicalSerialize for VectorState {
     }
 }
 
+impl CanonicalSerialize for VectorEvent {
+    fn canonical_bytes(&self) -> Vec<u8> {
+        // Full event bytes used for event hashing:
+        // excludes signature and event_hash, includes payload_hash.
+        let mut buf = Vec::new();
+        write_str(&mut buf, &self.event_id);
+        write_vec_str(&mut buf, &self.parent_hashes);
+        write_str(&mut buf, &self.region_id);
+        write_str(&mut buf, &self.entity_id);
+        buf.extend_from_slice(&self.operation.canonical_bytes());
+        buf.extend_from_slice(&self.vector_before.canonical_bytes());
+        buf.extend_from_slice(&self.vector_after.canonical_bytes());
+        write_f64(&mut buf, self.auth_ratio);
+        write_bool(&mut buf, self.certified);
+        write_str(&mut buf, &self.actor_public_key);
+        write_u64(&mut buf, self.logical_clock);
+        write_u64(&mut buf, self.timestamp);
+        write_str(&mut buf, &self.payload_hash);
+        buf
+    }
+}
+
 impl CanonicalSerialize for StateRoot {
     fn canonical_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();

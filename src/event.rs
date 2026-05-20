@@ -140,6 +140,7 @@ pub struct VectorEvent {
 }
 
 impl VectorEvent {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         event_id: impl Into<String>,
         parent_hashes: Vec<String>,

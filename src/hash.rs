@@ -27,7 +27,9 @@ pub fn canonical_state_root_hash(state_root: &StateRoot) -> String {
 pub fn canonical_replay_hash(event_hashes: &[String]) -> String {
     let mut buf = Vec::new();
     buf.extend_from_slice(&canonical_blob_bytes("replay-v1", &[]));
-    buf.extend_from_slice(&crate::serialization::canonical_event_sequence_bytes(event_hashes));
+    buf.extend_from_slice(&crate::serialization::canonical_event_sequence_bytes(
+        event_hashes,
+    ));
     blake3_hex(&buf)
 }
 

@@ -21,7 +21,7 @@ fn hex_value(byte: u8) -> Result<u8, String> {
 
 fn hex_decode(input: &str) -> Result<Vec<u8>, String> {
     let bytes = input.as_bytes();
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return Err("hex string must have even length".to_string());
     }
 
@@ -51,7 +51,8 @@ pub fn verify_event_signature(
     signature_hex: &str,
 ) -> Result<bool, String> {
     let sig_bytes = hex_decode(signature_hex)?;
-    let signature = Signature::from_slice(&sig_bytes).map_err(|e| format!("signature parse error: {e}"))?;
+    let signature =
+        Signature::from_slice(&sig_bytes).map_err(|e| format!("signature parse error: {e}"))?;
     Ok(verifying_key.verify(payload, &signature).is_ok())
 }
 
@@ -61,6 +62,7 @@ pub fn verifying_key_from_hex(public_key_hex: &str) -> Result<VerifyingKey, Stri
     let key_bytes: [u8; 32] = bytes
         .try_into()
         .map_err(|_| "ed25519 verifying key must be 32 bytes".to_string())?;
+    // Some versions of ed25519-dalek want a fixed array here.
     VerifyingKey::from_bytes(&key_bytes).map_err(|e| format!("public key parse error: {e}"))
 }
 

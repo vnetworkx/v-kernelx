@@ -16,7 +16,10 @@ fn event_index(events: &[VectorEvent]) -> Result<BTreeMap<String, usize>, String
         }
 
         if index.insert(event.event_hash.clone(), i).is_some() {
-            return Err(format!("duplicate event_hash detected: {}", event.event_hash));
+            return Err(format!(
+                "duplicate event_hash detected: {}",
+                event.event_hash
+            ));
         }
     }
 
@@ -191,7 +194,9 @@ pub fn topological_order(events: &[VectorEvent]) -> Result<Vec<VectorEvent>, Str
         }
     }
 
-    ready.sort_by(|a, b| sort_key(event_map.get(a).unwrap()).cmp(&sort_key(event_map.get(b).unwrap())));
+    ready.sort_by(|a, b| {
+        sort_key(event_map.get(a).unwrap()).cmp(&sort_key(event_map.get(b).unwrap()))
+    });
 
     let mut ordered = Vec::with_capacity(events.len());
 
@@ -206,7 +211,9 @@ pub fn topological_order(events: &[VectorEvent]) -> Result<Vec<VectorEvent>, Str
         ordered.push(ev);
 
         let mut next_children = children.get(&node).cloned().unwrap_or_default();
-        next_children.sort_by(|a, b| sort_key(event_map.get(a).unwrap()).cmp(&sort_key(event_map.get(b).unwrap())));
+        next_children.sort_by(|a, b| {
+            sort_key(event_map.get(a).unwrap()).cmp(&sort_key(event_map.get(b).unwrap()))
+        });
 
         for child in next_children {
             if let Some(entry) = indegree.get_mut(&child) {
@@ -217,11 +224,15 @@ pub fn topological_order(events: &[VectorEvent]) -> Result<Vec<VectorEvent>, Str
             }
         }
 
-        ready.sort_by(|a, b| sort_key(event_map.get(a).unwrap()).cmp(&sort_key(event_map.get(b).unwrap())));
+        ready.sort_by(|a, b| {
+            sort_key(event_map.get(a).unwrap()).cmp(&sort_key(event_map.get(b).unwrap()))
+        });
     }
 
     if ordered.len() != events.len() {
-        return Err("topological ordering failed due to unresolved cycle or missing ancestry".to_string());
+        return Err(
+            "topological ordering failed due to unresolved cycle or missing ancestry".to_string(),
+        );
     }
 
     Ok(ordered)

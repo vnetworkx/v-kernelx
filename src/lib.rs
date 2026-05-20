@@ -47,7 +47,6 @@ pub use sdk::*;
 pub use serialization::*;
 pub use signature::*;
 pub use snapshot::*;
-pub use state::StateRoot;
 pub use state::*;
 pub use storage::*;
 pub use transfer::*;

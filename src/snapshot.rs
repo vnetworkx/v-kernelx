@@ -1,7 +1,7 @@
 // src/snapshot.rs
 use crate::hash::{canonical_state_root_hash, canonical_tagged_hash};
-use crate::serialization::CanonicalSerialize;
 use crate::replay::ReplayResult;
+use crate::serialization::CanonicalSerialize;
 use crate::{StateRoot, VectorState};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -57,10 +57,8 @@ pub fn verify_snapshot(
     let expected_snapshot_id = canonical_tagged_hash("snapshot-v1", &expected_state_bytes);
     let expected_root_hash = canonical_state_root_hash(&snapshot.state_root);
 
-    Ok(
-        snapshot.snapshot_id == expected_snapshot_id
-            && snapshot.state_bytes == expected_state_bytes
-            && snapshot.replay_hash == current_replay_hash
-            && !expected_root_hash.is_empty(),
-    )
+    Ok(snapshot.snapshot_id == expected_snapshot_id
+        && snapshot.state_bytes == expected_state_bytes
+        && snapshot.replay_hash == current_replay_hash
+        && !expected_root_hash.is_empty())
 }

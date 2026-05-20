@@ -7,9 +7,9 @@ use crate::hash::{canonical_event_hash, canonical_payload_hash};
 use crate::origin::create_origin_vector;
 use crate::projection::project_vector;
 use crate::query::{get_event_by_hash, get_vector, list_records, list_vectors};
-use crate::record::{make_record_id, OperationKind, VectorRecordV1};
 use crate::reconstruction::reconstruct_vector;
 use crate::reconstruction::SettlementOutcome;
+use crate::record::{make_record_id, OperationKind, VectorRecordV1};
 use crate::replay::{replay_events, ReplayResult};
 use crate::state::{compute_state_root, now_ms, StateRoot, VectorStateV1};
 use crate::storage::{EventStore, KernelStore, MemoryStore, ReplayStore, StateStore};
@@ -28,6 +28,12 @@ impl KernelEngine<MemoryStore> {
             store: MemoryStore::default(),
             consensus: ConsensusPolicy::default(),
         }
+    }
+}
+
+impl Default for KernelEngine<MemoryStore> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -197,9 +203,32 @@ impl<S: KernelStore> KernelEngine<S> {
     }
 
     pub fn current_state_root(&self) -> Result<StateRoot, KernelXError> {
-        let states = <S as StateStore>::list_states(&self.store)?;
+        let mut states = <S as StateStore>::list_states(&self.store)?;
+        states.sort_by(|a, b| a.vector_id.cmp(&b.vector_id));
         let logical_clock = states.iter().map(|s| s.updated_at_ms).max().unwrap_or(0);
         Ok(compute_state_root(&states, logical_clock))
+    }
+
+    pub fn metrics(&self) -> Result<serde_json::Value, KernelXError> {
+        let vectors = self.query_vectors()?;
+        let records = self.query_records()?;
+        let replay = self.replay_canonical_history().ok();
+        let state_root = self.current_state_root().ok();
+
+        Ok(serde_json::json!({
+            "vector_count": vectors.len(),
+            "record_count": records.len(),
+            "event_count": replay
+                .as_ref()
+                .map(|r| r.applied_event_hashes.len())
+                .unwrap_or(0),
+            "replay_hash": replay
+                .as_ref()
+                .map(|r| r.replay_hash.clone())
+                .unwrap_or_default(),
+            "state_root": state_root,
+            "healthy": true
+        }))
     }
 
     pub fn certify(&mut self, vector_id: &str) -> Result<VectorStateV1, KernelXError> {
@@ -211,13 +240,18 @@ impl<S: KernelStore> KernelEngine<S> {
         updated.certification = certify_state(&state, true, true);
         updated.updated_at_ms = now_ms();
         updated.version += 1;
+
+        validate_state(&updated)?;
         self.store.put_state(updated.clone())?;
 
         let record = VectorRecordV1::new(
             make_record_id(
                 "certify",
                 vector_id,
-                format!("version={};auth={}", updated.version, updated.certification.auth_ratio),
+                format!(
+                    "version={};auth={}",
+                    updated.version, updated.certification.auth_ratio
+                ),
             ),
             vector_id.to_string(),
             Some(state.clone()),
@@ -244,6 +278,7 @@ impl<S: KernelStore> KernelEngine<S> {
         Ok(updated)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn origin_create(
         &mut self,
         vector_id: impl Into<String>,
@@ -265,6 +300,7 @@ impl<S: KernelStore> KernelEngine<S> {
         )?;
         validate_state(&state)?;
         state.certification = certify_state(&state, true, true);
+        validate_state(&state)?;
         self.store.put_state(state.clone())?;
 
         let record = VectorRecordV1::new(
@@ -314,19 +350,19 @@ impl<S: KernelStore> KernelEngine<S> {
             .ok_or(KernelXError::VectorNotFound)?;
         let before_from = from.clone();
         let before_to = to.clone();
+
         let (mut after_from, mut after_to) = transfer_components(from, to, amount.clone())?;
         after_from.certification = certify_state(&after_from, true, true);
         after_to.certification = certify_state(&after_to, true, true);
+
+        validate_state(&after_from)?;
+        validate_state(&after_to)?;
+
         self.store.put_state(after_from.clone())?;
         self.store.put_state(after_to.clone())?;
 
-        let (mut sender_record, mut receiver_record) = transfer_record(
-            &before_from,
-            &before_to,
-            &after_from,
-            &after_to,
-            amount,
-        );
+        let (mut sender_record, mut receiver_record) =
+            transfer_record(&before_from, &before_to, &after_from, &after_to, amount);
         sender_record.certification = after_from.certification.clone();
         receiver_record.certification = after_to.certification.clone();
 
@@ -386,6 +422,8 @@ impl<S: KernelStore> KernelEngine<S> {
         state.certification = certify_state(&state, true, true);
         state.updated_at_ms = now_ms();
         state.version += 1;
+
+        validate_state(&state)?;
         self.store.put_state(state.clone())?;
 
         let record_params = serde_json::json!({
@@ -433,14 +471,18 @@ impl<S: KernelStore> KernelEngine<S> {
         let before = state.clone();
         let mut after = project_vector(state, projected_components.clone(), escrow_id)?;
         after.certification = certify_state(&after, true, true);
+
+        validate_state(&after)?;
         self.store.put_state(after.clone())?;
 
         let record = VectorRecordV1::new(
             make_record_id(
                 "project",
                 vector_id,
-                serde_json::to_string(&serde_json::json!({ "projected_components": projected_components }))
-                    .unwrap_or_default(),
+                serde_json::to_string(
+                    &serde_json::json!({ "projected_components": projected_components }),
+                )
+                .unwrap_or_default(),
             ),
             vector_id.to_string(),
             Some(before.clone()),
@@ -482,6 +524,8 @@ impl<S: KernelStore> KernelEngine<S> {
         let losses = outcome.losses.clone();
         let mut after = reconstruct_vector(state, outcome)?;
         after.certification = certify_state(&after, true, true);
+
+        validate_state(&after)?;
         self.store.put_state(after.clone())?;
 
         let record_params = serde_json::json!({
@@ -529,7 +573,10 @@ impl<S: KernelStore> KernelEngine<S> {
         list_records(&self.store)
     }
 
-    pub fn query_event_by_hash(&self, event_hash: &str) -> Result<Option<VectorEvent>, KernelXError> {
+    pub fn query_event_by_hash(
+        &self,
+        event_hash: &str,
+    ) -> Result<Option<VectorEvent>, KernelXError> {
         get_event_by_hash(&self.store, event_hash)
     }
 }

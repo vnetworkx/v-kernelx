@@ -98,7 +98,11 @@ impl EventStore for MemoryStore {
 
         // Same event_id with a different hash is a security violation:
         // someone is trying to inject a conflicting event identity.
-        if self.events.values().any(|existing| existing.event_id == event.event_id) {
+        if self
+            .events
+            .values()
+            .any(|existing| existing.event_id == event.event_id)
+        {
             return Err(KernelXError::InvalidState(format!(
                 "duplicate event_id detected: {}",
                 event.event_id
@@ -128,7 +132,8 @@ impl EventStore for MemoryStore {
 
 impl SnapshotStore for MemoryStore {
     fn put_snapshot(&mut self, snapshot: Snapshot) -> Result<(), KernelXError> {
-        self.snapshots.insert(snapshot.snapshot_id.clone(), snapshot);
+        self.snapshots
+            .insert(snapshot.snapshot_id.clone(), snapshot);
         Ok(())
     }
 
@@ -153,7 +158,7 @@ fn canonical_event_sort_key(event: &VectorEvent) -> (u64, u64, String, String) {
 impl ReplayStore for MemoryStore {
     fn load_events_for_replay(&self) -> Result<Vec<VectorEvent>, KernelXError> {
         let mut events: Vec<VectorEvent> = self.events.values().cloned().collect();
-        events.sort_by(|a, b| canonical_event_sort_key(a).cmp(&canonical_event_sort_key(b)));
+        events.sort_by_key(canonical_event_sort_key);
         Ok(events)
     }
 
