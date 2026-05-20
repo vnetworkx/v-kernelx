@@ -1,4 +1,4 @@
-name: Build Wheels
+name: Release
 
 on:
   push:
@@ -13,6 +13,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     strategy:
+      fail-fast: false
       matrix:
         os:
           - windows-latest
@@ -28,6 +29,11 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Rust format check
         run: cargo fmt --all --check
 
@@ -40,11 +46,85 @@ jobs:
       - name: Build release library
         run: cargo build --release
 
-      - name: Build wheels
+      - name: Verify ABI symbol (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            nm -D target/release/libv_kernelx.so | grep kernel_abi_version
+          else
+            nm -g target/release/libv_kernelx.dylib | grep kernel_abi_version
+          fi
+
+      - name: Verify ABI symbol (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          dumpbin /EXPORTS target\release\v_kernelx.dll | findstr kernel_abi_version
+
+      - name: Build Python wheels
         uses: PyO3/maturin-action@v1
         with:
           command: build
           args: --release --out dist
+
+      #
+      # ----------------------------
+      # PACKAGE NATIVE FFI ARTIFACTS
+      # ----------------------------
+      #
+
+      - name: Package Windows native bundle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path native\include | Out-Null
+
+          Copy-Item target\release\v_kernelx.dll native\
+          
+          if (Test-Path "target\release\v_kernelx.lib") {
+            Copy-Item target\release\v_kernelx.lib native\
+          }
+
+          Copy-Item include\v_kernelx.h native\include\
+
+          Set-Content -Path native\ABI_VERSION -Value "1"
+
+          Compress-Archive `
+            -Path native\* `
+            -DestinationPath v-kernelx-windows-x86_64.zip
+
+      - name: Package Linux native bundle
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p native/include
+
+          cp target/release/libv_kernelx.so native/
+          cp include/v_kernelx.h native/include/
+
+          echo "1" > native/ABI_VERSION
+
+          tar -czf v-kernelx-linux-x86_64.tar.gz native
+
+      - name: Package macOS native bundle
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p native/include
+
+          cp target/release/libv_kernelx.dylib native/
+          cp include/v_kernelx.h native/include/
+
+          echo "1" > native/ABI_VERSION
+
+          tar -czf v-kernelx-macos-x86_64.tar.gz native
+
+      #
+      # ----------------------------
+      # UPLOAD WORKFLOW ARTIFACTS
+      # ----------------------------
+      #
 
       - name: Upload wheel artifacts
         uses: actions/upload-artifact@v4
@@ -52,3 +132,23 @@ jobs:
           name: wheels-${{ matrix.os }}
           path: dist
 
+      - name: Upload Windows native artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: v-kernelx-windows-x86_64
+          path: v-kernelx-windows-x86_64.zip
+
+      - name: Upload Linux native artifact
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: v-kernelx-linux-x86_64
+          path: v-kernelx-linux-x86_64.tar.gz
+
+      - name: Upload macOS native artifact
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: v-kernelx-macos-x86_64
+          path: v-kernelx-macos-x86_64.tar.gz
