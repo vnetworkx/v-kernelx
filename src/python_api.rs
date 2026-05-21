@@ -128,6 +128,20 @@ struct CreateRegionRequestInput {
     metadata: Option<Value>,
 }
 
+fn create_region_input_from_any(request: &Bound<'_, PyAny>) -> PyResult<CreateRegionRequestInput> {
+    let value = if let Ok(raw_json) = request.extract::<String>() {
+        serde_json::from_str::<Value>(&raw_json).map_err(|e| {
+            PyValueError::new_err(format!(
+                "create_region expected a dict/object or valid JSON string: {e}"
+            ))
+        })?
+    } else {
+        py_any_to_json_value(request)?
+    };
+
+    serde_json::from_value(value).map_err(map_err)
+}
+
 #[pyclass(unsendable)]
 pub struct PyKernelEngine {
     inner: KernelEngine<MemoryStore>,
@@ -238,8 +252,7 @@ impl PyKernelEngine {
     }
 
     pub fn create_region(&mut self, request: &Bound<'_, PyAny>) -> PyResult<String> {
-        let value = py_any_to_json_value(request)?;
-        let input: CreateRegionRequestInput = serde_json::from_value(value).map_err(map_err)?;
+        let input = create_region_input_from_any(request)?;
 
         let request = RegionCreateRequest {
             region_name: input.region_name,
