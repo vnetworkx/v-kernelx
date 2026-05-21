@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 
 pub const REGION_CREATE_OPERATION_NAME: &str = "REGION_CREATE";
 pub const REGION_TYPE_TAG: &str = "region";
+pub const DEFAULT_REGION_AUTH_RATIO_BPS: u64 = 1_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RegionVisibility {
@@ -29,6 +30,7 @@ pub struct RegionCreateRequest {
     pub region_prefix: Option<String>,
     pub suggested_title: Option<String>,
     pub visibility: RegionVisibility,
+    pub section: u64,
     pub trigger_event_hash: String,
     pub creation_proof: String,
     pub access_key: Option<String>,
@@ -63,6 +65,8 @@ pub struct RegionState {
     pub region_prefix: Option<String>,
     pub suggested_title: Option<String>,
     pub visibility: RegionVisibility,
+    pub section: u64,
+    pub auth_ratio_bps: u64,
     pub creator_public_key: String,
     pub trigger_event_hash: String,
     pub creation_proof_hash: String,
@@ -89,16 +93,64 @@ impl RegionState {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CoreState {
+    pub regions: BTreeMap<String, RegionState>,
+    pub total_auth_ratio_bps: u64,
+    pub core_root: String,
+    pub version: u64,
+}
+
+impl CoreState {
+    pub fn new() -> Self {
+        let mut core = Self {
+            regions: BTreeMap::new(),
+            total_auth_ratio_bps: 0,
+            core_root: String::new(),
+            version: 0,
+        };
+        core.core_root = canonical_core_root(&core);
+        core
+    }
+
+    pub fn insert_region(&mut self, region: RegionState) -> Result<(), KernelXError> {
+        if self.regions.contains_key(&region.region_id) {
+            return Err(KernelXError::InvalidState(format!(
+                "region already exists in core: {}",
+                region.region_id
+            )));
+        }
+
+        self.total_auth_ratio_bps = self
+            .total_auth_ratio_bps
+            .checked_add(region.auth_ratio_bps)
+            .ok_or_else(|| KernelXError::InvalidState("core auth ratio overflow".to_string()))?;
+
+        self.regions.insert(region.region_id.clone(), region);
+        self.version = self
+            .version
+            .checked_add(1)
+            .ok_or_else(|| KernelXError::InvalidState("core version overflow".to_string()))?;
+        self.core_root = canonical_core_root(self);
+        Ok(())
+    }
+}
+
+impl Default for CoreState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
-struct RegionCreateSignedEnvelope {
-    region_name: String,
-    region_prefix: Option<String>,
-    suggested_title: Option<String>,
-    visibility: RegionVisibility,
-    trigger_event_hash: String,
-    creation_proof: String,
-    access_key: Option<String>,
-    metadata: BTreeMap<String, String>,
+pub struct RegionRequestSignatureDebug {
+    pub lookup_key: String,
+    pub actor_public_key: String,
+    pub payload_len: usize,
+    pub payload_hash: String,
+    pub signature_len: usize,
+    pub verified: bool,
+    pub canonical_preview_hex: String,
 }
 
 fn hash_hex(input: &str) -> String {
@@ -124,6 +176,7 @@ fn canonical_region_seed_bytes(
         "visibility".to_string(),
         request.visibility.as_str().to_string(),
     );
+    payload.insert("section".to_string(), request.section.to_string());
     payload.insert(
         "trigger_event_hash".to_string(),
         request.trigger_event_hash.clone(),
@@ -151,10 +204,54 @@ fn canonical_region_seed_bytes(
         .map_err(|e| KernelXError::InvalidState(format!("region seed serialization error: {e}")))
 }
 
+pub fn canonical_region_request_signature_bytes(
+    request: &RegionCreateRequest,
+) -> Result<Vec<u8>, KernelXError> {
+    let mut payload = BTreeMap::new();
+    payload.insert("region_name".to_string(), request.region_name.clone());
+    payload.insert(
+        "region_prefix".to_string(),
+        request.region_prefix.clone().unwrap_or_default(),
+    );
+    payload.insert(
+        "suggested_title".to_string(),
+        request.suggested_title.clone().unwrap_or_default(),
+    );
+    payload.insert(
+        "visibility".to_string(),
+        request.visibility.as_str().to_string(),
+    );
+    payload.insert("section".to_string(), request.section.to_string());
+    payload.insert(
+        "trigger_event_hash".to_string(),
+        request.trigger_event_hash.clone(),
+    );
+    payload.insert("creation_proof".to_string(), request.creation_proof.clone());
+    payload.insert(
+        "access_key".to_string(),
+        request.access_key.clone().unwrap_or_default(),
+    );
+    payload.insert(
+        "metadata".to_string(),
+        serde_json::to_string(&request.metadata).map_err(|e| {
+            KernelXError::InvalidState(format!("region metadata serialization error: {e}"))
+        })?,
+    );
+
+    serde_json::to_vec(&payload)
+        .map_err(|e| KernelXError::InvalidState(format!("region request serialization error: {e}")))
+}
+
 pub fn validate_region_create_request(request: &RegionCreateRequest) -> Result<(), KernelXError> {
     if request.region_name.trim().is_empty() {
         return Err(KernelXError::InvalidState(
             "region_name cannot be empty".to_string(),
+        ));
+    }
+
+    if request.section == 0 {
+        return Err(KernelXError::InvalidState(
+            "section must be greater than zero".to_string(),
         ));
     }
 
@@ -201,32 +298,38 @@ pub fn validate_region_create_request(request: &RegionCreateRequest) -> Result<(
     Ok(())
 }
 
-pub fn verify_region_create_request_signature(
+pub fn debug_region_create_request_signature(
     actor_public_key: &str,
     request: &RegionCreateRequest,
-) -> Result<(), KernelXError> {
+) -> Result<RegionRequestSignatureDebug, KernelXError> {
     let vk = verifying_key_from_hex(actor_public_key)
         .map_err(|e| KernelXError::InvalidState(format!("region actor key error: {e}")))?;
 
-    let signed = RegionCreateSignedEnvelope {
-        region_name: request.region_name.clone(),
-        region_prefix: request.region_prefix.clone(),
-        suggested_title: request.suggested_title.clone(),
-        visibility: request.visibility.clone(),
-        trigger_event_hash: request.trigger_event_hash.clone(),
-        creation_proof: request.creation_proof.clone(),
-        access_key: request.access_key.clone(),
-        metadata: request.metadata.clone(),
-    };
-
-    let bytes = serde_json::to_vec(&signed).map_err(|e| {
-        KernelXError::InvalidState(format!("region request serialization error: {e}"))
-    })?;
+    let bytes = canonical_region_request_signature_bytes(request)?;
+    let payload_hash = blake3::hash(&bytes).to_hex().to_string();
+    let lookup_key = request.lookup_key();
 
     let verified = verify_event_signature(&vk, &bytes, &request.request_signature)
         .map_err(|e| KernelXError::InvalidState(format!("region request signature error: {e}")))?;
 
-    if verified {
+    Ok(RegionRequestSignatureDebug {
+        lookup_key,
+        actor_public_key: actor_public_key.to_string(),
+        payload_len: bytes.len(),
+        payload_hash,
+        signature_len: request.request_signature.len(),
+        verified,
+        canonical_preview_hex: hex::encode(&bytes[..bytes.len().min(32)]),
+    })
+}
+
+pub fn verify_region_create_request_signature(
+    actor_public_key: &str,
+    request: &RegionCreateRequest,
+) -> Result<(), KernelXError> {
+    let report = debug_region_create_request_signature(actor_public_key, request)?;
+
+    if report.verified {
         Ok(())
     } else {
         Err(KernelXError::InvalidState(
@@ -248,6 +351,41 @@ pub fn canonical_region_id(
         .unwrap_or_else(|| "RGN".to_string());
 
     Ok(format!("{}::rgn_{}::{}", prefix, short, sequence))
+}
+
+pub fn canonical_core_bytes(core: &CoreState) -> Vec<u8> {
+    let mut payload = BTreeMap::new();
+    payload.insert("version".to_string(), core.version.to_string());
+    payload.insert(
+        "total_auth_ratio_bps".to_string(),
+        core.total_auth_ratio_bps.to_string(),
+    );
+    payload.insert("region_count".to_string(), core.regions.len().to_string());
+
+    let mut regions = BTreeMap::new();
+    for (region_id, region) in &core.regions {
+        regions.insert(
+            region_id.clone(),
+            serde_json::to_string(region).unwrap_or_default(),
+        );
+    }
+
+    payload.insert(
+        "regions".to_string(),
+        serde_json::to_string(&regions).unwrap_or_default(),
+    );
+
+    serde_json::to_vec(&payload).unwrap_or_default()
+}
+
+pub fn canonical_core_root(core: &CoreState) -> String {
+    blake3::hash(&canonical_core_bytes(core))
+        .to_hex()
+        .to_string()
+}
+
+pub fn region_create_operation() -> OperationType {
+    OperationType::Other(REGION_CREATE_OPERATION_NAME.to_string())
 }
 
 pub fn build_region_genesis_event(
@@ -272,6 +410,7 @@ pub fn build_region_genesis_event(
         "region_prefix".to_string(),
         request.normalized_prefix().unwrap_or_default(),
     );
+    metadata.insert("section".to_string(), request.section.to_string());
     metadata.insert(
         "suggested_title".to_string(),
         request.suggested_title.clone().unwrap_or_default(),
@@ -296,6 +435,12 @@ pub fn build_region_genesis_event(
         "access_key_hash".to_string(),
         access_key_hash.clone().unwrap_or_default(),
     );
+    metadata.insert(
+        "initial_auth_ratio_bps".to_string(),
+        DEFAULT_REGION_AUTH_RATIO_BPS.to_string(),
+    );
+    metadata.insert("core_registry".to_string(), "core".to_string());
+    metadata.insert("default_auth_ratio".to_string(), "1.0".to_string());
 
     for (k, v) in &request.metadata {
         metadata.insert(format!("meta:{k}"), v.clone());
@@ -304,7 +449,7 @@ pub fn build_region_genesis_event(
     let before = VectorState::zero(0, "", REGION_TYPE_TAG);
     let after = VectorState::new(Vec::new(), "", REGION_TYPE_TAG, metadata);
 
-    let operation = OperationType::Other(REGION_CREATE_OPERATION_NAME.to_string());
+    let operation = region_create_operation();
     let event_id = VectorEvent::canonical_event_id(
         &region_id,
         &region_id,
@@ -315,7 +460,7 @@ pub fn build_region_genesis_event(
 
     let mut event = VectorEvent::new(
         event_id,
-        vec![request.trigger_event_hash.clone()],
+        Vec::new(),
         region_id.clone(),
         region_id,
         operation,
@@ -335,10 +480,15 @@ pub fn build_region_genesis_event(
 }
 
 pub fn is_region_create_event(event: &VectorEvent) -> bool {
-    matches!(
-        &event.operation,
-        OperationType::Other(name) if name == REGION_CREATE_OPERATION_NAME
-    )
+    matches!(event.operation, OperationType::OriginCreate)
+        && matches!(
+            event.vector_after.metadata.get("region_kind").map(|v| v.as_str()),
+            Some(REGION_TYPE_TAG)
+        )
+        || matches!(
+            &event.operation,
+            OperationType::Other(name) if name == REGION_CREATE_OPERATION_NAME
+        )
 }
 
 pub fn region_state_from_event(event: &VectorEvent) -> Result<RegionState, KernelXError> {
@@ -370,6 +520,25 @@ pub fn region_state_from_event(event: &VectorEvent) -> Result<RegionState, Kerne
         Some(v) if !v.trim().is_empty() => Some(v.clone()),
         _ => None,
     };
+
+    let section = md
+        .get("section")
+        .ok_or_else(|| KernelXError::InvalidState("missing section".to_string()))?
+        .parse::<u64>()
+        .map_err(|e| KernelXError::InvalidState(format!("invalid section: {e}")))?;
+
+    let auth_ratio_bps = match md.get("initial_auth_ratio_bps") {
+        Some(v) => v.parse::<u64>().map_err(|e| {
+            KernelXError::InvalidState(format!("invalid initial_auth_ratio_bps: {e}"))
+        })?,
+        None => DEFAULT_REGION_AUTH_RATIO_BPS,
+    };
+
+    if auth_ratio_bps == 0 {
+        return Err(KernelXError::InvalidState(
+            "initial_auth_ratio_bps must be greater than zero".to_string(),
+        ));
+    }
 
     let suggested_title = match md.get("suggested_title") {
         Some(v) if !v.trim().is_empty() => Some(v.clone()),
@@ -422,6 +591,8 @@ pub fn region_state_from_event(event: &VectorEvent) -> Result<RegionState, Kerne
         region_prefix,
         suggested_title,
         visibility,
+        section,
+        auth_ratio_bps,
         creator_public_key,
         trigger_event_hash,
         creation_proof_hash,
@@ -431,6 +602,24 @@ pub fn region_state_from_event(event: &VectorEvent) -> Result<RegionState, Kerne
         version: 1,
         metadata,
     })
+}
+
+pub fn apply_region_event(core: &mut CoreState, event: &VectorEvent) -> Result<(), KernelXError> {
+    let region = region_state_from_event(event)?;
+    core.insert_region(region)?;
+    Ok(())
+}
+
+pub fn core_state_from_events(events: &[VectorEvent]) -> Result<CoreState, KernelXError> {
+    let mut core = CoreState::new();
+
+    for event in events {
+        if is_region_create_event(event) {
+            apply_region_event(&mut core, event)?;
+        }
+    }
+
+    Ok(core)
 }
 
 pub fn authorize_region_access(region: &RegionState, access_key: Option<&str>) -> bool {
@@ -463,6 +652,7 @@ pub fn list_regions_from_events(events: &[VectorEvent]) -> Result<Vec<RegionStat
         a.normalized_name
             .cmp(&b.normalized_name)
             .then_with(|| a.region_prefix.cmp(&b.region_prefix))
+            .then_with(|| a.section.cmp(&b.section))
             .then_with(|| a.region_id.cmp(&b.region_id))
     });
     Ok(out)

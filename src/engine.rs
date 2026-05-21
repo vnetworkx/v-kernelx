@@ -12,8 +12,9 @@ use crate::reconstruction::SettlementOutcome;
 use crate::record::{make_record_id, OperationKind, VectorRecordV1};
 use crate::region::{
     authorize_region_access, build_region_genesis_event, find_region_by_lookup_key,
-    list_regions_from_events, region_state_from_event, validate_region_create_request,
-    verify_region_create_request_signature, RegionCreateRequest, RegionState,
+    is_region_create_event, list_regions_from_events, region_state_from_event,
+    validate_region_create_request, verify_region_create_request_signature, RegionCreateRequest,
+    RegionState,
 };
 use crate::replay::{replay_events, ReplayResult};
 use crate::state::{compute_state_root, now_ms, StateRoot, VectorStateV1};
@@ -314,6 +315,12 @@ impl<S: KernelStore> KernelEngine<S> {
             timestamp,
             sequence,
         )?;
+
+        if !is_region_create_event(&event) {
+            return Err(KernelXError::InvalidState(
+                "failed to build canonical region create event".to_string(),
+            ));
+        }
 
         validate_event(&event)?;
         self.append_canonical_event(event.clone())?;

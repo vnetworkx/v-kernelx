@@ -54,7 +54,7 @@ pub use storage::*;
 pub use transfer::*;
 pub use validation::*;
 
-pub use replay::compute_state_root as replay_compute_state_root;
+pub use state::compute_state_root as replay_compute_state_root;
 pub use wallet::verifying_key_from_hex as wallet_verifying_key_from_hex;
 
 use pyo3::prelude::*;

@@ -1,6 +1,8 @@
 use crate::dag::validate_dag;
 use crate::hash::canonical_replay_hash;
+use crate::region::{apply_region_event, is_region_create_event, CoreState};
 use crate::serialization::{canonical_state_map_bytes, CanonicalSerialize};
+use crate::state::compute_state_root_from_canonical_bytes;
 use crate::{OperationType, StateRoot, VectorEvent, VectorState};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -8,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReplayResult {
     pub final_state: BTreeMap<String, VectorState>,
+    pub core_state: CoreState,
     pub state_root: StateRoot,
     pub replay_hash: String,
     pub applied_event_hashes: Vec<String>,
@@ -39,8 +42,15 @@ fn sort_key(event: &VectorEvent) -> (u64, u64, String, String, String) {
 
 fn apply_event(
     state: &mut BTreeMap<String, VectorState>,
+    core: &mut CoreState,
     event: &VectorEvent,
 ) -> Result<(), String> {
+    if is_region_create_event(event) {
+        apply_region_event(core, event).map_err(|e| e.to_string())?;
+        state.insert(event.entity_id.clone(), event.vector_after.clone());
+        return Ok(());
+    }
+
     let current = state.get(&event.entity_id);
 
     match &event.operation {
@@ -180,6 +190,7 @@ pub fn replay_events(events: &[VectorEvent]) -> Result<ReplayResult, String> {
     }
 
     let mut state = BTreeMap::<String, VectorState>::new();
+    let mut core_state = CoreState::new();
     let mut applied_event_hashes = Vec::<String>::with_capacity(events.len());
     let mut logical_clock = 0_u64;
 
@@ -187,41 +198,26 @@ pub fn replay_events(events: &[VectorEvent]) -> Result<ReplayResult, String> {
         let ordered = order_entity_events(&entity_events)?;
 
         for event in ordered {
-            apply_event(&mut state, &event)?;
+            apply_event(&mut state, &mut core_state, &event)?;
             applied_event_hashes.push(event.event_hash.clone());
             logical_clock = logical_clock.max(event.logical_clock);
         }
     }
 
-    let replay_hash = canonical_replay_hash(&applied_event_hashes);
-    let state_root = compute_state_root(&state, applied_event_hashes.len() as u64, logical_clock);
+    let canonical_state_bytes = canonical_state_map_bytes(&state);
+    let state_root = compute_state_root_from_canonical_bytes(
+        &canonical_state_bytes,
+        applied_event_hashes.len() as u64,
+        logical_clock,
+    );
 
     Ok(ReplayResult {
         final_state: state,
+        core_state,
         state_root,
-        replay_hash,
+        replay_hash: canonical_replay_hash(&applied_event_hashes),
         applied_event_hashes,
     })
-}
-
-pub fn compute_state_root(
-    state: &BTreeMap<String, VectorState>,
-    event_count: u64,
-    logical_clock: u64,
-) -> StateRoot {
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"state-root-v1");
-    bytes.extend_from_slice(&event_count.to_be_bytes());
-    bytes.extend_from_slice(&logical_clock.to_be_bytes());
-    bytes.extend_from_slice(&canonical_state_map_bytes(state));
-
-    let root_hash = blake3::hash(&bytes).to_hex().to_string();
-
-    StateRoot {
-        root_hash,
-        event_count,
-        logical_clock,
-    }
 }
 
 pub fn verify_replay(

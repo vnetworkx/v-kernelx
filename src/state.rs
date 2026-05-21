@@ -333,6 +333,28 @@ pub fn compute_state_root(states: &[VectorStateV1], logical_clock: u64) -> State
     }
 }
 
+/// Replay-oriented state root helper for already-canonicalized state bytes.
+pub fn compute_state_root_from_canonical_bytes(
+    canonical_state_bytes: &[u8],
+    event_count: u64,
+    logical_clock: u64,
+) -> StateRoot {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"v-kernelx/state-root-v1");
+    write_u64(&mut bytes, event_count);
+    write_u64(&mut bytes, logical_clock);
+    write_u64(&mut bytes, canonical_state_bytes.len() as u64);
+    bytes.extend_from_slice(canonical_state_bytes);
+
+    let root_hash = blake3::hash(&bytes).to_hex().to_string();
+
+    StateRoot {
+        root_hash,
+        event_count,
+        logical_clock,
+    }
+}
+
 pub fn validate_canonical_state(state: &VectorStateV1) -> Result<(), KernelXError> {
     if state.schema != STATE_SCHEMA_V1 {
         return Err(KernelXError::InvalidState("schema mismatch".to_string()));

@@ -378,6 +378,7 @@ fn replay_from_events(events: &[VectorEvent]) -> Result<serde_json::Value, Strin
         state_root,
         replay_hash,
         applied_event_hashes,
+        ..
     } = result;
 
     let event_count = applied_event_hashes.len() as u64;
