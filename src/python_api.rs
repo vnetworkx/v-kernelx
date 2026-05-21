@@ -4,7 +4,7 @@ use crate::region::{RegionCreateRequest, RegionVisibility};
 use crate::storage::MemoryStore;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 fn to_json<T: Serialize>(value: &T) -> PyResult<String> {
@@ -23,6 +23,20 @@ fn parse_region_visibility(value: &str) -> PyResult<RegionVisibility> {
             "invalid region visibility: {other}"
         ))),
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CreateRegionRequestInput {
+    region_name: String,
+    actor_public_key: String,
+    trigger_event_hash: String,
+    creation_proof: String,
+    visibility: String,
+    request_signature: String,
+    region_prefix: Option<String>,
+    suggested_title: Option<String>,
+    access_key: Option<String>,
+    metadata: Option<BTreeMap<String, String>>,
 }
 
 #[pyclass(unsendable)]
@@ -134,34 +148,25 @@ impl PyKernelEngine {
         to_json(&state)
     }
 
-    pub fn create_region(
-        &mut self,
-        region_name: String,
-        actor_public_key: String,
-        trigger_event_hash: String,
-        creation_proof: String,
-        visibility: String,
-        request_signature: String,
-        region_prefix: Option<String>,
-        suggested_title: Option<String>,
-        access_key: Option<String>,
-        metadata: Option<BTreeMap<String, String>>,
-    ) -> PyResult<String> {
+    pub fn create_region(&mut self, request_json: String) -> PyResult<String> {
+        let input: CreateRegionRequestInput =
+            serde_json::from_str(&request_json).map_err(map_err)?;
+
         let request = RegionCreateRequest {
-            region_name,
-            region_prefix,
-            suggested_title,
-            visibility: parse_region_visibility(&visibility)?,
-            trigger_event_hash,
-            creation_proof,
-            access_key,
-            metadata: metadata.unwrap_or_default(),
-            request_signature,
+            region_name: input.region_name,
+            region_prefix: input.region_prefix,
+            suggested_title: input.suggested_title,
+            visibility: parse_region_visibility(&input.visibility)?,
+            trigger_event_hash: input.trigger_event_hash,
+            creation_proof: input.creation_proof,
+            access_key: input.access_key,
+            metadata: input.metadata.unwrap_or_default(),
+            request_signature: input.request_signature,
         };
 
         let state = self
             .inner
-            .create_region(request, actor_public_key)
+            .create_region(request, input.actor_public_key)
             .map_err(map_err)?;
 
         to_json(&state)

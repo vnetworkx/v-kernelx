@@ -277,6 +277,8 @@ fn validate_submit_request(
 }
 
 fn validate_event_internal(event: &VectorEvent) -> Result<serde_json::Value, String> {
+    let structure_ok = validate_event(event).is_ok();
+
     let payload_hash = canonical_payload_hash(event);
     let event_hash = canonical_event_hash(event);
 
@@ -302,6 +304,7 @@ fn validate_event_internal(event: &VectorEvent) -> Result<serde_json::Value, Str
 
     Ok(json!({
         "event_id": event.event_id,
+        "structure_ok": structure_ok,
         "payload_hash_ok": payload_hash == event.payload_hash,
         "event_hash_ok": event_hash == event.event_hash,
         "hashes_ok": hashes_ok,
@@ -405,6 +408,35 @@ fn engine_replay_summary(inner: &KernelInner) -> Result<serde_json::Value, Strin
 
     let events = engine_events(inner)?;
     let heads = compute_heads(&events);
+    let canonical_replay = replay_from_events(&events)?;
+
+    let canonical_state_root = canonical_replay
+        .get("state_root")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let engine_state_root = serde_json::to_value(&replay.state_root)
+        .map_err(|e| format!("state root serialization error: {e}"))?;
+
+    if canonical_state_root != engine_state_root {
+        return Err(
+            "replay divergence detected between engine replay and canonical batch replay"
+                .to_string(),
+        );
+    }
+
+    let canonical_replay_hash = canonical_replay
+        .get("replay_hash")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let engine_replay_hash = serde_json::to_value(&replay.replay_hash)
+        .map_err(|e| format!("replay hash serialization error: {e}"))?;
+
+    if canonical_replay_hash != engine_replay_hash {
+        return Err(
+            "replay hash divergence detected between engine replay and canonical batch replay"
+                .to_string(),
+        );
+    }
 
     Ok(json!({
         "state_root": replay.state_root,
@@ -466,12 +498,15 @@ where
     }))
 }
 
-fn kernel_not_implemented(name: &str) -> *mut c_char {
-    err_json(format!(
-        "{name} is not implemented yet in the embedded FFI layer"
-    ))
+fn touch_transfer_components() {
+    let _ = transfer_components;
 }
 
+/// Initializes a new kernel handle.
+///
+/// # Safety
+/// This function is safe to call from C only as an allocation boundary.
+/// The returned pointer must later be passed back to `kernel_free` exactly once.
 #[no_mangle]
 pub extern "C" fn kernel_init() -> *mut KernelHandle {
     let handle = Box::new(KernelHandle {
@@ -484,6 +519,11 @@ pub extern "C" fn kernel_init() -> *mut KernelHandle {
     Box::into_raw(handle)
 }
 
+/// Frees a kernel handle allocated by `kernel_init`.
+///
+/// # Safety
+/// `handle` must be either null or a pointer previously returned by `kernel_init`.
+/// It must not be used again after this call.
 #[no_mangle]
 pub unsafe extern "C" fn kernel_free(handle: *mut KernelHandle) {
     if handle.is_null() {
@@ -492,6 +532,11 @@ pub unsafe extern "C" fn kernel_free(handle: *mut KernelHandle) {
     drop(Box::from_raw(handle));
 }
 
+/// Returns the last error string recorded on the kernel handle.
+///
+/// # Safety
+/// `handle` must be either null or a valid pointer returned by `kernel_init`.
+/// The returned pointer must be released with `kernel_string_free`.
 #[no_mangle]
 pub unsafe extern "C" fn kernel_last_error(handle: *mut KernelHandle) -> *mut c_char {
     match last_error_string(handle) {
@@ -500,6 +545,11 @@ pub unsafe extern "C" fn kernel_last_error(handle: *mut KernelHandle) -> *mut c_
     }
 }
 
+/// Frees a C string returned by the kernel FFI.
+///
+/// # Safety
+/// `ptr` must be either null or a pointer previously returned by one of the
+/// string-returning FFI functions in this file. It must not be freed twice.
 #[no_mangle]
 pub unsafe extern "C" fn kernel_string_free(ptr: *mut c_char) {
     if ptr.is_null() {
@@ -541,6 +591,49 @@ pub extern "C" fn kernel_validate_event(input_json: *const c_char) -> *mut c_cha
         };
 
         return ok_json(validation);
+    }
+
+    if let Ok(events) = parse_event_list(&input) {
+        let mut results = Vec::with_capacity(events.len());
+        let mut all_ok = true;
+
+        for event in &events {
+            match validate_event_internal(event) {
+                Ok(result) => {
+                    let ok = result
+                        .get("hashes_ok")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                        && result
+                            .get("signature_ok")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false)
+                        && result
+                            .get("dag_ok")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                    if !ok {
+                        all_ok = false;
+                    }
+                    results.push(result);
+                }
+                Err(e) => {
+                    all_ok = false;
+                    results.push(json!({
+                        "event_id": event.event_id,
+                        "ok": false,
+                        "error": e
+                    }));
+                }
+            }
+        }
+
+        return ok_json(json!({
+            "kind": "event_batch",
+            "count": results.len(),
+            "all_ok": all_ok,
+            "results": results
+        }));
     }
 
     let event = match parse_event(&input) {
@@ -598,6 +691,7 @@ fn execute_submit_request(
         }
         "transfer" => {
             let params: TransferRequest = parse_request_payload(&request.params, "transfer")?;
+            touch_transfer_components();
             execute_and_collect(&mut inner, "transfer", |engine| {
                 let (from_state, to_state) = engine
                     .transfer(&params.from_id, &params.to_id, params.amount)
@@ -666,14 +760,19 @@ fn execute_submit_request(
         "accepted": true,
         "request_id": request.request_id,
         "operation": request.operation,
-        "result": result.get("result").cloned().unwrap_or_else(|| json!(null)),
-        "records": result.get("records").cloned().unwrap_or_else(|| json!([])),
-        "replay": result.get("replay").cloned().unwrap_or_else(|| json!(null)),
-        "event_count": result.get("event_count").cloned().unwrap_or_else(|| json!(0)),
-        "latest_clock": result.get("latest_clock").cloned().unwrap_or_else(|| json!(0))
+        "result": result.get("result").cloned().unwrap_or(Value::Null),
+        "records": result.get("records").cloned().unwrap_or(Value::Null),
+        "replay": result.get("replay").cloned().unwrap_or(Value::Null),
+        "event_count": result.get("event_count").cloned().unwrap_or(Value::Null),
+        "latest_clock": result.get("latest_clock").cloned().unwrap_or(Value::Null)
     }))
 }
 
+/// Submits a validated operation request to the kernel.
+///
+/// # Safety
+/// `handle` must be a valid kernel handle created by `kernel_init`.
+/// `input_json` must point to a valid null-terminated UTF-8 JSON string.
 #[no_mangle]
 pub extern "C" fn kernel_submit_event(
     handle: *mut KernelHandle,
@@ -708,6 +807,12 @@ pub extern "C" fn kernel_submit_event(
     }
 }
 
+/// Executes one or many operation requests in sequence.
+///
+/// # Safety
+/// `handle` must be a valid kernel handle created by `kernel_init`.
+/// `input_json` must be a valid null-terminated UTF-8 JSON string containing
+/// either an array of submit requests or an object with a `requests` array.
 #[no_mangle]
 pub unsafe extern "C" fn kernel_execute_operation(
     handle: *mut KernelHandle,
@@ -749,6 +854,10 @@ pub unsafe extern "C" fn kernel_execute_operation(
     ok_json(json!({ "results": results }))
 }
 
+/// Returns the canonical replay summary for the current kernel state.
+///
+/// # Safety
+/// `handle` must be a valid kernel handle created by `kernel_init`.
 #[no_mangle]
 pub unsafe extern "C" fn kernel_replay(handle: *mut KernelHandle) -> *mut c_char {
     if handle.is_null() {
@@ -792,6 +901,10 @@ pub unsafe extern "C" fn kernel_replay(handle: *mut KernelHandle) -> *mut c_char
     }
 }
 
+/// Computes the current deterministic state root.
+///
+/// # Safety
+/// `handle` must be a valid kernel handle created by `kernel_init`.
 #[no_mangle]
 pub unsafe extern "C" fn kernel_compute_state_root(handle: *mut KernelHandle) -> *mut c_char {
     if handle.is_null() {
@@ -842,6 +955,11 @@ pub unsafe extern "C" fn kernel_compute_state_root(handle: *mut KernelHandle) ->
     to_c_string(output.to_string())
 }
 
+/// Verifies a canonical record/event payload.
+///
+/// # Safety
+/// `handle` must be a valid kernel handle created by `kernel_init`.
+/// `input_json` must be a valid null-terminated UTF-8 JSON string.
 #[no_mangle]
 pub unsafe extern "C" fn kernel_verify_record(
     handle: *mut KernelHandle,
@@ -920,6 +1038,11 @@ pub unsafe extern "C" fn kernel_verify_record(
     }
 }
 
+/// Verifies a detached signature over a payload.
+///
+/// # Safety
+/// `input_json` must be a valid null-terminated UTF-8 JSON string containing
+/// `public_key`, `payload`, and `signature` fields.
 #[no_mangle]
 pub extern "C" fn kernel_verify_signature(input_json: *const c_char) -> *mut c_char {
     let input = match from_c_string(input_json) {
@@ -956,6 +1079,11 @@ pub extern "C" fn kernel_verify_signature(input_json: *const c_char) -> *mut c_c
     }
 }
 
+/// Creates an origin vector in the kernel.
+///
+/// # Safety
+/// `handle` must be a valid kernel handle created by `kernel_init`.
+/// `input_json` must be a valid null-terminated UTF-8 JSON string.
 #[no_mangle]
 pub unsafe extern "C" fn kernel_origin_create(
     handle: *mut KernelHandle,
@@ -964,10 +1092,64 @@ pub unsafe extern "C" fn kernel_origin_create(
     if handle.is_null() {
         return err_json("kernel handle is null");
     }
-    let _ = input_json;
-    kernel_not_implemented("kernel_origin_create")
+
+    let input = match from_c_string(input_json) {
+        Ok(v) => v,
+        Err(e) => {
+            set_last_error(handle, e.clone());
+            return err_json(e);
+        }
+    };
+
+    let params: OriginCreateRequest = match serde_json::from_str(&input) {
+        Ok(v) => v,
+        Err(e) => {
+            let msg = format!("origin_create parse error: {e}");
+            set_last_error(handle, msg.clone());
+            return err_json(msg);
+        }
+    };
+
+    let handle_ref = &*handle;
+    let mut inner = match handle_ref.inner.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            let msg = "kernel state lock poisoned".to_string();
+            set_last_error(handle, msg.clone());
+            return err_json(msg);
+        }
+    };
+
+    match execute_and_collect(&mut inner, "origin_create", |engine| {
+        let state = engine
+            .origin_create(
+                params.vector_id,
+                params.owner_pubkey,
+                params.space_id,
+                params.components,
+                params.seed,
+                params.nonce,
+                params.difficulty,
+            )
+            .map_err(|e| format!("{e}"))?;
+        Ok(json!({ "state": state }))
+    }) {
+        Ok(result) => {
+            clear_last_error(handle);
+            ok_json(result)
+        }
+        Err(e) => {
+            set_last_error(handle, e.clone());
+            err_json(e)
+        }
+    }
 }
 
+/// Executes a transfer operation.
+///
+/// # Safety
+/// `handle` must be a valid kernel handle created by `kernel_init`.
+/// `input_json` must be a valid null-terminated UTF-8 JSON string.
 #[no_mangle]
 pub unsafe extern "C" fn kernel_transfer(
     handle: *mut KernelHandle,
@@ -1004,6 +1186,8 @@ pub unsafe extern "C" fn kernel_transfer(
         }
     };
 
+    touch_transfer_components();
+
     match execute_and_collect(&mut inner, "transfer", |engine| {
         let (from_state, to_state) = engine
             .transfer(&params.from_id, &params.to_id, params.amount)
@@ -1024,6 +1208,11 @@ pub unsafe extern "C" fn kernel_transfer(
     }
 }
 
+/// Executes a drain operation.
+///
+/// # Safety
+/// `handle` must be a valid kernel handle created by `kernel_init`.
+/// `input_json` must be a valid null-terminated UTF-8 JSON string.
 #[no_mangle]
 pub unsafe extern "C" fn kernel_drain(
     handle: *mut KernelHandle,
@@ -1077,6 +1266,11 @@ pub unsafe extern "C" fn kernel_drain(
     }
 }
 
+/// Executes a projection operation.
+///
+/// # Safety
+/// `handle` must be a valid kernel handle created by `kernel_init`.
+/// `input_json` must be a valid null-terminated UTF-8 JSON string.
 #[no_mangle]
 pub unsafe extern "C" fn kernel_project(
     handle: *mut KernelHandle,
@@ -1134,6 +1328,11 @@ pub unsafe extern "C" fn kernel_project(
     }
 }
 
+/// Executes a reconstruction / settlement operation.
+///
+/// # Safety
+/// `handle` must be a valid kernel handle created by `kernel_init`.
+/// `input_json` must be a valid null-terminated UTF-8 JSON string.
 #[no_mangle]
 pub unsafe extern "C" fn kernel_reconstruct(
     handle: *mut KernelHandle,
@@ -1194,6 +1393,11 @@ pub unsafe extern "C" fn kernel_reconstruct(
     }
 }
 
+/// Executes certification for a vector.
+///
+/// # Safety
+/// `handle` must be a valid kernel handle created by `kernel_init`.
+/// `input_json` must be a valid null-terminated UTF-8 JSON string.
 #[no_mangle]
 pub unsafe extern "C" fn kernel_certify(
     handle: *mut KernelHandle,
@@ -1247,11 +1451,20 @@ pub unsafe extern "C" fn kernel_certify(
     }
 }
 
+/// Returns the current state root.
+///
+/// # Safety
+/// `handle` must be a valid kernel handle created by `kernel_init`.
 #[no_mangle]
 pub unsafe extern "C" fn kernel_current_state_root(handle: *mut KernelHandle) -> *mut c_char {
     kernel_compute_state_root(handle)
 }
 
+/// Queries a single vector by ID.
+///
+/// # Safety
+/// `handle` must be a valid kernel handle created by `kernel_init`.
+/// `input_json` must be a valid null-terminated UTF-8 JSON string.
 #[no_mangle]
 pub unsafe extern "C" fn kernel_query_vector(
     handle: *mut KernelHandle,
@@ -1305,6 +1518,11 @@ pub unsafe extern "C" fn kernel_query_vector(
     }
 }
 
+/// Queries all vectors in the current kernel state.
+///
+/// # Safety
+/// `handle` must be a valid kernel handle created by `kernel_init`.
+/// `input_json` is currently ignored and may be null.
 #[no_mangle]
 pub unsafe extern "C" fn kernel_query_vectors(
     handle: *mut KernelHandle,
@@ -1338,6 +1556,11 @@ pub unsafe extern "C" fn kernel_query_vectors(
     }
 }
 
+/// Queries all records in the current kernel state.
+///
+/// # Safety
+/// `handle` must be a valid kernel handle created by `kernel_init`.
+/// `input_json` is currently ignored and may be null.
 #[no_mangle]
 pub unsafe extern "C" fn kernel_query_records(
     handle: *mut KernelHandle,
@@ -1371,6 +1594,11 @@ pub unsafe extern "C" fn kernel_query_records(
     }
 }
 
+/// Queries an event by its canonical hash.
+///
+/// # Safety
+/// `handle` must be a valid kernel handle created by `kernel_init`.
+/// `input_json` must be a valid null-terminated UTF-8 JSON string.
 #[no_mangle]
 pub unsafe extern "C" fn kernel_query_event_by_hash(
     handle: *mut KernelHandle,
