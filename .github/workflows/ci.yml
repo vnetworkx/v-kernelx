@@ -33,6 +33,10 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - name: Add Windows GNU target
+        if: runner.os == 'Windows'
+        run: rustup target add x86_64-pc-windows-gnu
+
       - name: Cache Rust dependencies
         uses: swatinem/rust-cache@v2
 
@@ -47,4 +51,3 @@ jobs:
 
       - name: Build release library
         run: cargo build --release
-
