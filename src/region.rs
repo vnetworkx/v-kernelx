@@ -480,11 +480,15 @@ pub fn build_region_genesis_event(
 }
 
 pub fn is_region_create_event(event: &VectorEvent) -> bool {
-    matches!(event.operation, OperationType::OriginCreate)
+    (matches!(event.operation, OperationType::OriginCreate)
         && matches!(
-            event.vector_after.metadata.get("region_kind").map(|v| v.as_str()),
+            event
+                .vector_after
+                .metadata
+                .get("region_kind")
+                .map(|v| v.as_str()),
             Some(REGION_TYPE_TAG)
-        )
+        ))
         || matches!(
             &event.operation,
             OperationType::Other(name) if name == REGION_CREATE_OPERATION_NAME

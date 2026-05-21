@@ -289,8 +289,8 @@ fn region_genesis_is_canonical_and_queryable() {
     assert_eq!(derived.visibility.as_str(), "public");
     assert_eq!(derived.creator_public_key, "pk-region");
 
-    let regions = list_regions_from_events(std::slice::from_ref(&event_a))
-        .expect("regions should list");
+    let regions =
+        list_regions_from_events(std::slice::from_ref(&event_a)).expect("regions should list");
     assert_eq!(regions.len(), 1);
     assert_eq!(regions[0], derived);
 
