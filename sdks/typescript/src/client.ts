@@ -288,20 +288,86 @@ export class VectorNetworkClient {
   getNetworkInfo(): Promise<NetworkInfo> { return this.getJson("/v1/network/info"); }
   getNetworkStatus(): Promise<NetworkStatus> { return this.getJson("/v1/network/status"); }
   listNodes(): Promise<Record<string, unknown>> { return this.getJson("/v1/nodes"); }
+  getNodeDetails(nodeId: string): Promise<Record<string, unknown>> { return this.getJson(`/v1/nodes/${nodeId}`); }
+  getExplorerNetwork(): Promise<Record<string, unknown>> { return this.getJson("/v1/explorer/network"); }
   getProgram(programId: string): Promise<ProgramSubmission> { return this.getJson(`/v1/programs/${programId}`); }
+  getProgramStatus(programId: string): Promise<Record<string, unknown>> { return this.getJson(`/v1/programs/${programId}/status`); }
   getTransaction(txId: string): Promise<Record<string, unknown>> { return this.getJson(`/v1/transactions/${txId}`); }
   listSpaces(): Promise<unknown[]> { return this.getJson("/v1/spaces"); }
   listRegions(): Promise<unknown[]> { return this.getJson("/v1/regions"); }
   listWallets(): Promise<unknown[]> { return this.getJson("/v1/wallets"); }
+  getWallet(walletId: string): Promise<Record<string, unknown>> { return this.getJson(`/v1/wallets/${walletId}`); }
   listTokens(): Promise<unknown[]> { return this.getJson("/v1/tokens"); }
+  getToken(tokenId: string): Promise<Record<string, unknown>> { return this.getJson(`/v1/tokens/${tokenId}`); }
   listContracts(): Promise<unknown[]> { return this.getJson("/v1/contracts"); }
+  getContract(contractId: string): Promise<Record<string, unknown>> { return this.getJson(`/v1/contracts/${contractId}`); }
   listLoans(): Promise<unknown[]> { return this.getJson("/v1/loans"); }
+  getLoan(loanId: string): Promise<Record<string, unknown>> { return this.getJson(`/v1/loans/${loanId}`); }
   getLedgerEvents(): Promise<unknown[]> { return this.getJson("/v1/ledger/events"); }
   getLedgerProofs(): Promise<Record<string, unknown>> { return this.getJson("/v1/ledger/proofs"); }
   verifyLedgerReplay(): Promise<Record<string, unknown>> { return this.getJson("/v1/ledger/replay"); }
   verifyTokenSupply(tokenId: string): Promise<Record<string, unknown>> { return this.getJson(`/v1/tokens/${tokenId}/supply`); }
   getConsensusStatus(): Promise<Record<string, unknown>> { return this.getJson("/v1/consensus/status"); }
   getEquivocations(): Promise<Record<string, unknown>> { return this.getJson("/v1/consensus/equivocations"); }
+
+  createContract(
+    name: string,
+    regionId: string | null,
+    rules: unknown,
+    actions: unknown[],
+  ): Promise<Record<string, unknown>> {
+    return this.submitOperation({
+      op: "CreateContract",
+      payload: { name, region_id: regionId, rules, actions },
+    });
+  }
+
+  executeContract(
+    contractId: string,
+    action: string,
+    args: unknown = {},
+  ): Promise<Record<string, unknown>> {
+    return this.submitOperation({
+      op: "ExecuteContract",
+      payload: { contract_id: contractId, action, args },
+    });
+  }
+
+  createLoan(
+    name: string,
+    tokenId: string,
+    lenderWalletId: string,
+    borrowerWalletId: string,
+    principal: number,
+    collateral: number,
+    interestBps: number,
+    maturityAtMs: number | null = null,
+  ): Promise<Record<string, unknown>> {
+    return this.submitOperation({
+      op: "CreateLoan",
+      payload: {
+        name,
+        token_id: tokenId,
+        lender_wallet_id: lenderWalletId,
+        borrower_wallet_id: borrowerWalletId,
+        principal,
+        collateral,
+        interest_bps: interestBps,
+        maturity_at_ms: maturityAtMs,
+      },
+    });
+  }
+
+  executeLoan(
+    loanId: string,
+    action: string,
+    amount: number,
+  ): Promise<Record<string, unknown>> {
+    return this.submitOperation({
+      op: "ExecuteLoan",
+      payload: { loan_id: loanId, action, amount },
+    });
+  }
 
   verifyReconstruction(entityKind: string, entityId: string): Promise<ReconstructionReport> {
     return this.postJson<ReconstructionReport>("/v1/reconstruction/verify", {

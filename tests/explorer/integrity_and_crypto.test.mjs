@@ -451,4 +451,164 @@ test("Explorer mapper: 12. missing region creation event yields null hashes & pr
   assert.equal(props.initialWallets[0].auth_ratio, null);
   assert.equal(props.initialEvents[0].auth_ratio, null);
   assert.equal(props.initialEvents[0].signature, null);
+  assert.equal(props.initialEvents[0].entity_kind, "token");
+  assert.equal(props.initialEvents[0].region_id, "");
 });
+
+test("Explorer mapper: 13. disconnected status uses UNAVAILABLE (never UNKNOWN/PENDING)", () => {
+  const props = mapNetworkSnapshotToWorkbenchProps({
+    reachable: false,
+    endpoint: "http://127.0.0.1:8080",
+    data: null,
+  });
+  assert.equal(props.initialStatus.verification_status, "UNAVAILABLE");
+  assert.equal(props.initialStatus.replay_status, "UNAVAILABLE");
+  assert.notEqual(props.initialStatus.verification_status, "UNKNOWN");
+  assert.notEqual(props.initialStatus.replay_status, "PENDING");
+});
+
+test("Explorer mapper: 14. Ghost custody balances & extended network entities map cleanly", () => {
+  const snap = buildValidExplorerSnapshot();
+  snap.data.spaces = [
+    {
+      space_id: "spc_atlas",
+      name: "Atlas",
+      visibility: "PUBLIC",
+      ghost: false,
+      owner_pubkey: "22".repeat(32),
+      created_at_ms: 1_700_000_000_000,
+      version: 1,
+      metadata: {},
+    },
+  ];
+  snap.data.balances.push({
+    token_id: "tok_vec",
+    wallet_id: "ghost_custody::tok_vec",
+    vector: { token: "50", auth_ratio_au: 1000, energy: "0" },
+    updated_at_ms: 1_700_000_000_000,
+    version: 1,
+  });
+  snap.data.tokens[0].total_supply = "950";
+  snap.data.supply_breakdowns.tok_vec.circulating_and_escrow_total = "950";
+  snap.data.supply_breakdowns.tok_vec.ghost_custody_balances_total = "50";
+  snap.data.contracts = [
+    {
+      contract_id: "cnt_1",
+      name: "Escrow",
+      region_id: "reg_atlas",
+      creator_pubkey: "22".repeat(32),
+      execution_count: 2,
+      active: true,
+      created_at_ms: 1_700_000_000_000,
+      version: 2,
+    },
+  ];
+  snap.data.loans = [
+    {
+      loan_id: "ln_1",
+      name: "Bridge Loan",
+      token_id: "tok_vec",
+      lender_wallet_id: "wal_1",
+      borrower_wallet_id: "wal_2",
+      principal: "500",
+      collateral_locked: "100",
+      repaid_amount: "250",
+      interest_bps: 150,
+      status: "ACTIVE",
+      created_at_ms: 1_700_000_000_000,
+      version: 2,
+    },
+  ];
+  snap.data.ghost_assessment = {
+    network_id: "vector-mainnet-1",
+    total_ghost_entities: 1,
+    ghost_spaces: [],
+    ghost_regions: [],
+    parentless_regions: [],
+    ghost_wallets: [],
+    parentless_wallets: [],
+    ghost_tokens: ["tok_vec"],
+    parentless_tokens: ["tok_vec"],
+    risk_flags: ["GHOST_CUSTODY_PRESENT"],
+    ghost_ledger_commitment: "8".repeat(64),
+  };
+  snap.data.proofs.hierarchy_commitments = {
+    network_commitment: "1".repeat(64),
+    ghost_commitment: "8".repeat(64),
+    space_commitments: { spc_atlas: "2".repeat(64) },
+    region_commitments: { reg_atlas: "3".repeat(64) },
+    wallet_commitments: { wal_1: "4".repeat(64) },
+    token_commitments: { tok_vec: "5".repeat(64) },
+  };
+
+  const props = mapNetworkSnapshotToWorkbenchProps(snap);
+  assert.equal(props.initialTokens[0].conservation.ghost_custody_balances_total, "50");
+  assert.equal(props.initialTokens[0].conservation.unknown_account_balances_total, "0");
+  assert.equal(props.initialTokens[0].conservation.verification_status, "VERIFIED");
+  assert.equal(props.initialSpaces.length, 1);
+  assert.equal(props.initialContracts[0].contract_id, "cnt_1");
+  assert.equal(props.initialLoans[0].loan_id, "ln_1");
+  assert.equal(props.ghostAssessment?.total_ghost_entities, 1);
+  assert.equal(props.hierarchyCommitments?.space_commitments.spc_atlas, "2".repeat(64));
+});
+
+test("Client crypto recursively sorts arrays of objects and signs Rust SignedTransactionEnvelope", async () => {
+  const {
+    sortJsonValueClient,
+    signTransactionEnvelopeClient,
+    blake3HexClient,
+    derivePublicKeyFromPrivateHex,
+  } = await import(path.join(ROOT, "lib/client-crypto.ts"));
+  const sorted = sortJsonValueClient({
+    arr: [{ z: 1, a: 2 }, { b: { d: 4, c: 3 } }],
+    k: 1,
+  });
+  assert.equal(
+    JSON.stringify(sorted),
+    '{"arr":[{"a":2,"z":1},{"b":{"c":3,"d":4}}],"k":1}',
+  );
+
+  const seed = "11".repeat(32);
+  const pub = await derivePublicKeyFromPrivateHex(seed);
+  const op = {
+    op: "CreateContract",
+    payload: { name: "Demo", region_id: "reg_1", rules: { b: 2, a: 1 }, actions: [{ z: 9, a: 1 }] },
+  };
+  const env = await signTransactionEnvelopeClient({
+    privateKeyHex: seed,
+    actorPubkey: pub,
+    networkId: "vector-devnet-1",
+    requestId: "req_test_1",
+    nonce: 7,
+    timestampMs: 1_700_000_000_000,
+    operation: op,
+  });
+  const payloadHash = blake3HexClient(JSON.stringify(sortJsonValueClient(op)));
+  const expectedBytes = Buffer.from(
+    JSON.stringify({
+      actor_pubkey: pub,
+      network_id: "vector-devnet-1",
+      nonce: 7,
+      payload_hash: payloadHash,
+      request_id: "req_test_1",
+      timestamp_ms: 1_700_000_000_000,
+    }),
+    "utf8",
+  );
+  assert.equal(verifyEd25519(pub, expectedBytes, env.signature), true);
+});
+
+test("API routes enforce admin auth, unwrap ledger events, and strip deprecated UNKNOWN/transport artifacts", () => {
+  const adminStatusSrc = readFileSync(path.join(ROOT, "app/api/admin/status/route.ts"), "utf8");
+  const backupSrc = readFileSync(path.join(ROOT, "app/api/backup/route.ts"), "utf8");
+  const recordsSrc = readFileSync(path.join(ROOT, "app/api/records/route.ts"), "utf8");
+  const walletTxSrc = readFileSync(path.join(ROOT, "app/api/wallets/[id]/transactions/route.ts"), "utf8");
+  const tokensPanelSrc = readFileSync(path.join(ROOT, "components/TokensPanel.tsx"), "utf8");
+
+  assert.match(adminStatusSrc, /requireAdminToken/);
+  assert.match(backupSrc, /requireAdminToken/);
+  assert.match(recordsSrc, /\.events/);
+  assert.match(walletTxSrc, /\.events/);
+  assert.doesNotMatch(tokensPanelSrc, /\/api\/tokens\/transport/);
+});
+

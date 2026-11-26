@@ -10,6 +10,8 @@ pub struct SupplyConservationBreakdown {
     pub escrow_balances_total: u128,
     pub locked_collateral_total: u128,
     pub reserve_balances_total: u128,
+    #[serde(default)]
+    pub ghost_custody_balances_total: u128,
     pub unknown_account_balances_total: u128,
     pub circulating_and_escrow_total: u128,
     pub recorded_total_supply: u128,
@@ -36,6 +38,7 @@ pub fn compute_token_supply_breakdown(
     let mut escrow_balances_total: u128 = 0;
     let mut locked_collateral_total: u128 = 0;
     let mut reserve_balances_total: u128 = 0;
+    let mut ghost_custody_balances_total: u128 = 0;
     let mut unknown_account_balances_total: u128 = 0;
 
     for bal in state.balances.values() {
@@ -60,6 +63,12 @@ pub fn compute_token_supply_breakdown(
                 .ok_or_else(|| {
                     VNetworkError::Validation("reserve supply sum overflow".to_string())
                 })?;
+        } else if bal.wallet_id.starts_with("ghost_custody::") {
+            ghost_custody_balances_total = ghost_custody_balances_total
+                .checked_add(bal.vector.token)
+                .ok_or_else(|| {
+                    VNetworkError::Validation("ghost custody supply sum overflow".to_string())
+                })?;
         } else if state.wallets.contains_key(&bal.wallet_id) {
             wallet_balances_total = wallet_balances_total
                 .checked_add(bal.vector.token)
@@ -79,6 +88,7 @@ pub fn compute_token_supply_breakdown(
         .checked_add(escrow_balances_total)
         .and_then(|v| v.checked_add(locked_collateral_total))
         .and_then(|v| v.checked_add(reserve_balances_total))
+        .and_then(|v| v.checked_add(ghost_custody_balances_total))
         .and_then(|v| v.checked_add(unknown_account_balances_total))
         .ok_or_else(|| VNetworkError::Validation("total supply sum overflow".to_string()))?;
 
@@ -201,6 +211,7 @@ pub fn compute_token_supply_breakdown(
         escrow_balances_total,
         locked_collateral_total,
         reserve_balances_total,
+        ghost_custody_balances_total,
         unknown_account_balances_total,
         circulating_and_escrow_total,
         recorded_total_supply: token.total_supply,

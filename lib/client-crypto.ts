@@ -20,17 +20,22 @@ export function blake3HexClient(input: Uint8Array | string): string {
   return bytesToHex(blake3(bytes));
 }
 
-export function sortedJsonStringifyClient(obj: Record<string, unknown>): string {
-  const sorted: Record<string, unknown> = {};
-  for (const key of Object.keys(obj).sort()) {
-    const val = obj[key];
-    if (val !== null && typeof val === "object" && !Array.isArray(val)) {
-      sorted[key] = JSON.parse(sortedJsonStringifyClient(val as Record<string, unknown>));
-    } else {
-      sorted[key] = val;
-    }
+export function sortJsonValueClient(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortJsonValueClient);
   }
-  return JSON.stringify(sorted);
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      out[key] = sortJsonValueClient((value as Record<string, unknown>)[key]);
+    }
+    return out;
+  }
+  return value;
+}
+
+export function sortedJsonStringifyClient(obj: Record<string, unknown>): string {
+  return JSON.stringify(sortJsonValueClient(obj));
 }
 
 export function canonicalRequestSigningBytesClient(
@@ -279,4 +284,86 @@ export function canonicalAttestationSigningBytesClient(params: {
       vote_accept: params.vote_accept,
     }),
   );
+}
+
+export interface SignedTransactionEnvelopePayload {
+  request_id: string;
+  network_id: string;
+  actor_pubkey: string;
+  nonce: number;
+  timestamp_ms: number;
+  signature: string;
+  operation: {
+    op: string;
+    payload: Record<string, unknown>;
+  };
+}
+
+export async function signTransactionEnvelopeClient(params: {
+  privateKeyHex: string;
+  actorPubkey: string;
+  networkId: string;
+  requestId: string;
+  nonce: number;
+  timestampMs: number;
+  operation: { op: string; payload: Record<string, unknown> };
+}): Promise<SignedTransactionEnvelopePayload> {
+  const payloadHash = blake3HexClient(
+    JSON.stringify(sortJsonValueClient(params.operation)),
+  );
+  const signingBytes = utf8ToBytes(
+    sortedJsonStringifyClient({
+      actor_pubkey: params.actorPubkey,
+      network_id: params.networkId,
+      nonce: params.nonce,
+      payload_hash: payloadHash,
+      request_id: params.requestId,
+      timestamp_ms: params.timestampMs,
+    }),
+  );
+  const signature = await signBytesWithPrivateKey(params.privateKeyHex, signingBytes);
+  return {
+    request_id: params.requestId,
+    network_id: params.networkId,
+    actor_pubkey: params.actorPubkey,
+    nonce: params.nonce,
+    timestamp_ms: params.timestampMs,
+    signature,
+    operation: params.operation,
+  };
+}
+
+export async function signProgramSubmissionClient(params: {
+  privateKeyHex: string;
+  actorPubkey: string;
+  fileName: string;
+  sourceBytes: string;
+  modules?: Record<string, string>;
+  networkId: string;
+  requestId: string;
+  nonce: number;
+  executionParams?: Record<string, unknown>;
+}) {
+  const signingBytes = canonicalProgramSubmitBytesClient({
+    actor_pubkey: params.actorPubkey,
+    file_name: params.fileName,
+    source_bytes: params.sourceBytes,
+    modules: params.modules,
+    network_id: params.networkId,
+    request_id: params.requestId,
+    nonce: params.nonce,
+    execution_params: params.executionParams,
+  });
+  const signature = await signBytesWithPrivateKey(params.privateKeyHex, signingBytes);
+  return {
+    actor_pubkey: params.actorPubkey,
+    file_name: params.fileName,
+    source_bytes: params.sourceBytes,
+    modules: params.modules ?? {},
+    network_id: params.networkId,
+    request_id: params.requestId,
+    nonce: params.nonce,
+    execution_params: params.executionParams ?? {},
+    signature,
+  };
 }

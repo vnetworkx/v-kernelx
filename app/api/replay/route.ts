@@ -28,7 +28,7 @@ export async function GET() {
       {
         error: replayRes.error ?? "Rust node replay endpoint unreachable",
         matches_stored_state: false,
-        verification_status: "UNKNOWN",
+        verification_status: "UNAVAILABLE",
       },
       { status: replayRes.status },
     );

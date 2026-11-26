@@ -25,6 +25,10 @@ fn default_fault_assumption() -> String {
     DEFAULT_VALIDATOR_FAULT_ASSUMPTION.to_string()
 }
 
+fn default_initial_region_auth_ratio_bps() -> u64 {
+    0
+}
+
 fn default_proposal_version() -> u16 {
     PROPOSAL_VERSION
 }
@@ -49,6 +53,8 @@ pub struct NetworkConsensusParameters {
     pub consensus_algorithm_version: u16,
     #[serde(default = "default_fault_assumption")]
     pub validator_fault_assumption: String,
+    #[serde(default = "default_initial_region_auth_ratio_bps")]
+    pub initial_region_auth_ratio_bps: u64,
 }
 
 impl Default for NetworkConsensusParameters {
@@ -57,6 +63,7 @@ impl Default for NetworkConsensusParameters {
             quorum_threshold_bps: DEFAULT_BFT_QUORUM_BPS,
             consensus_algorithm_version: DEFAULT_CONSENSUS_ALGORITHM_VERSION,
             validator_fault_assumption: DEFAULT_VALIDATOR_FAULT_ASSUMPTION.to_string(),
+            initial_region_auth_ratio_bps: 0,
         }
     }
 }
@@ -90,6 +97,12 @@ impl NetworkConsensusParameters {
                 self.validator_fault_assumption
             )));
         }
+        if self.initial_region_auth_ratio_bps > 10_000 {
+            return Err(VNetworkError::Consensus(format!(
+                "invalid initial_region_auth_ratio_bps `{}`; must be <= 10000",
+                self.initial_region_auth_ratio_bps
+            )));
+        }
         Ok(())
     }
 
@@ -98,6 +111,7 @@ impl NetworkConsensusParameters {
         let obj = serde_json::json!({
             "consensus_algorithm_version": self.consensus_algorithm_version,
             "domain": DOM_CONSENSUS_PARAMS_V1,
+            "initial_region_auth_ratio_bps": self.initial_region_auth_ratio_bps,
             "quorum_threshold_bps": self.quorum_threshold_bps,
             "validator_fault_assumption": self.validator_fault_assumption,
         });

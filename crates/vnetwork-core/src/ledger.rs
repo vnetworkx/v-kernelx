@@ -1,9 +1,10 @@
 use crate::consensus_gate::{replay_validator_epoch_history, verify_quorum_certificate_strict};
 use crate::events::verify_event_chain;
+use crate::ghost::inspect_ghost_entities;
 use crate::state::{GenesisConfig, NetworkLedgerState};
 use crate::supply::{compute_token_supply_breakdown, SupplyConservationBreakdown};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use vnetwork_types::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +28,16 @@ pub struct CertificateVerificationSummary {
     pub reason: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HierarchyCommitmentSummary {
+    pub network_commitment: String,
+    pub ghost_commitment: String,
+    pub space_commitments: BTreeMap<String, String>,
+    pub region_commitments: BTreeMap<String, String>,
+    pub wallet_commitments: BTreeMap<String, String>,
+    pub token_commitments: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LedgerProofReport {
     pub network_id: String,
@@ -44,6 +55,8 @@ pub struct LedgerProofReport {
     pub verification_status: VerificationStatus,
     pub certificate_verifications: Vec<CertificateVerificationSummary>,
     pub token_conservation: Vec<TokenConservationSummary>,
+    #[serde(default)]
+    pub hierarchy_commitments: HierarchyCommitmentSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +69,8 @@ pub struct TokenConservationSummary {
     pub escrow_balances_total: u128,
     pub locked_collateral_total: u128,
     pub reserve_balances_total: u128,
+    #[serde(default)]
+    pub ghost_custody_balances_total: u128,
     pub unknown_account_balances_total: u128,
     pub burned_supply: u128,
     pub drained_fees_total: u128,
@@ -76,6 +91,7 @@ impl From<SupplyConservationBreakdown> for TokenConservationSummary {
             escrow_balances_total: b.escrow_balances_total,
             locked_collateral_total: b.locked_collateral_total,
             reserve_balances_total: b.reserve_balances_total,
+            ghost_custody_balances_total: b.ghost_custody_balances_total,
             unknown_account_balances_total: b.unknown_account_balances_total,
             burned_supply: b.burned_supply,
             drained_fees_total: b.drained_fees_total,
@@ -85,6 +101,111 @@ impl From<SupplyConservationBreakdown> for TokenConservationSummary {
             conserved: b.conserved,
         }
     }
+}
+
+pub fn compute_hierarchy_commitments(
+    state: &NetworkLedgerState,
+    state_root: &str,
+    event_history_root: &str,
+) -> VResult<HierarchyCommitmentSummary> {
+    let network_commitment = blake3_hex(&canonical_json_bytes(&serde_json::json!({
+        "domain": "vnetwork/network-ledger-v1",
+        "event_history_root": event_history_root,
+        "genesis_commitment": state.genesis_commitment,
+        "height": state.height,
+        "network_id": state.network_id,
+        "state_root": state_root,
+    }))?);
+    let ghost_commitment = inspect_ghost_entities(state)?.ghost_ledger_commitment;
+
+    let mut events_by_entity: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for ev in &state.events {
+        events_by_entity
+            .entry(ev.entity_id.as_str())
+            .or_default()
+            .push(ev.event_hash.as_str());
+    }
+
+    let mut space_commitments = BTreeMap::new();
+    for (sid, space) in &state.spaces {
+        let evs = events_by_entity.get(sid.as_str()).cloned().unwrap_or_default();
+        let commit = blake3_hex(&canonical_json_bytes(&serde_json::json!({
+            "domain": "vnetwork/space-ledger-v1",
+            "event_hashes": evs,
+            "parent_commitment": network_commitment,
+            "space": space,
+        }))?);
+        space_commitments.insert(sid.clone(), commit);
+    }
+
+    let mut region_commitments = BTreeMap::new();
+    for (rid, region) in &state.regions {
+        let parent_commitment = if region.space_id.is_empty() {
+            network_commitment.as_str()
+        } else {
+            space_commitments
+                .get(&region.space_id)
+                .map(String::as_str)
+                .unwrap_or(network_commitment.as_str())
+        };
+        let evs = events_by_entity.get(rid.as_str()).cloned().unwrap_or_default();
+        let commit = blake3_hex(&canonical_json_bytes(&serde_json::json!({
+            "domain": "vnetwork/region-ledger-v1",
+            "event_hashes": evs,
+            "parent_commitment": parent_commitment,
+            "region": region,
+        }))?);
+        region_commitments.insert(rid.clone(), commit);
+    }
+
+    let mut wallet_commitments = BTreeMap::new();
+    for (wid, wallet) in &state.wallets {
+        let parent_commitment = if wallet.region_id.is_empty() {
+            network_commitment.as_str()
+        } else {
+            region_commitments
+                .get(&wallet.region_id)
+                .map(String::as_str)
+                .unwrap_or(network_commitment.as_str())
+        };
+        let evs = events_by_entity.get(wid.as_str()).cloned().unwrap_or_default();
+        let commit = blake3_hex(&canonical_json_bytes(&serde_json::json!({
+            "domain": "vnetwork/wallet-ledger-v1",
+            "event_hashes": evs,
+            "parent_commitment": parent_commitment,
+            "wallet": wallet,
+        }))?);
+        wallet_commitments.insert(wid.clone(), commit);
+    }
+
+    let mut token_commitments = BTreeMap::new();
+    for (tid, token) in &state.tokens {
+        let parent_commitment = if token.wallet_id.is_empty() {
+            network_commitment.as_str()
+        } else {
+            wallet_commitments
+                .get(&token.wallet_id)
+                .map(String::as_str)
+                .unwrap_or(network_commitment.as_str())
+        };
+        let evs = events_by_entity.get(tid.as_str()).cloned().unwrap_or_default();
+        let commit = blake3_hex(&canonical_json_bytes(&serde_json::json!({
+            "domain": "vnetwork/token-ledger-v1",
+            "event_hashes": evs,
+            "parent_commitment": parent_commitment,
+            "token": token,
+        }))?);
+        token_commitments.insert(tid.clone(), commit);
+    }
+
+    Ok(HierarchyCommitmentSummary {
+        network_commitment,
+        ghost_commitment,
+        space_commitments,
+        region_commitments,
+        wallet_commitments,
+        token_commitments,
+    })
 }
 
 pub fn build_verified_ledger_proof_report(
@@ -239,6 +360,9 @@ pub fn build_verified_ledger_proof_report(
         VerificationStatus::Verified
     };
 
+    let hierarchy_commitments =
+        compute_hierarchy_commitments(state, &state_root, &event_history_root)?;
+
     Ok(LedgerProofReport {
         network_id: state.network_id.clone(),
         protocol_version: state.protocol_version.clone(),
@@ -255,6 +379,7 @@ pub fn build_verified_ledger_proof_report(
         verification_status,
         certificate_verifications,
         token_conservation,
+        hierarchy_commitments,
     })
 }
 

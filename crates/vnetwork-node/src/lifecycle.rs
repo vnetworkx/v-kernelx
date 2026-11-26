@@ -801,6 +801,18 @@ async fn run_node_loop(
                     NodeCommand::ConnectPeer { multiaddr, reply } => {
                         match multiaddr.parse::<Multiaddr>() {
                             Ok(ma) => {
+                                if let Err(err) = crate::config::validate_peer_dial_multiaddr(
+                                    &ma,
+                                    cfg.profile,
+                                    cfg.allow_local_p2p,
+                                ) {
+                                    let _ = reply.send(Err(ApiError::new(
+                                        StatusCode::FORBIDDEN,
+                                        "PEER_ADDR_FORBIDDEN",
+                                        err.to_string(),
+                                    )));
+                                    continue;
+                                }
                                 if let Some(pid) = extract_peer_id(&ma) {
                                     swarm.behaviour_mut().kademlia.add_address(&pid, ma.clone());
                                 }

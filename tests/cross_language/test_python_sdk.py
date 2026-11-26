@@ -95,6 +95,27 @@ class PythonSdkSecurityTests(unittest.TestCase):
             with self.assertRaises(VectorNetworkError):
                 client.load_modules_for_source('import "escape.vdx";\n', proj)
 
+    def test_contracts_loans_and_explorer_methods_exposed(self):
+        ident = ClientIdentity.from_keys("py-parity", "11" * 32, "22" * 32)
+        client = VectorNetworkClient("http://127.0.0.1:8080", ident, "vector-devnet-1")
+        for method in (
+            "list_spaces",
+            "list_nodes",
+            "get_node_details",
+            "get_explorer_network",
+            "list_contracts",
+            "get_contract",
+            "list_loans",
+            "get_loan",
+            "create_contract",
+            "execute_contract",
+            "create_loan",
+            "execute_loan",
+            "submit_operation",
+        ):
+            self.assertTrue(callable(getattr(client, method)), f"Missing {method}")
+
 
 if __name__ == "__main__":
     unittest.main()
+

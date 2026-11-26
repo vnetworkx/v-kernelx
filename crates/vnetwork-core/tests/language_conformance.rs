@@ -734,3 +734,63 @@ fn test_production_profile_disallows_atlas_bootstrap() {
     assert_eq!(failed.status, ProgramLifecycleStatus::Rejected);
     assert!(failed.error_message.unwrap().contains("ATLAS"));
 }
+
+#[test]
+fn test_parentless_ghost_entities_and_certify_execute_and_replay_cleanly() {
+    let (mut engine, val_kp, actor_kp, _) = make_dev_engine();
+    let ghost_src = r#"
+region ghost create GhostRegNet { prefix = "GRN"; visibility = "private"; section = 1; }
+wallet ghost create GhostWalNet { name = "GhostWalNet"; }
+token ghost create GhostTokNet {
+    name = "Ghost Token";
+    symbol = "GTOK";
+    dimensions = 3;
+    vector = [5000, 100, 10];
+    max_supply = 5000;
+}
+certify "GhostRegNet" with ctx(op="cert", space="network");
+drain token "GhostTokNet" amount 250;
+"#;
+    let req = sign_program_req(
+        "ghost_and_certify.vx",
+        ghost_src,
+        BTreeMap::new(),
+        &actor_kp,
+        "vector-devnet-1",
+        1,
+        "req_ghost_cert_1",
+    );
+    let staged = engine
+        .stage_program_submission(&req, None, "val_1", |b| val_kp.sign(b), 5_000)
+        .unwrap()
+        .unwrap();
+    let qc = single_val_qc(&staged.proposal, &val_kp, "qc_ghost_1", 5_001);
+    engine
+        .commit_proposal_with_qc(&staged.proposal, &qc, 5_001)
+        .unwrap();
+
+    assert_eq!(engine.state.regions.len(), 1);
+    assert_eq!(engine.state.wallets.len(), 1);
+    assert_eq!(engine.state.tokens.len(), 1);
+    let reg = engine.state.regions.values().next().unwrap();
+    assert!(reg.ghost);
+    assert!(reg.space_id.is_empty());
+    assert_eq!(reg.auth_ratio_bps, 10_000);
+    let wal = engine.state.wallets.values().next().unwrap();
+    assert!(wal.ghost);
+    assert!(wal.region_id.is_empty());
+    let tok = engine.state.tokens.values().next().unwrap();
+    assert!(tok.ghost);
+    assert!(tok.wallet_id.is_empty());
+    assert_eq!(tok.total_supply, 4_750);
+    assert!(vnetwork_core::supply::verify_token_supply_conservation(&engine.state, &tok.token_id).unwrap());
+
+    let assessment = vnetwork_core::ghost::inspect_ghost_entities(&engine.state).unwrap();
+    assert_eq!(assessment.total_ghost_entities, 3);
+    assert_eq!(assessment.parentless_regions.len(), 1);
+    assert_eq!(assessment.parentless_wallets.len(), 1);
+    assert_eq!(assessment.parentless_tokens.len(), 1);
+    assert!(engine.verify_replay().unwrap().valid);
+    assert!(engine.reconstruct_entity("region", &reg.region_id).unwrap().verified);
+    assert!(engine.reconstruct_entity("token", &tok.token_id).unwrap().verified);
+}

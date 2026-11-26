@@ -331,6 +331,10 @@ pub struct VContractEntity {
     #[serde(default)]
     pub min_auth_ratio_bps: u64,
     #[serde(default)]
+    pub state_data: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub escrow_balances: BTreeMap<String, u128>,
+    #[serde(default)]
     pub execution_history: Vec<String>,
     pub execution_count: u64,
     pub active: bool,
@@ -348,6 +352,13 @@ pub enum LoanStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoanRepaymentRecord {
+    pub amount: u128,
+    pub actor_pubkey: String,
+    pub timestamp_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VLoanEntity {
     pub loan_id: String,
     pub name: String,
@@ -361,6 +372,8 @@ pub struct VLoanEntity {
     #[serde(default)]
     pub borrower_pubkey: String,
     pub principal: u128,
+    #[serde(default)]
+    pub disbursed_amount: u128,
     pub collateral_locked: u128,
     pub repaid_amount: u128,
     #[serde(default)]
@@ -368,6 +381,10 @@ pub struct VLoanEntity {
     pub interest_bps: u16,
     #[serde(default)]
     pub maturity_at_ms: Option<u64>,
+    #[serde(default)]
+    pub defaulted: bool,
+    #[serde(default)]
+    pub repayment_history: Vec<LoanRepaymentRecord>,
     pub status: LoanStatus,
     pub creator_pubkey: String,
     pub created_at_ms: u64,

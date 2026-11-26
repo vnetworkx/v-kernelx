@@ -305,8 +305,17 @@ class VectorNetworkClient:
     def list_nodes(self) -> Dict[str, Any]:
         return self.get_json("/v1/nodes")
 
+    def get_node_details(self, node_id: str) -> Dict[str, Any]:
+        return self.get_json(f"/v1/nodes/{node_id}")
+
+    def get_explorer_network(self) -> Dict[str, Any]:
+        return self.get_json("/v1/explorer/network")
+
     def get_program(self, program_id: str) -> Dict[str, Any]:
         return self.get_json(f"/v1/programs/{program_id}")
+
+    def get_program_status(self, program_id: str) -> Dict[str, Any]:
+        return self.get_json(f"/v1/programs/{program_id}/status")
 
     def get_transaction(self, tx_id: str) -> Dict[str, Any]:
         return self.get_json(f"/v1/transactions/{tx_id}")
@@ -320,14 +329,106 @@ class VectorNetworkClient:
     def list_wallets(self) -> Any:
         return self.get_json("/v1/wallets")
 
+    def get_wallet(self, wallet_id: str) -> Dict[str, Any]:
+        return self.get_json(f"/v1/wallets/{wallet_id}")
+
     def list_tokens(self) -> Any:
         return self.get_json("/v1/tokens")
+
+    def get_token(self, token_id: str) -> Dict[str, Any]:
+        return self.get_json(f"/v1/tokens/{token_id}")
 
     def list_contracts(self) -> Any:
         return self.get_json("/v1/contracts")
 
+    def get_contract(self, contract_id: str) -> Dict[str, Any]:
+        return self.get_json(f"/v1/contracts/{contract_id}")
+
     def list_loans(self) -> Any:
         return self.get_json("/v1/loans")
+
+    def get_loan(self, loan_id: str) -> Dict[str, Any]:
+        return self.get_json(f"/v1/loans/{loan_id}")
+
+    def create_contract(
+        self,
+        name: str,
+        region_id: Optional[str],
+        rules: Any,
+        actions: List[Any],
+    ) -> Dict[str, Any]:
+        return self.submit_operation(
+            {
+                "op": "CreateContract",
+                "payload": {
+                    "name": name,
+                    "region_id": region_id,
+                    "rules": rules,
+                    "actions": actions,
+                },
+            }
+        )
+
+    def execute_contract(
+        self,
+        contract_id: str,
+        action: str,
+        args: Any = None,
+    ) -> Dict[str, Any]:
+        return self.submit_operation(
+            {
+                "op": "ExecuteContract",
+                "payload": {
+                    "contract_id": contract_id,
+                    "action": action,
+                    "args": {} if args is None else args,
+                },
+            }
+        )
+
+    def create_loan(
+        self,
+        name: str,
+        token_id: str,
+        lender_wallet_id: str,
+        borrower_wallet_id: str,
+        principal: int,
+        collateral: int,
+        interest_bps: int,
+        maturity_at_ms: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        return self.submit_operation(
+            {
+                "op": "CreateLoan",
+                "payload": {
+                    "name": name,
+                    "token_id": token_id,
+                    "lender_wallet_id": lender_wallet_id,
+                    "borrower_wallet_id": borrower_wallet_id,
+                    "principal": principal,
+                    "collateral": collateral,
+                    "interest_bps": interest_bps,
+                    "maturity_at_ms": maturity_at_ms,
+                },
+            }
+        )
+
+    def execute_loan(
+        self,
+        loan_id: str,
+        action: str,
+        amount: int,
+    ) -> Dict[str, Any]:
+        return self.submit_operation(
+            {
+                "op": "ExecuteLoan",
+                "payload": {
+                    "loan_id": loan_id,
+                    "action": action,
+                    "amount": amount,
+                },
+            }
+        )
 
     def get_ledger_events(self) -> Any:
         return self.get_json("/v1/ledger/events")

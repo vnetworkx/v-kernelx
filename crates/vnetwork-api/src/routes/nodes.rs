@@ -1,6 +1,8 @@
+use crate::authentication::require_admin_token;
 use crate::errors::ApiResult;
 use crate::state::{ApiAppState, NodeConnectHttpRequest};
 use axum::extract::{Path, State};
+use axum::http::HeaderMap;
 use axum::Json;
 
 pub async fn list_nodes(State(app): State<ApiAppState>) -> Json<serde_json::Value> {
@@ -25,8 +27,10 @@ pub async fn node_status(
 
 pub async fn connect_node(
     State(app): State<ApiAppState>,
+    headers: HeaderMap,
     Json(req): Json<NodeConnectHttpRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
+    require_admin_token(&headers)?;
     let res = app.backend.connect_peer(&req.multiaddr).await?;
     Ok(Json(res))
 }

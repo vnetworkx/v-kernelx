@@ -207,3 +207,56 @@ fn test_validate_against_genesis_detects_conflicts() {
     cfg.network_id = "vector-other".to_string();
     assert!(cfg.validate_against_genesis(&genesis).is_err());
 }
+
+#[test]
+fn test_peer_dial_multiaddr_ssrf_guard() {
+    use libp2p::Multiaddr;
+    use vnetwork_node::config::validate_peer_dial_multiaddr;
+
+    with_env_vars(&[("NETWORK_ALLOW_LOCAL_P2P", "invalid-bool")], || {
+        let mut cfg = NodeConfig::default();
+        assert!(cfg.apply_env_overrides().is_err());
+    });
+    with_env_vars(&[("NETWORK_ALLOW_LOCAL_P2P", "true")], || {
+        let mut cfg = NodeConfig::default();
+        cfg.apply_env_overrides().unwrap();
+        assert!(cfg.allow_local_p2p);
+    });
+
+    for blocked in [
+        "/ip4/127.0.0.1/tcp/7001",
+        "/ip4/10.0.0.12/tcp/7001",
+        "/ip4/172.16.4.5/tcp/7001",
+        "/ip4/192.168.1.50/tcp/7001",
+        "/ip4/169.254.169.254/tcp/80",
+        "/ip4/100.64.1.2/tcp/7001",
+        "/ip6/::1/tcp/7001",
+        "/ip6/fe80::1/tcp/7001",
+        "/ip6/fc00::1/tcp/7001",
+        "/ip6/::ffff:127.0.0.1/tcp/7001",
+        "/dns4/localhost/tcp/7001",
+        "/dns/metadata.google.internal/tcp/80",
+        "/tcp/7001",
+    ] {
+        let ma: Multiaddr = blocked.parse().unwrap();
+        assert!(
+            validate_peer_dial_multiaddr(&ma, NetworkProfile::Production, false).is_err(),
+            "expected Production to block {blocked}"
+        );
+        assert!(
+            validate_peer_dial_multiaddr(&ma, NetworkProfile::Testnet, false).is_err(),
+            "expected Testnet to block {blocked}"
+        );
+    }
+
+    let pub_ip: Multiaddr = "/ip4/198.51.100.12/tcp/7001".parse().unwrap();
+    validate_peer_dial_multiaddr(&pub_ip, NetworkProfile::Production, false).unwrap();
+
+    let pub_dns: Multiaddr = "/dns4/bootnode1.vectornetwork.example/tcp/7001".parse().unwrap();
+    validate_peer_dial_multiaddr(&pub_dns, NetworkProfile::Production, false).unwrap();
+
+    let loopback: Multiaddr = "/ip4/127.0.0.1/tcp/7001".parse().unwrap();
+    validate_peer_dial_multiaddr(&loopback, NetworkProfile::Development, false).unwrap();
+    validate_peer_dial_multiaddr(&loopback, NetworkProfile::Testnet, true).unwrap();
+}
+

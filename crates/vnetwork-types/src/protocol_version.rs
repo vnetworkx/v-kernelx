@@ -27,13 +27,14 @@ pub enum VerificationStatus {
     Verified,
     Unverified,
     Invalid,
+    Unavailable,
     Unknown,
     Pending,
 }
 
 impl Default for VerificationStatus {
     fn default() -> Self {
-        Self::Unknown
+        Self::Unverified
     }
 }
 

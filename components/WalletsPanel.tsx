@@ -1,12 +1,18 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { Plus, ShieldCheck, Wallet } from "lucide-react";
-import { formatTimestampMs, shortenHash } from "@/lib/format";
-import { generateBrowserKeypair, derivePublicKeyFromPrivateHex, signBytesWithPrivateKey, canonicalRequestSigningBytesClient } from "@/lib/client-crypto";
+import { KeyRound, Plus, ShieldCheck } from "lucide-react";
+import { shortenHash } from "@/lib/format";
+import {
+  derivePublicKeyFromPrivateHex,
+  deriveWalletIdClient,
+  generateBrowserKeypair,
+  signTransactionEnvelopeClient,
+} from "@/lib/client-crypto";
 import type { BrowserSignerKey, RegionDto, WalletDto } from "@/lib/types";
 
 interface WalletsPanelProps {
+  networkId: string;
   wallets: WalletDto[];
   regions: RegionDto[];
   signerKeys: Record<string, BrowserSignerKey>;
@@ -18,6 +24,7 @@ interface WalletsPanelProps {
 }
 
 export function WalletsPanel({
+  networkId,
   wallets,
   regions,
   signerKeys,
@@ -29,17 +36,17 @@ export function WalletsPanel({
 }: WalletsPanelProps) {
   const [label, setLabel] = useState("");
   const [regionId, setRegionId] = useState(regions[0]?.region_id ?? "");
-  const [creatorWalletId, setCreatorWalletId] = useState("");
+  const [ghostWallet, setGhostWallet] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  // Import existing keypair state
   const [importLabel, setImportLabel] = useState("");
   const [importPrivateHex, setImportPrivateHex] = useState("");
   const [importing, setImporting] = useState(false);
 
-  // Newly issued custody card modal/banner state
   const [issuedCustody, setIssuedCustody] = useState<BrowserSignerKey | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  const activeSigner = activeSignerId ? signerKeys[activeSignerId] : null;
 
   async function copyText(key: string, val: string) {
     try {
@@ -51,43 +58,69 @@ export function WalletsPanel({
     setTimeout(() => setCopiedKey((prev) => (prev === key ? null : prev)), 1500);
   }
 
-  async function handleCreateOpenWallet(e: FormEvent) {
+  async function handleGenerateKeypair() {
+    const kp = await generateBrowserKeypair();
+    const signerKey: BrowserSignerKey = {
+      wallet_id: kp.wallet_id,
+      public_key_hex: kp.public_key_hex,
+      private_key_hex: kp.private_key_hex,
+      label: label.trim() || "Ephemeral Ed25519 Keypair",
+    };
+    onAddSigner(signerKey);
+    setIssuedCustody(signerKey);
+    onNotify("success", `Generated in-memory Ed25519 signer (${shortenHash(kp.public_key_hex, 12, 8)})`);
+  }
+
+  async function handleCreateOnChainWallet(e: FormEvent) {
     e.preventDefault();
+    const signerToUse = activeSigner;
+    if (!signerToUse) {
+      await handleGenerateKeypair();
+      onNotify("error", "Unlocked a fresh signer keypair. Register participant scope if required, then click Submit CreateWallet.");
+      return;
+    }
+
     setSubmitting(true);
     try {
-      const kp = await generateBrowserKeypair();
-      const cleanLabel = label.trim() || "User Wallet";
-      
-      // Register public key with backend server
+      const cleanName = label.trim() || "User Wallet";
+      const envelope = await signTransactionEnvelopeClient({
+        privateKeyHex: signerToUse.private_key_hex,
+        actorPubkey: signerToUse.public_key_hex,
+        networkId,
+        requestId: `wlt_${Date.now()}`,
+        nonce: Date.now(),
+        timestampMs: Date.now(),
+        operation: {
+          op: "CreateWallet",
+          payload: {
+            region_id: ghostWallet ? "" : regionId.trim(),
+            name: cleanName,
+            ghost: ghostWallet,
+          },
+        },
+      });
+
       const res = await fetch("/api/wallets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: "register_pubkey",
-          public_key_hex: kp.public_key_hex,
-          label: cleanLabel,
-          region_id: regionId || null,
-          creator_wallet_id: creatorWalletId || null,
-        }),
+        body: JSON.stringify(envelope),
       });
-      const data = (await res.json()) as { wallet?: WalletDto; error?: string };
-      if (!res.ok || !data.wallet) {
-        onNotify("error", data.error ?? "Wallet registration failed");
+      const data = (await res.json()) as { entity_id?: string; error?: string };
+      if (!res.ok) {
+        onNotify("error", data.error ?? "CreateWallet transaction rejected");
         return;
       }
 
-      const signerKey: BrowserSignerKey = {
-        wallet_id: data.wallet.wallet_id,
-        public_key_hex: kp.public_key_hex,
-        private_key_hex: kp.private_key_hex,
-        label: cleanLabel,
-      };
-
-      onAddSigner(signerKey);
-      setIssuedCustody(signerKey);
+      if (data.entity_id) {
+        onAddSigner({
+          ...signerToUse,
+          wallet_id: data.entity_id,
+          label: cleanName,
+        });
+      }
       setLabel("");
       await onRefresh();
-      onNotify("success", `Created open wallet ${cleanLabel} (${data.wallet.wallet_id})`);
+      onNotify("success", `Created on-chain wallet ${cleanName} (${data.entity_id ?? "ok"})`);
     } catch (err) {
       onNotify("error", err instanceof Error ? err.message : "Failed to create wallet");
     } finally {
@@ -101,25 +134,11 @@ export function WalletsPanel({
     try {
       const cleanHex = importPrivateHex.trim().toLowerCase();
       const pubkey = await derivePublicKeyFromPrivateHex(cleanHex);
-      const cleanLabel = importLabel.trim() || "Imported Keypair";
-
-      const res = await fetch("/api/wallets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: "register_pubkey",
-          public_key_hex: pubkey,
-          label: cleanLabel,
-        }),
-      });
-      const data = (await res.json()) as { wallet?: WalletDto; error?: string };
-      if (!res.ok || !data.wallet) {
-        onNotify("error", data.error ?? "Failed to register imported pubkey");
-        return;
-      }
+      const matchingWallet = wallets.find((w) => w.public_key_hex.toLowerCase() === pubkey);
+      const cleanLabel = importLabel.trim() || matchingWallet?.label || "Imported Keypair";
 
       const signerKey: BrowserSignerKey = {
-        wallet_id: data.wallet.wallet_id,
+        wallet_id: matchingWallet?.wallet_id ?? deriveWalletIdClient(pubkey),
         public_key_hex: pubkey,
         private_key_hex: cleanHex,
         label: cleanLabel,
@@ -128,8 +147,7 @@ export function WalletsPanel({
       onAddSigner(signerKey);
       setImportPrivateHex("");
       setImportLabel("");
-      await onRefresh();
-      onNotify("success", `Imported keypair for ${data.wallet.wallet_id}`);
+      onNotify("success", `Loaded in-memory signer ${cleanLabel} (${shortenHash(pubkey, 10, 6)})`);
     } catch (err) {
       onNotify("error", err instanceof Error ? err.message : "Invalid private signing key");
     } finally {
@@ -145,7 +163,7 @@ export function WalletsPanel({
             <div className="flex items-center justify-between border-b border-emerald-200 pb-3">
               <div className="flex items-center gap-2 font-semibold text-emerald-900">
                 <ShieldCheck className="h-4 w-4 text-emerald-600" />
-                <span>Issued Keypair Custody (Save Your Private Key Securely)</span>
+                <span>Ephemeral Browser Keypair Generated (Held in Memory Only)</span>
               </div>
               <button
                 type="button"
@@ -156,11 +174,11 @@ export function WalletsPanel({
               </button>
             </div>
             <p className="mt-2 text-emerald-800">
-              Decentralized network rule: No admin holds your private key. It is issued exclusively on creation.
+              Private keys stay in browser memory only and are never written to localStorage or sent to the server.
             </p>
             <div className="mt-3 space-y-2 font-mono">
-              <div className="flex items-center justify-between bg-white p-2 border border-emerald-200">
-                <span>Wallet ID: {issuedCustody.wallet_id}</span>
+              <div className="flex items-center justify-between border border-emerald-200 bg-white p-2">
+                <span>Derived ID: {issuedCustody.wallet_id}</span>
                 <button
                   type="button"
                   onClick={() => copyText("wid", issuedCustody.wallet_id)}
@@ -169,7 +187,7 @@ export function WalletsPanel({
                   {copiedKey === "wid" ? "Copied!" : "Copy"}
                 </button>
               </div>
-              <div className="flex items-center justify-between bg-white p-2 border border-emerald-200">
+              <div className="flex items-center justify-between border border-emerald-200 bg-white p-2">
                 <span>Public Key: {shortenHash(issuedCustody.public_key_hex, 16, 12)}</span>
                 <button
                   type="button"
@@ -179,12 +197,12 @@ export function WalletsPanel({
                   {copiedKey === "pub" ? "Copied!" : "Copy Pubkey"}
                 </button>
               </div>
-              <div className="flex items-center justify-between bg-white p-2 border border-emerald-200">
-                <span className="break-all">Private Key (Secret Hex): {issuedCustody.private_key_hex}</span>
+              <div className="flex items-center justify-between border border-emerald-200 bg-white p-2">
+                <span className="break-all">Private Key Hex: {issuedCustody.private_key_hex}</span>
                 <button
                   type="button"
                   onClick={() => copyText("priv", issuedCustody.private_key_hex)}
-                  className="shrink-0 ml-2 text-blue-600 hover:underline"
+                  className="ml-2 shrink-0 text-blue-600 hover:underline"
                 >
                   {copiedKey === "priv" ? "Copied!" : "Copy Secret"}
                 </button>
@@ -195,9 +213,9 @@ export function WalletsPanel({
 
         <section className="border border-slate-200 bg-white">
           <div className="border-b border-slate-200 px-5 py-3.5">
-            <h2 className="text-sm font-semibold text-slate-900">Decentralized Wallets & Signers</h2>
+            <h2 className="text-sm font-semibold text-slate-900">Ledger Wallets &amp; Matching Signers</h2>
             <p className="text-xs text-slate-500">
-              Wallets carry public keys, auth ratios, and accumulated drain fee rewards
+              Wallets authorize keys on-chain via signed Ed25519 envelopes
             </p>
           </div>
 
@@ -208,23 +226,25 @@ export function WalletsPanel({
                   <th className="px-5 py-2.5">Wallet / Label</th>
                   <th className="px-4 py-2.5">Wallet ID</th>
                   <th className="px-4 py-2.5">Auth Ratio</th>
-                  <th className="px-4 py-2.5 text-right">Drain Rewards</th>
+                  <th className="px-4 py-2.5 text-right">Balances</th>
                   <th className="px-5 py-2.5 text-right">Signer Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {wallets.map((w) => {
-                  const isUnlocked = Boolean(signerKeys[w.wallet_id]);
-                  const isSelected = activeSignerId === w.wallet_id;
-                  const totalRewards = w.rewards.reduce((acc, r) => acc + BigInt(r.amount), 0n);
+                  const matchingKey = Object.values(signerKeys).find(
+                    (k) => k.wallet_id === w.wallet_id || k.public_key_hex.toLowerCase() === w.public_key_hex.toLowerCase(),
+                  );
+                  const isSelected = Boolean(matchingKey && activeSignerId === matchingKey.wallet_id);
                   return (
                     <tr key={w.wallet_id} className="hover:bg-slate-50">
                       <td className="px-5 py-3">
-                        <div className="font-semibold text-slate-900">{w.label}</div>
+                        <div className="font-semibold text-slate-900">
+                          {w.label} {w.ghost ? "· GHOST" : ""}
+                        </div>
                         <div className="font-mono text-[11px] text-slate-400">
-                          {w.region_id ? shortenHash(w.region_id, 10, 6) : "global"}
+                          {w.region_id ? shortenHash(w.region_id, 10, 6) : "NETWORK (Ghost)"}
                           {` · rx=${w.receive_policy?.mode ?? "OPEN"}`}
-                          {w.creator_wallet_id ? ` · creator=${shortenHash(w.creator_wallet_id, 8, 4)}` : ""}
                         </div>
                       </td>
                       <td className="px-4 py-3 font-mono text-slate-700">{w.wallet_id}</td>
@@ -246,19 +266,19 @@ export function WalletsPanel({
                           </>
                         ) : (
                           <>
-                            <span className="text-slate-500">Unknown</span>
-                            <div className="text-[10px] text-slate-400">Unverified / Unavailable</div>
+                            <span className="text-slate-500">Unavailable</span>
+                            <div className="text-[10px] text-slate-400">No balance ratio recorded</div>
                           </>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono tabular-nums text-emerald-700 font-semibold">
-                        {totalRewards.toString()} units
+                      <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-700">
+                        {w.balances.length} token(s)
                       </td>
                       <td className="px-5 py-3 text-right">
-                        {isUnlocked ? (
+                        {matchingKey ? (
                           <button
                             type="button"
-                            onClick={() => onSelectSigner(w.wallet_id)}
+                            onClick={() => onSelectSigner(matchingKey.wallet_id)}
                             className={`border px-2.5 py-1 text-xs font-medium ${
                               isSelected
                                 ? "border-emerald-600 bg-emerald-600 text-white"
@@ -282,71 +302,78 @@ export function WalletsPanel({
 
       <div className="space-y-6">
         <section className="border border-slate-200 bg-white">
-          <div className="border-b border-slate-200 px-5 py-3.5">
-            <h2 className="text-sm font-semibold text-slate-900">Create Open Wallet</h2>
-            <p className="text-xs text-slate-500">No admin gates — issue new keys & earn drain rewards</p>
-          </div>
-          <form onSubmit={handleCreateOpenWallet} className="space-y-3.5 p-5 text-xs">
+          <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5">
             <div>
-              <label className="mb-1 block font-medium text-slate-700">Wallet Label</label>
+              <h2 className="text-sm font-semibold text-slate-900">Create On-Chain Wallet</h2>
+              <p className="text-xs text-slate-500">Submit signed CreateWallet envelope</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleGenerateKeypair()}
+              className="inline-flex items-center gap-1 border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100"
+            >
+              <KeyRound className="h-3 w-3" />
+              New Keypair
+            </button>
+          </div>
+          <form onSubmit={handleCreateOnChainWallet} className="space-y-3.5 p-5 text-xs">
+            <div>
+              <label className="mb-1 block font-medium text-slate-700">Wallet Name</label>
               <input
                 type="text"
                 required
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
-                placeholder="atlas-creator-wallet"
+                placeholder="treasury-wallet"
                 className="w-full border border-slate-300 px-2.5 py-2 text-xs focus:border-blue-600 focus:outline-none"
               />
             </div>
-            <div>
-              <label className="mb-1 block font-medium text-slate-700">Region Association (Optional)</label>
-              <select
-                value={regionId}
-                onChange={(e) => setRegionId(e.target.value)}
-                className="w-full border border-slate-300 bg-white px-2.5 py-2 font-mono text-xs focus:border-blue-600 focus:outline-none"
-              >
-                <option value="">None (global)</option>
-                {regions.map((r) => (
-                  <option key={r.region_id} value={r.region_id}>
-                    {r.region_name} ({r.region_prefix})
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block font-medium text-slate-700">Sponsor / Creator Wallet (Optional)</label>
-              <select
-                value={creatorWalletId}
-                onChange={(e) => setCreatorWalletId(e.target.value)}
-                className="w-full border border-slate-300 bg-white px-2.5 py-2 font-mono text-xs focus:border-blue-600 focus:outline-none"
-              >
-                <option value="">None (self-sponsored)</option>
-                {wallets.map((w) => (
-                  <option key={w.wallet_id} value={w.wallet_id}>
-                    {w.label} ({shortenHash(w.wallet_id, 8, 6)})
-                  </option>
-                ))}
-              </select>
-            </div>
+            {!ghostWallet && (
+              <div>
+                <label className="mb-1 block font-medium text-slate-700">Region Association</label>
+                <select
+                  value={regionId}
+                  onChange={(e) => setRegionId(e.target.value)}
+                  required={!ghostWallet}
+                  className="w-full border border-slate-300 bg-white px-2.5 py-2 font-mono text-xs focus:border-blue-600 focus:outline-none"
+                >
+                  <option value="">Select Region...</option>
+                  {regions.map((r) => (
+                    <option key={r.region_id} value={r.region_id}>
+                      {r.region_name} ({r.region_prefix ?? r.region_id})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-700">
+              <input
+                type="checkbox"
+                checked={ghostWallet}
+                onChange={(e) => setGhostWallet(e.target.checked)}
+                className="h-3.5 w-3.5 accent-purple-600"
+              />
+              Ghost Wallet (parentless under Network scope)
+            </label>
             <button
               type="submit"
               disabled={submitting}
               className="inline-flex w-full items-center justify-center gap-1.5 bg-blue-600 px-4 py-2.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
             >
               <Plus className="h-3.5 w-3.5" />
-              {submitting ? "Generating Keypair..." : "Create Open Wallet & Keypair"}
+              {submitting ? "Submitting CreateWallet..." : activeSigner ? "Sign & Create On-Chain Wallet" : "Generate Ephemeral Signer"}
             </button>
           </form>
         </section>
 
         <section className="border border-slate-200 bg-white">
           <div className="border-b border-slate-200 px-5 py-3.5">
-            <h2 className="text-sm font-semibold text-slate-900">Unlock / Import Private Key</h2>
-            <p className="text-xs text-slate-500">Paste your 64-char hex private signing key</p>
+            <h2 className="text-sm font-semibold text-slate-900">Import Ed25519 Private Key</h2>
+            <p className="text-xs text-slate-500">Held in browser memory for current session only</p>
           </div>
           <form onSubmit={handleImportWallet} className="space-y-3.5 p-5 text-xs">
             <div>
-              <label className="mb-1 block font-medium text-slate-700">Wallet Label</label>
+              <label className="mb-1 block font-medium text-slate-700">Signer Label</label>
               <input
                 type="text"
                 required
@@ -372,7 +399,7 @@ export function WalletsPanel({
               disabled={importing}
               className="w-full bg-slate-900 px-4 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
             >
-              {importing ? "Importing..." : "Unlock & Register Signer"}
+              {importing ? "Importing..." : "Load In-Memory Signer"}
             </button>
           </form>
         </section>

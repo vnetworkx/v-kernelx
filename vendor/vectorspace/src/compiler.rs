@@ -599,7 +599,12 @@ fn compile_statement_to_op(
                 "ghost": r.ghost,
                 "fields": fields_to_json(&r.fields),
             }),
-            required_scope: "SPACE".to_string(),
+            required_scope: if r.ghost && r.space.trim().is_empty() {
+                "NETWORK"
+            } else {
+                "SPACE"
+            }
+            .to_string(),
             span: Some(r.span),
         },
         Statement::WalletCreate(w) => CompiledOp {
@@ -611,7 +616,12 @@ fn compile_statement_to_op(
                 "ghost": w.ghost,
                 "fields": fields_to_json(&w.fields),
             }),
-            required_scope: "REGION".to_string(),
+            required_scope: if w.ghost && w.region.trim().is_empty() {
+                "NETWORK"
+            } else {
+                "REGION"
+            }
+            .to_string(),
             span: Some(w.span),
         },
         Statement::WalletAuthorize(a) => CompiledOp {
@@ -635,7 +645,12 @@ fn compile_statement_to_op(
                 "ghost": t.ghost,
                 "fields": fields_to_json(&t.fields),
             }),
-            required_scope: "WALLET".to_string(),
+            required_scope: if t.ghost && t.wallet.trim().is_empty() {
+                "NETWORK"
+            } else {
+                "WALLET"
+            }
+            .to_string(),
             span: Some(t.span),
         },
         Statement::VectorDecl(v) => CompiledOp {

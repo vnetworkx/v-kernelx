@@ -21,6 +21,8 @@ pub async fn explorer_network(State(app): State<ApiAppState>) -> Json<serde_json
     };
     let equivocations = app.backend.list_equivocations().await;
 
+    let participants: Vec<_> = state.participants.values().collect();
+    let nodes: Vec<_> = state.nodes.values().collect();
     let spaces: Vec<_> = state.spaces.values().collect();
     let regions: Vec<_> = state.regions.values().collect();
     let wallets: Vec<_> = state.wallets.values().collect();
@@ -30,6 +32,8 @@ pub async fn explorer_network(State(app): State<ApiAppState>) -> Json<serde_json
     let loans: Vec<_> = state.loans.values().collect();
     let programs: Vec<_> = state.programs.values().collect();
     let certificates: Vec<_> = state.certificates.values().collect();
+    let ghost_entities = vnetwork_core::ghost::list_ghost_entities(&state);
+    let ghost_assessment = vnetwork_core::ghost::inspect_ghost_entities(&state).ok();
 
     let mut supply_breakdowns = BTreeMap::new();
     for token in &tokens {
@@ -52,6 +56,8 @@ pub async fn explorer_network(State(app): State<ApiAppState>) -> Json<serde_json
         "consensus": consensus,
         "equivocations": equivocations,
         "peers": peers,
+        "participants": participants,
+        "nodes": nodes,
         "proofs": proofs,
         "proofs_error": proofs_error,
         "replay": replay,
@@ -67,6 +73,8 @@ pub async fn explorer_network(State(app): State<ApiAppState>) -> Json<serde_json
         "contracts": contracts,
         "loans": loans,
         "programs": programs,
+        "ghost_entities": ghost_entities,
+        "ghost_assessment": ghost_assessment,
         "events": state.events,
         "event_history_root": state.event_history_root,
         "certificates": certificates,

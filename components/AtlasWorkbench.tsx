@@ -9,7 +9,6 @@ import {
   Globe,
   KeyRound,
   Network,
-  ShieldCheck,
   Terminal,
   Wallet,
   Menu,
@@ -17,18 +16,24 @@ import {
   X,
 } from "lucide-react";
 import { shortenHash } from "@/lib/format";
+import type { WorkbenchInitialProps } from "@/lib/server/snapshot-mapper";
 import type {
   BrowserSignerKey,
   CanonicalEventDto,
-  ConsensusRoundDto,
-  DrainPolicyDto,
+  ContractDto,
   DrainRewardDto,
+  GhostAssessmentDto,
+  HierarchyCommitmentsDto,
+  LoanDto,
+  NodeDto,
   NodeStatusDto,
+  ParticipantDto,
+  ProgramDto,
   RegionDto,
   ReplayDto,
   SnapshotDto,
+  SpaceDto,
   TokenDto,
-  ValidatorNodeDto,
   VectorRecordDto,
   VectorStateDto,
   WalletDto,
@@ -43,65 +48,64 @@ import { WalletsPanel } from "./WalletsPanel";
 
 type NavTab = "overview" | "regions" | "wallets" | "tokens" | "vectors" | "dag" | "sandbox";
 
-interface AtlasWorkbenchProps {
-  initialStatus: NodeStatusDto;
-  initialRegions: RegionDto[];
-  initialWallets: WalletDto[];
-  initialTokens: TokenDto[];
-  initialVectors: VectorStateDto[];
-  initialRewards: DrainRewardDto[];
-  initialValidators: ValidatorNodeDto[];
-  initialRounds: ConsensusRoundDto[];
-  initialEvents: CanonicalEventDto[];
-  initialRecords: VectorRecordDto[];
-  initialSnapshots: SnapshotDto[];
-  drainPolicy?: DrainPolicyDto | null;
-  coreEventHash: string;
-}
-
 const NAV_ITEMS: Array<{ id: NavTab; label: string; icon: typeof Activity }> = [
   { id: "overview", label: "Overview", icon: Activity },
-  { id: "regions", label: "Regions", icon: Globe },
+  { id: "regions", label: "Spaces & Regions", icon: Globe },
   { id: "wallets", label: "Wallets & Signers", icon: Wallet },
   { id: "tokens", label: "Tokens & Drain", icon: Coins },
-  { id: "vectors", label: "Multidimensional Vectors", icon: Network },
+  { id: "vectors", label: "Vectors, Contracts & Loans", icon: Network },
   { id: "dag", label: "DAG & Consensus", icon: GitBranch },
-  { id: "sandbox", label: "Opcode Sandbox", icon: Terminal },
+  { id: "sandbox", label: "Vector Language (.vx)", icon: Terminal },
 ];
 
 export function AtlasWorkbench({
   initialStatus,
+  initialSpaces,
   initialRegions,
   initialWallets,
   initialTokens,
   initialVectors,
   initialRewards,
-  initialValidators,
-  initialRounds,
+  initialParticipants,
+  initialNodes,
+  initialContracts,
+  initialLoans,
+  initialPrograms,
+  ghostAssessment: initialGhostAssessment,
+  hierarchyCommitments: initialHierarchyCommitments,
   initialEvents,
   initialRecords,
   initialSnapshots,
   drainPolicy,
-  coreEventHash,
-}: AtlasWorkbenchProps) {
+}: WorkbenchInitialProps) {
   const [activeTab, setActiveTab] = useState<NavTab>("overview");
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [status, setStatus] = useState<NodeStatusDto>(initialStatus);
+  const [spaces, setSpaces] = useState<SpaceDto[]>(initialSpaces);
   const [regions, setRegions] = useState<RegionDto[]>(initialRegions);
   const [wallets, setWallets] = useState<WalletDto[]>(initialWallets);
   const [tokens, setTokens] = useState<TokenDto[]>(initialTokens);
   const [vectors, setVectors] = useState<VectorStateDto[]>(initialVectors);
   const [rewards, setRewards] = useState<DrainRewardDto[]>(initialRewards);
-  const [validators, setValidators] = useState<ValidatorNodeDto[]>(initialValidators);
-  const [rounds, setRounds] = useState<ConsensusRoundDto[]>(initialRounds);
+  const [participants, setParticipants] = useState<ParticipantDto[]>(initialParticipants);
+  const [nodes, setNodes] = useState<NodeDto[]>(initialNodes);
+  const [contracts, setContracts] = useState<ContractDto[]>(initialContracts);
+  const [loans, setLoans] = useState<LoanDto[]>(initialLoans);
+  const [programs, setPrograms] = useState<ProgramDto[]>(initialPrograms);
+  const [ghostAssessment, setGhostAssessment] = useState<GhostAssessmentDto | null>(
+    initialGhostAssessment,
+  );
+  const [hierarchyCommitments, setHierarchyCommitments] =
+    useState<HierarchyCommitmentsDto | null>(initialHierarchyCommitments);
   const [events, setEvents] = useState<CanonicalEventDto[]>(initialEvents);
   const [records, setRecords] = useState<VectorRecordDto[]>(initialRecords);
   const [snapshots, setSnapshots] = useState<SnapshotDto[]>(initialSnapshots);
 
-  // Client-side browser signer keyring
+  // Ephemeral in-memory secrets only
   const [signerKeys, setSignerKeys] = useState<Record<string, BrowserSignerKey>>({});
   const [activeSignerId, setActiveSignerId] = useState<string | null>(null);
+  const [adminToken, setAdminToken] = useState("");
 
   const [refreshing, setRefreshing] = useState(false);
   const [toast, setToast] = useState<{ kind: "success" | "error"; message: string } | null>(null);
@@ -116,53 +120,42 @@ export function AtlasWorkbench({
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [statusRes, regionsRes, walletsRes, tokensRes, vectorsRes, consensusRes, eventsRes, recordsRes, snapsRes] =
-        await Promise.all([
-          fetch("/api/status"),
-          fetch("/api/regions"),
-          fetch("/api/wallets"),
-          fetch("/api/tokens"),
-          fetch("/api/vectors"),
-          fetch("/api/consensus"),
-          fetch("/api/events"),
-          fetch("/api/records"),
-          fetch("/api/snapshot"),
-        ]);
+      const [explorerRes, vectorsRes, recordsRes] = await Promise.all([
+        fetch("/api/explorer"),
+        fetch("/api/vectors"),
+        fetch("/api/records"),
+      ]);
 
-      if (statusRes.ok) setStatus((await statusRes.json()) as NodeStatusDto);
-      if (regionsRes.ok) {
-        const d = (await regionsRes.json()) as { regions: RegionDto[] };
-        setRegions(d.regions);
-      }
-      if (walletsRes.ok) {
-        const d = (await walletsRes.json()) as { wallets: WalletDto[] };
-        setWallets(d.wallets);
-      }
-      if (tokensRes.ok) {
-        const d = (await tokensRes.json()) as { tokens: TokenDto[] };
-        setTokens(d.tokens);
+      if (explorerRes.ok) {
+        const d = (await explorerRes.json()) as { mapped?: WorkbenchInitialProps };
+        if (d.mapped) {
+          setStatus(d.mapped.initialStatus);
+          setSpaces(d.mapped.initialSpaces);
+          setRegions(d.mapped.initialRegions);
+          setWallets(d.mapped.initialWallets);
+          setTokens(d.mapped.initialTokens);
+          setParticipants(d.mapped.initialParticipants);
+          setNodes(d.mapped.initialNodes);
+          setContracts(d.mapped.initialContracts);
+          setLoans(d.mapped.initialLoans);
+          setPrograms(d.mapped.initialPrograms);
+          setGhostAssessment(d.mapped.ghostAssessment);
+          setHierarchyCommitments(d.mapped.hierarchyCommitments);
+          setEvents(d.mapped.initialEvents);
+          setSnapshots(d.mapped.initialSnapshots);
+        }
       }
       if (vectorsRes.ok) {
-        const d = (await vectorsRes.json()) as { vectors: VectorStateDto[]; rewards?: DrainRewardDto[] };
-        setVectors(d.vectors ?? []);
+        const d = (await vectorsRes.json()) as {
+          vectors?: VectorStateDto[];
+          rewards?: DrainRewardDto[];
+        };
+        if (d.vectors) setVectors(d.vectors);
         if (d.rewards) setRewards(d.rewards);
       }
-      if (consensusRes.ok) {
-        const d = (await consensusRes.json()) as { validators?: ValidatorNodeDto[]; rounds?: ConsensusRoundDto[] };
-        if (d.validators) setValidators(d.validators);
-        if (d.rounds) setRounds(d.rounds);
-      }
-      if (eventsRes.ok) {
-        const d = (await eventsRes.json()) as { events: CanonicalEventDto[] };
-        setEvents(d.events);
-      }
       if (recordsRes.ok) {
-        const d = (await recordsRes.json()) as { records: VectorRecordDto[] };
-        setRecords(d.records);
-      }
-      if (snapsRes.ok) {
-        const d = (await snapsRes.json()) as { snapshots: SnapshotDto[] };
-        setSnapshots(d.snapshots);
+        const d = (await recordsRes.json()) as { records?: VectorRecordDto[] };
+        if (d.records) setRecords(d.records);
       }
     } catch (err) {
       notify("error", err instanceof Error ? err.message : "Failed to refresh node state");
@@ -182,7 +175,7 @@ export function AtlasWorkbench({
     notify(
       data.matches_stored_state ? "success" : "error",
       data.matches_stored_state
-        ? `Replay verified (${data.applied_event_hashes.length} canonical events)`
+        ? `Replay verified (${data.events_replayed ?? data.applied_event_hashes.length} canonical events)`
         : `Replay mismatch: ${data.mismatch_reasons.join("; ")}`,
     );
     return data;
@@ -190,19 +183,24 @@ export function AtlasWorkbench({
 
   async function handleCreateSnapshot() {
     const res = await fetch("/api/snapshot", { method: "POST" });
-    const data = (await res.json()) as { snapshot?: SnapshotDto; verified?: boolean; error?: string };
+    const data = (await res.json()) as { snapshot?: SnapshotDto; error?: string };
     if (!res.ok || !data.snapshot) {
-      notify("error", data.error ?? "Snapshot creation failed");
+      notify("error", data.error ?? "Snapshot inspection failed");
       return;
     }
     await refreshAll();
-    notify("success", `Snapshot ${shortenHash(data.snapshot.snapshot_id, 10, 6)} stored & verified`);
+    notify("success", `Checkpoint ${shortenHash(data.snapshot.snapshot_id, 10, 6)} verified`);
   }
 
-  async function handleCreateBackup(filename?: string) {
+  async function handleCreateBackup(filename?: string, explicitAdminToken?: string) {
+    const tokenToSend = (explicitAdminToken ?? adminToken).trim();
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (tokenToSend) {
+      headers["X-Admin-Token"] = tokenToSend;
+    }
     const res = await fetch("/api/backup", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(filename ? { filename } : {}),
     });
     const data = (await res.json()) as { backup_path?: string; error?: string };
@@ -258,7 +256,7 @@ export function AtlasWorkbench({
 
         <div className="border-t border-slate-200 p-4">
           <div className="mb-1 text-[10px] font-medium uppercase text-slate-400">Active Signer</div>
-          <div className="font-mono text-xs font-semibold text-slate-800 truncate">
+          <div className="truncate font-mono text-xs font-semibold text-slate-800">
             {activeSigner ? activeSigner.label : "None Selected"}
           </div>
           <button
@@ -334,7 +332,6 @@ export function AtlasWorkbench({
 
       {/* Main Content Shell */}
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* 3-Zone Top Bar */}
         <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
             <button
@@ -353,7 +350,7 @@ export function AtlasWorkbench({
           </div>
 
           <div className="hidden items-center gap-2 font-mono text-[11px] text-slate-500 md:flex">
-            <span>{regions[0]?.region_prefix ?? "ATL"}</span>
+            <span>{regions[0]?.region_prefix ?? "NET"}</span>
             <span>·</span>
             <span>{status.event_count} events</span>
             <span>·</span>
@@ -363,7 +360,9 @@ export function AtlasWorkbench({
                   ? "text-emerald-700"
                   : status.replay_status === "INVALID"
                     ? "text-red-700"
-                    : "text-amber-700"
+                    : status.replay_status === "UNAVAILABLE"
+                      ? "text-slate-500"
+                      : "text-amber-700"
               }
             >
               replay {status.replay_status.toLowerCase()}
@@ -411,9 +410,16 @@ export function AtlasWorkbench({
           {activeTab === "overview" && (
             <OverviewPanel
               status={status}
+              spaces={spaces}
               regions={regions}
               wallets={wallets}
               tokens={tokens}
+              participants={participants}
+              nodes={nodes}
+              contracts={contracts}
+              loans={loans}
+              ghostAssessment={ghostAssessment}
+              hierarchyCommitments={hierarchyCommitments}
               events={events}
               snapshots={snapshots}
               hasSession={true}
@@ -426,9 +432,9 @@ export function AtlasWorkbench({
           )}
           {activeTab === "regions" && (
             <RegionsPanel
+              networkId={status.network_name}
+              spaces={spaces}
               regions={regions}
-              wallets={wallets}
-              coreEventHash={coreEventHash}
               signerKeys={signerKeys}
               activeSignerId={activeSignerId}
               onOpenWallets={() => setActiveTab("wallets")}
@@ -438,6 +444,7 @@ export function AtlasWorkbench({
           )}
           {activeTab === "wallets" && (
             <WalletsPanel
+              networkId={status.network_name}
               wallets={wallets}
               regions={regions}
               signerKeys={signerKeys}
@@ -456,9 +463,9 @@ export function AtlasWorkbench({
           )}
           {activeTab === "tokens" && (
             <TokensPanel
+              networkId={status.network_name}
               tokens={tokens}
               wallets={wallets}
-              regions={regions}
               rewards={rewards}
               drainPolicy={drainPolicy}
               signerKeys={signerKeys}
@@ -470,8 +477,13 @@ export function AtlasWorkbench({
           )}
           {activeTab === "vectors" && (
             <VectorsPanel
+              networkId={status.network_name}
               regions={regions}
               wallets={wallets}
+              tokens={tokens}
+              contracts={contracts}
+              loans={loans}
+              initialVectors={vectors}
               signerKeys={signerKeys}
               activeSignerId={activeSignerId}
               onOpenWallets={() => setActiveTab("wallets")}
@@ -485,13 +497,24 @@ export function AtlasWorkbench({
               records={records}
               snapshots={snapshots}
               hasSession={true}
-              adminToken={null}
+              adminToken={adminToken}
+              onAdminTokenChange={setAdminToken}
               onOpenAuth={() => setActiveTab("wallets")}
               onCreateSnapshot={handleCreateSnapshot}
               onCreateBackup={handleCreateBackup}
             />
           )}
-          {activeTab === "sandbox" && <SandboxPanel />}
+          {activeTab === "sandbox" && (
+            <SandboxPanel
+              networkId={status.network_name}
+              programs={programs}
+              signerKeys={signerKeys}
+              activeSignerId={activeSignerId}
+              onOpenWallets={() => setActiveTab("wallets")}
+              onRefresh={refreshAll}
+              onNotify={notify}
+            />
+          )}
         </main>
       </div>
     </div>

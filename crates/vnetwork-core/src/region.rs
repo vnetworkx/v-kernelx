@@ -18,32 +18,45 @@ pub fn apply_create_region(
     metadata: BTreeMap<String, String>,
     timestamp_ms: u64,
 ) -> VResult<(RegionEntity, LedgerEvent)> {
-    let parent_space = verify_space_exists(state, space_ref)?.clone();
-    let is_parent_owner = parent_space.owner_pubkey == actor_pubkey
-        && require_participant_scope_at(
-            state,
-            actor_pubkey,
-            ParticipationLevel::Space,
-            Some(&parent_space.space_id),
-            timestamp_ms,
-        )
-        .is_ok();
-    if !is_parent_owner {
+    let (parent_space_id, parent_space_name) = if ghost && space_ref.trim().is_empty() {
         require_participant_scope_at(
             state,
             actor_pubkey,
-            ParticipationLevel::Region,
-            Some(&parent_space.space_id),
+            ParticipationLevel::Network,
+            None,
             timestamp_ms,
         )?;
-    }
-
-    if parent_space.visibility == Visibility::Private && parent_space.owner_pubkey != actor_pubkey {
-        return Err(VNetworkError::Authorization(format!(
-            "cannot create region in private space `{}` owned by another key",
-            parent_space.name
-        )));
-    }
+        (String::new(), "NETWORK".to_string())
+    } else {
+        let parent_space = verify_space_exists(state, space_ref)?.clone();
+        let is_parent_owner = parent_space.owner_pubkey == actor_pubkey
+            && require_participant_scope_at(
+                state,
+                actor_pubkey,
+                ParticipationLevel::Space,
+                Some(&parent_space.space_id),
+                timestamp_ms,
+            )
+            .is_ok();
+        if !is_parent_owner {
+            require_participant_scope_at(
+                state,
+                actor_pubkey,
+                ParticipationLevel::Region,
+                Some(&parent_space.space_id),
+                timestamp_ms,
+            )?;
+        }
+        if parent_space.visibility == Visibility::Private
+            && parent_space.owner_pubkey != actor_pubkey
+        {
+            return Err(VNetworkError::Authorization(format!(
+                "cannot create region in private space `{}` owned by another key",
+                parent_space.name
+            )));
+        }
+        (parent_space.space_id, parent_space.name)
+    };
 
     let clean_name = name.trim();
     if clean_name.is_empty() {
@@ -61,27 +74,26 @@ pub fn apply_create_region(
         .filter(|p| !p.is_empty());
 
     if state.regions.values().any(|r| {
-        r.space_id == parent_space.space_id
+        r.space_id == parent_space_id
             && r.name.eq_ignore_ascii_case(clean_name)
             && r.prefix == norm_prefix
     }) {
         return Err(VNetworkError::AlreadyExists(format!(
-            "region `{clean_name}` already exists in space `{}`",
-            parent_space.name
+            "region `{clean_name}` already exists in `{parent_space_name}`",
         )));
     }
 
-    let region_id = derive_region_id(&parent_space.space_id, clean_name, norm_prefix.as_deref());
+    let region_id = derive_region_id(&parent_space_id, clean_name, norm_prefix.as_deref());
     let region = RegionEntity {
         region_id: region_id.clone(),
-        space_id: parent_space.space_id.clone(),
+        space_id: parent_space_id,
         name: clean_name.to_string(),
         prefix: norm_prefix,
         title: title.filter(|t| !t.trim().is_empty()),
         visibility,
         section: section.max(1),
         ghost,
-        auth_ratio_bps: 1_000,
+        auth_ratio_bps: state.consensus_parameters.initial_region_auth_ratio_bps,
         creator_pubkey: actor_pubkey.to_string(),
         created_at_ms: timestamp_ms,
         version: 1,

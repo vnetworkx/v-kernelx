@@ -296,3 +296,63 @@ test("TypeScript Browser SDK verify and canonical objects match parity via runti
   execFileSync(tsCmd, ["--input-type=module", "-e", script], { cwd: ROOT, stdio: "pipe" });
 });
 
+test("JS, Browser-JS, TS, and Browser-TS expose full contracts, loans, explorer, and signed envelope APIs", async () => {
+  const { VectorNetworkClient } = await import(path.join(ROOT, "sdks/javascript/index.js"));
+  const {
+    BrowserVectorNetworkClient,
+    browserKeypairFromPrivateHex,
+    normalizeVerificationStatus,
+  } = await import(path.join(ROOT, "sdks/javascript/browser.js"));
+
+  assert.equal(normalizeVerificationStatus("UNKNOWN"), "UNAVAILABLE");
+  assert.equal(normalizeVerificationStatus("VERIFIED"), "VERIFIED");
+
+  const jsIdent = JsIdentity.fromKeys("api", "11".repeat(32), "22".repeat(32));
+  const jsClient = new VectorNetworkClient("http://127.0.0.1:8080", jsIdent, "vector-devnet-1");
+  const browserIdent = await browserKeypairFromPrivateHex("participant", "11".repeat(32));
+  const bClient = new BrowserVectorNetworkClient("http://127.0.0.1:8080", browserIdent, "vector-devnet-1");
+
+  const requiredMethods = [
+    "listSpaces",
+    "listNodes",
+    "getNodeDetails",
+    "getExplorerNetwork",
+    "listContracts",
+    "getContract",
+    "listLoans",
+    "getLoan",
+    "createContract",
+    "executeContract",
+    "createLoan",
+    "executeLoan",
+    "submitOperation",
+  ];
+  for (const m of requiredMethods) {
+    assert.equal(typeof jsClient[m], "function", `JS VectorNetworkClient missing ${m}`);
+    assert.equal(typeof bClient[m], "function", `BrowserVectorNetworkClient missing ${m}`);
+  }
+
+  let tsCmd = "tsx";
+  try {
+    execFileSync("tsx", ["--version"], { stdio: "ignore" });
+  } catch {
+    tsCmd = "bun";
+  }
+  const tsCheck = `
+    import assert from "node:assert/strict";
+    import { VectorNetworkClient, ClientIdentity } from "./sdks/typescript/src/index.js";
+    import { BrowserVectorNetworkClient, browserKeypairFromPrivateHex } from "./sdks/typescript/src/browser.js";
+
+    const id = ClientIdentity.fromKeys("api", "11".repeat(32), "22".repeat(32));
+    const c = new VectorNetworkClient("http://127.0.0.1:8080", id, "vector-devnet-1");
+    const kp = await browserKeypairFromPrivateHex("participant", "11".repeat(32));
+    const bc = new BrowserVectorNetworkClient("http://127.0.0.1:8080", kp, "vector-devnet-1");
+    for (const m of ${JSON.stringify(requiredMethods)}) {
+      assert.equal(typeof (c as any)[m], "function", "TS VectorNetworkClient missing " + m);
+      assert.equal(typeof (bc as any)[m], "function", "TS BrowserVectorNetworkClient missing " + m);
+    }
+  `;
+  execFileSync(tsCmd, ["--input-type=module", "-e", tsCheck], { cwd: ROOT, stdio: "pipe" });
+});
+
+

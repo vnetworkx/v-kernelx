@@ -1,66 +1,166 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Play, RotateCcw, Sparkles } from "lucide-react";
-import type { VectorRecordDto, VectorStateDto } from "@/lib/types";
+import { useState } from "react";
+import { CheckCircle2, Code2, Play, Send } from "lucide-react";
+import { formatTimestampMs, shortenHash } from "@/lib/format";
+import { signProgramSubmissionClient } from "@/lib/client-crypto";
+import type { BrowserSignerKey, ProgramDto } from "@/lib/types";
 
-const DEFAULT_SCRIPT = `ORIGIN_CREATE {"vectorId":"v-alpha","ownerPubkey":"pk-alpha","spaceId":"space-1","components":[1000,2000],"seed":"seed-a","nonce":29,"difficulty":1}
-ORIGIN_CREATE {"vectorId":"v-beta","ownerPubkey":"pk-beta","spaceId":"space-1","components":[50,75],"seed":"seed-b","nonce":6,"difficulty":1}
-TRANSFER {"from":"v-alpha","to":"v-beta","amount":[250,250]}
-DRAIN {"vectorId":"v-alpha","basisPoints":100}
-PROJECT {"vectorId":"v-beta","projectedComponents":[10,10],"escrowId":"escrow-1"}
-RECONSTRUCT {"vectorId":"v-beta","gains":[2,1],"losses":[0,0],"outcomeTag":"settled"}`;
+interface SandboxPanelProps {
+  networkId: string;
+  programs: ProgramDto[];
+  signerKeys: Record<string, BrowserSignerKey>;
+  activeSignerId: string | null;
+  onOpenWallets: () => void;
+  onRefresh: () => Promise<void>;
+  onNotify: (kind: "success" | "error", msg: string) => void;
+}
 
-export function SandboxPanel() {
-  const [script, setScript] = useState(DEFAULT_SCRIPT);
-  const [output, setOutput] = useState<string>("");
-  const [vectors, setVectors] = useState<VectorStateDto[]>([]);
-  const [records, setRecords] = useState<VectorRecordDto[]>([]);
-  const [busy, setBusy] = useState(false);
+const TEMPLATES: Record<string, { fileName: string; source: string }> = {
+  workflow: {
+    fileName: "workflow.vx",
+    source: `space create AppSpace {
+    name = "Application Space";
+    visibility = "public";
+}
 
-  async function refreshSandbox() {
-    const res = await fetch("/api/sandbox");
-    if (!res.ok) return;
-    const data = (await res.json()) as {
-      vectors?: VectorStateDto[];
-      records?: VectorRecordDto[];
-    };
-    setVectors(data.vectors ?? []);
-    setRecords(data.records ?? []);
+region create AppRegion in "AppSpace" {
+    name = "App Region";
+    prefix = "APP";
+    visibility = "public";
+    section = 1;
+}
+
+query network;
+verify proof network;`,
+  },
+  contract: {
+    fileName: "escrow-contract.vx",
+    source: `contract create EscrowContract {
+    region = "AppRegion";
+    escrow_mode = "deterministic";
+    action settle(recipient="BeneficiaryWallet", amount=100);
+    action release(memo="released");
+}
+
+query network;`,
+  },
+  ghost: {
+    fileName: "ghost-entity.vx",
+    source: `// Parentless Ghost entities bind directly to Network scope
+region create GhostRegion {
+    name = "Ghost Region";
+    prefix = "GHO";
+    visibility = "private";
+    section = 99;
+    ghost = true;
+}
+
+query network;`,
+  },
+};
+
+export function SandboxPanel({
+  networkId,
+  programs,
+  signerKeys,
+  activeSignerId,
+  onOpenWallets,
+  onRefresh,
+  onNotify,
+}: SandboxPanelProps) {
+  const [fileName, setFileName] = useState("workflow.vx");
+  const [sourceBytes, setSourceBytes] = useState(TEMPLATES.workflow.source);
+  const [compileOutput, setCompileOutput] = useState<string>("");
+  const [busyMode, setBusyMode] = useState<"compile" | "submit" | null>(null);
+
+  const activeSigner = activeSignerId ? signerKeys[activeSignerId] : null;
+
+  function loadTemplate(key: keyof typeof TEMPLATES) {
+    const tpl = TEMPLATES[key];
+    setFileName(tpl.fileName);
+    setSourceBytes(tpl.source);
+    setCompileOutput("");
   }
 
-  useEffect(() => {
-    void refreshSandbox();
-  }, []);
-
-  async function runAction(action: "execute" | "demo" | "reset") {
-    setBusy(true);
+  async function handleCompile() {
+    setBusyMode("compile");
     try {
       const res = await fetch("/api/sandbox", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(action === "execute" ? { action, script } : { action }),
+        body: JSON.stringify({
+          action: "compile",
+          file_name: fileName.trim() || "program.vx",
+          source_bytes: sourceBytes,
+          modules: {},
+        }),
       });
       const data = (await res.json()) as {
-        output?: string | string[];
-        vectors?: VectorStateDto[];
-        records?: VectorRecordDto[];
+        compiled?: unknown;
         error?: string;
       };
       if (!res.ok) {
-        setOutput(`Error: ${data.error ?? "Sandbox execution failed"}`);
+        setCompileOutput(`Compile Error: ${data.error ?? "Compiler rejected source"}`);
+        onNotify("error", data.error ?? "Vector Language compilation failed");
         return;
       }
-      const formattedOutput = Array.isArray(data.output)
-        ? data.output.join("\n")
-        : (data.output ?? "");
-      setOutput(formattedOutput);
-      setVectors(data.vectors ?? []);
-      setRecords(data.records ?? []);
+      setCompileOutput(JSON.stringify(data.compiled, null, 2));
+      onNotify("success", `Compiled ${fileName} cleanly via Rust vectorspace compiler`);
     } catch (err) {
-      setOutput(`Error: ${err instanceof Error ? err.message : "Sandbox request failed"}`);
+      const msg = err instanceof Error ? err.message : "Compile request failed";
+      setCompileOutput(`Compile Error: ${msg}`);
+      onNotify("error", msg);
     } finally {
-      setBusy(false);
+      setBusyMode(null);
+    }
+  }
+
+  async function handleSubmitSignedProgram() {
+    if (!activeSigner) {
+      onNotify("error", "Unlock or generate an Ed25519 signer in Wallets before submitting a .vx program.");
+      onOpenWallets();
+      return;
+    }
+    setBusyMode("submit");
+    try {
+      const signed = await signProgramSubmissionClient({
+        privateKeyHex: activeSigner.private_key_hex,
+        actorPubkey: activeSigner.public_key_hex,
+        fileName: fileName.trim() || "program.vx",
+        sourceBytes,
+        modules: {},
+        networkId,
+        requestId: `vx_${Date.now()}`,
+        nonce: Date.now(),
+        executionParams: {},
+      });
+      const res = await fetch("/api/sandbox", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "submit",
+          ...signed,
+        }),
+      });
+      const data = (await res.json()) as {
+        submission?: unknown;
+        error?: string;
+      };
+      if (!res.ok) {
+        setCompileOutput(`Submission Error: ${data.error ?? "Program rejected"}`);
+        onNotify("error", data.error ?? "Program submission failed");
+        return;
+      }
+      setCompileOutput(JSON.stringify(data.submission, null, 2));
+      await onRefresh();
+      onNotify("success", `Signed program ${fileName} committed to Rust kernel`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Program submission failed";
+      setCompileOutput(`Submission Error: ${msg}`);
+      onNotify("error", msg);
+    } finally {
+      setBusyMode(null);
     }
   }
 
@@ -70,59 +170,85 @@ export function SandboxPanel() {
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-3.5">
           <div>
             <h2 className="text-sm font-semibold text-slate-900">
-              VectorKernelX Opcode Sandbox
+              Vector Language (.vx / .vdx) Workbench
             </h2>
             <p className="text-xs text-slate-500">
-              Isolated compiler &amp; verifier preview (does not mutate persistent WAL ledger)
+              Compile through Rust vectorspace compiler or sign &amp; execute directly against /v1/programs/submit
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
-              onClick={() => void runAction("demo")}
-              disabled={busy}
-              className="inline-flex items-center gap-1 border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+              onClick={() => loadTemplate("workflow")}
+              className="border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
             >
-              <Sparkles className="h-3.5 w-3.5 text-blue-600" />
-              Load Demo
+              Space &amp; Region
             </button>
             <button
               type="button"
-              onClick={() => void runAction("reset")}
-              disabled={busy}
-              className="inline-flex items-center gap-1 border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              onClick={() => loadTemplate("contract")}
+              className="border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
             >
-              <RotateCcw className="h-3.5 w-3.5" />
-              Reset
+              vContract
+            </button>
+            <button
+              type="button"
+              onClick={() => loadTemplate("ghost")}
+              className="border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+            >
+              Ghost Entity
             </button>
           </div>
         </div>
 
-        <div className="space-y-3 p-5">
+        <div className="space-y-3 p-5 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <label className="font-medium text-slate-700">Filename:</label>
+              <input
+                type="text"
+                value={fileName}
+                onChange={(e) => setFileName(e.target.value)}
+                className="border border-slate-300 px-2.5 py-1 font-mono text-xs focus:border-blue-600 focus:outline-none"
+              />
+            </div>
+            <div className="font-mono text-[11px] text-slate-500">
+              Signer: {activeSigner ? activeSigner.label : "None unlocked (compile still works)"}
+            </div>
+          </div>
+
           <textarea
-            value={script}
-            onChange={(e) => setScript(e.target.value)}
-            rows={9}
+            value={sourceBytes}
+            onChange={(e) => setSourceBytes(e.target.value)}
+            rows={12}
             spellCheck={false}
             className="w-full border border-slate-300 bg-slate-950 p-3.5 font-mono text-xs leading-relaxed text-slate-100 focus:border-blue-600 focus:outline-none"
           />
-          <div className="flex items-center justify-between">
-            <span className="font-mono text-[11px] text-slate-500">
-              Opcodes: ORIGIN_CREATE · TRANSFER · DRAIN · PROJECT · RECONSTRUCT · CERTIFY
-            </span>
+
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <button
               type="button"
-              onClick={() => void runAction("execute")}
-              disabled={busy}
+              onClick={() => void handleCompile()}
+              disabled={busyMode !== null}
+              className="inline-flex items-center gap-1.5 border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+            >
+              <Code2 className="h-3.5 w-3.5 text-blue-600" />
+              {busyMode === "compile" ? "Compiling..." : "Compile & Verify"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSubmitSignedProgram()}
+              disabled={busyMode !== null}
               className="inline-flex items-center gap-1.5 bg-blue-600 px-4 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
-              <Play className="h-3.5 w-3.5" />
-              {busy ? "Running..." : "Execute Script"}
+              <Send className="h-3.5 w-3.5" />
+              {busyMode === "submit" ? "Submitting Signed .vx..." : "Sign & Execute (.vx)"}
             </button>
           </div>
-          {output && (
-            <pre className="max-h-48 overflow-auto border border-slate-200 bg-slate-50 p-3 font-mono text-[11px] text-slate-800">
-              {output}
+
+          {compileOutput && (
+            <pre className="max-h-64 overflow-auto border border-slate-200 bg-slate-50 p-3 font-mono text-[11px] text-slate-800">
+              {compileOutput}
             </pre>
           )}
         </div>
@@ -130,64 +256,48 @@ export function SandboxPanel() {
 
       <section className="space-y-6">
         <div className="border border-slate-200 bg-white">
-          <div className="border-b border-slate-200 px-5 py-3.5">
-            <h3 className="text-sm font-semibold text-slate-900">
-              Sandbox Vector States ({vectors.length})
-            </h3>
+          <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900">
+                Committed Network Programs ({programs.length})
+              </h3>
+              <p className="text-xs text-slate-500">
+                Verified .vx / .vdx program executions persisted in canonical ledger state
+              </p>
+            </div>
+            <Play className="h-4 w-4 text-slate-400" />
           </div>
-          {vectors.length === 0 ? (
-            <div className="px-5 py-8 text-center text-xs text-slate-500">
-              Run a script or click &ldquo;Load Demo&rdquo; to populate in-memory vectors.
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-left text-xs">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-medium uppercase tracking-wider text-slate-500">
-                    <th className="px-5 py-2.5">Vector ID</th>
-                    <th className="px-4 py-2.5">Type</th>
-                    <th className="px-4 py-2.5">Status</th>
-                    <th className="px-5 py-2.5 text-right">Components</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {vectors.map((v) => (
-                    <tr key={v.vectorId} className="hover:bg-slate-50">
-                      <td className="px-5 py-2.5 font-mono font-medium text-slate-900">
-                        {v.vectorId}
-                      </td>
-                      <td className="px-4 py-2.5 font-mono text-slate-600">{v.vectorType}</td>
-                      <td className="px-4 py-2.5 font-mono text-slate-700">{v.status}</td>
-                      <td className="px-5 py-2.5 text-right font-mono tabular-nums text-slate-900">
-                        [{v.components.join(", ")}]
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
 
-        <div className="border border-slate-200 bg-white">
-          <div className="border-b border-slate-200 px-5 py-3.5">
-            <h3 className="text-sm font-semibold text-slate-900">
-              Transition Trace ({records.length})
-            </h3>
-          </div>
-          {records.length === 0 ? (
-            <div className="px-5 py-6 text-xs text-slate-500">No sandbox transitions executed.</div>
+          {programs.length === 0 ? (
+            <div className="px-5 py-8 text-center text-xs text-slate-500">
+              No Vector Language programs committed to this node yet.
+            </div>
           ) : (
-            <div className="max-h-64 divide-y divide-slate-100 overflow-auto px-5 text-xs">
-              {records.map((r) => (
-                <div key={r.recordId} className="flex items-center justify-between py-2.5">
-                  <div>
-                    <span className="font-mono font-medium text-slate-900">{r.operation}</span>
-                    <span className="ml-2 font-mono text-slate-500">{r.vectorId}</span>
+            <div className="divide-y divide-slate-100">
+              {[...programs].reverse().map((prog) => (
+                <div key={prog.program_id} className="space-y-1.5 p-4 text-xs">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 font-mono font-semibold text-slate-900">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                      <span>{prog.file_name}</span>
+                      <span className="text-slate-400">· {prog.program_id}</span>
+                    </div>
+                    <span className="font-mono text-[11px] text-slate-500">
+                      {prog.status} · {formatTimestampMs(prog.submitted_at_ms)}
+                    </span>
                   </div>
-                  <span className="font-mono tabular-nums text-slate-600">
-                    [{r.after.components.join(", ")}]
-                  </span>
+                  <div className="font-mono text-[11px] text-slate-500">
+                    source={shortenHash(prog.source_hash, 12, 8)} · events=
+                    {prog.resulting_event_ids.length} · entities={prog.created_entities.length}
+                  </div>
+                  {prog.outputs.length > 0 && (
+                    <pre className="max-h-28 overflow-auto border border-slate-100 bg-slate-50 p-2 font-mono text-[11px] text-slate-700">
+                      {prog.outputs.join("\n")}
+                    </pre>
+                  )}
+                  {prog.error_message && (
+                    <div className="font-mono text-[11px] text-red-700">{prog.error_message}</div>
+                  )}
                 </div>
               ))}
             </div>

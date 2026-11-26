@@ -141,10 +141,11 @@ pub fn validate_program_semantics(
                 table.declare(&s.name, SymbolKind::Space, Some(s.span))?;
             }
             Statement::RegionCreate(r) => {
-                if r.name.trim().is_empty() || r.space.trim().is_empty() {
+                if r.name.trim().is_empty() || (!r.ghost && r.space.trim().is_empty()) {
                     return Err(RuntimeError::with_span(
                         RuntimeErrorKind::Validation(
-                            "region name and parent space cannot be empty".to_string(),
+                            "region name cannot be empty, and non-ghost regions require a parent space"
+                                .to_string(),
                         ),
                         r.span,
                     ));
@@ -156,10 +157,11 @@ pub fn validate_program_semantics(
                 table.declare(&r.name, SymbolKind::Region, Some(r.span))?;
             }
             Statement::WalletCreate(w) => {
-                if w.name.trim().is_empty() || w.region.trim().is_empty() {
+                if w.name.trim().is_empty() || (!w.ghost && w.region.trim().is_empty()) {
                     return Err(RuntimeError::with_span(
                         RuntimeErrorKind::Validation(
-                            "wallet name and parent region cannot be empty".to_string(),
+                            "wallet name cannot be empty, and non-ghost wallets require a parent region"
+                                .to_string(),
                         ),
                         w.span,
                     ));
@@ -175,10 +177,11 @@ pub fn validate_program_semantics(
                 }
             }
             Statement::TokenCreate(t) => {
-                if t.name.trim().is_empty() || t.wallet.trim().is_empty() {
+                if t.name.trim().is_empty() || (!t.ghost && t.wallet.trim().is_empty()) {
                     return Err(RuntimeError::with_span(
                         RuntimeErrorKind::Validation(
-                            "token name and parent wallet cannot be empty".to_string(),
+                            "token name cannot be empty, and non-ghost tokens require a parent wallet"
+                                .to_string(),
                         ),
                         t.span,
                     ));

@@ -611,6 +611,192 @@ impl VectorNetworkClient {
         parse_json_response(resp).await
     }
 
+    pub async fn post_json(
+        &self,
+        path: &str,
+        payload: &serde_json::Value,
+    ) -> VResult<serde_json::Value> {
+        let url = format!("{}{}", self.base_url, path);
+        let resp = self
+            .http
+            .post(&url)
+            .json(payload)
+            .send()
+            .await
+            .map_err(|e| VNetworkError::Storage(e.to_string()))?;
+        parse_json_response(resp).await
+    }
+
+    pub async fn network_info(&self) -> VResult<serde_json::Value> {
+        self.get_json("/v1/network/info").await
+    }
+
+    pub async fn network_status(&self) -> VResult<serde_json::Value> {
+        self.get_json("/v1/network/status").await
+    }
+
+    pub async fn list_nodes(&self) -> VResult<serde_json::Value> {
+        self.get_json("/v1/nodes").await
+    }
+
+    pub async fn get_node_details(&self, node_id: &str) -> VResult<serde_json::Value> {
+        self.get_json(&format!("/v1/nodes/{node_id}")).await
+    }
+
+    pub async fn explorer_network(&self) -> VResult<serde_json::Value> {
+        self.get_json("/v1/explorer/network").await
+    }
+
+    pub async fn compile_source(
+        &self,
+        file_name: &str,
+        source_bytes: &str,
+        modules: BTreeMap<String, String>,
+    ) -> VResult<serde_json::Value> {
+        self.post_json(
+            "/v1/language/compile",
+            &serde_json::json!({
+                "file_name": file_name,
+                "source_bytes": source_bytes,
+                "modules": modules,
+            }),
+        )
+        .await
+    }
+
+    pub async fn get_program(&self, program_id: &str) -> VResult<serde_json::Value> {
+        self.get_json(&format!("/v1/programs/{program_id}")).await
+    }
+
+    pub async fn get_program_status(&self, program_id: &str) -> VResult<serde_json::Value> {
+        self.get_json(&format!("/v1/programs/{program_id}/status")).await
+    }
+
+    pub async fn get_transaction(&self, tx_id: &str) -> VResult<serde_json::Value> {
+        self.get_json(&format!("/v1/transactions/{tx_id}")).await
+    }
+
+    pub async fn list_spaces(&self) -> VResult<serde_json::Value> {
+        self.get_json("/v1/spaces").await
+    }
+
+    pub async fn list_regions(&self) -> VResult<serde_json::Value> {
+        self.get_json("/v1/regions").await
+    }
+
+    pub async fn list_wallets(&self) -> VResult<serde_json::Value> {
+        self.get_json("/v1/wallets").await
+    }
+
+    pub async fn get_wallet(&self, wallet_id: &str) -> VResult<serde_json::Value> {
+        self.get_json(&format!("/v1/wallets/{wallet_id}")).await
+    }
+
+    pub async fn list_tokens(&self) -> VResult<serde_json::Value> {
+        self.get_json("/v1/tokens").await
+    }
+
+    pub async fn get_token(&self, token_id: &str) -> VResult<serde_json::Value> {
+        self.get_json(&format!("/v1/tokens/{token_id}")).await
+    }
+
+    pub async fn list_contracts(&self) -> VResult<serde_json::Value> {
+        self.get_json("/v1/contracts").await
+    }
+
+    pub async fn get_contract(&self, contract_id: &str) -> VResult<serde_json::Value> {
+        self.get_json(&format!("/v1/contracts/{contract_id}")).await
+    }
+
+    pub async fn list_loans(&self) -> VResult<serde_json::Value> {
+        self.get_json("/v1/loans").await
+    }
+
+    pub async fn get_loan(&self, loan_id: &str) -> VResult<serde_json::Value> {
+        self.get_json(&format!("/v1/loans/{loan_id}")).await
+    }
+
+    pub async fn create_contract(
+        &mut self,
+        name: &str,
+        region_id: Option<String>,
+        rules: serde_json::Value,
+        actions: Vec<serde_json::Value>,
+    ) -> VResult<serde_json::Value> {
+        self.submit_operation(NetworkOperation::CreateContract {
+            name: name.to_string(),
+            region_id,
+            rules,
+            actions,
+        })
+        .await
+    }
+
+    pub async fn execute_contract(
+        &mut self,
+        contract_id: &str,
+        action: &str,
+        args: serde_json::Value,
+    ) -> VResult<serde_json::Value> {
+        self.submit_operation(NetworkOperation::ExecuteContract {
+            contract_id: contract_id.to_string(),
+            action: action.to_string(),
+            args,
+        })
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_loan(
+        &mut self,
+        name: &str,
+        token_id: &str,
+        lender_wallet_id: &str,
+        borrower_wallet_id: &str,
+        principal: u128,
+        collateral: u128,
+        interest_bps: u64,
+        maturity_at_ms: Option<u64>,
+    ) -> VResult<serde_json::Value> {
+        self.submit_operation(NetworkOperation::CreateLoan {
+            name: name.to_string(),
+            token_id: token_id.to_string(),
+            lender_wallet_id: lender_wallet_id.to_string(),
+            borrower_wallet_id: borrower_wallet_id.to_string(),
+            principal,
+            collateral,
+            interest_bps,
+            maturity_at_ms,
+        })
+        .await
+    }
+
+    pub async fn execute_loan(
+        &mut self,
+        loan_id: &str,
+        action: &str,
+        amount: u128,
+    ) -> VResult<serde_json::Value> {
+        self.submit_operation(NetworkOperation::ExecuteLoan {
+            loan_id: loan_id.to_string(),
+            action: action.to_string(),
+            amount,
+        })
+        .await
+    }
+
+    pub async fn ledger_events(&self) -> VResult<serde_json::Value> {
+        self.get_json("/v1/ledger/events").await
+    }
+
+    pub async fn ledger_proofs(&self) -> VResult<serde_json::Value> {
+        self.get_json("/v1/ledger/proofs").await
+    }
+
+    pub async fn consensus_status(&self) -> VResult<serde_json::Value> {
+        self.get_json("/v1/consensus/status").await
+    }
+
     pub async fn verify_ledger_replay(&self) -> VResult<serde_json::Value> {
         self.get_json("/v1/ledger/replay").await
     }
@@ -641,7 +827,6 @@ impl VectorNetworkClient {
             .map_err(|e| VNetworkError::Storage(e.to_string()))?;
         parse_json_response(resp).await
     }
-
     pub async fn subscribe_events(&self) -> VResult<mpsc::Receiver<serde_json::Value>> {
         let ws_base = if let Some(rest) = self.base_url.strip_prefix("https://") {
             format!("wss://{rest}")
@@ -668,6 +853,15 @@ impl VectorNetworkClient {
             }
         });
         Ok(rx)
+    }
+}
+
+pub fn normalize_verification_status(raw: &str) -> VerificationStatus {
+    match raw.trim().to_ascii_uppercase().as_str() {
+        "VERIFIED" => VerificationStatus::Verified,
+        "UNVERIFIED" => VerificationStatus::Unverified,
+        "INVALID" => VerificationStatus::Invalid,
+        _ => VerificationStatus::Unavailable,
     }
 }
 

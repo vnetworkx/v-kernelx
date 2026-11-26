@@ -28,7 +28,7 @@ export async function GET() {
         wal_consistency_ok: false,
         equivocation_store_ok: false,
         equivocation_count: 0,
-        verification_status: upstream.data ? "INVALID" : "UNKNOWN",
+        verification_status: upstream.data ? "INVALID" : "UNAVAILABLE",
         db_integrity_ok: false,
         endpoint: getNetworkApiUrl(),
         error: upstream.error ?? "Upstream Rust node unreachable",
@@ -54,8 +54,8 @@ export async function GET() {
       ? "INVALID"
       : healthy && upstreamStatus === "VERIFIED"
         ? "VERIFIED"
-        : upstreamStatus === "UNVERIFIED" || upstreamStatus === "UNKNOWN" || upstreamStatus === "PENDING"
-          ? upstreamStatus
+        : upstreamStatus === "UNAVAILABLE"
+          ? "UNAVAILABLE"
           : "UNVERIFIED";
 
   return NextResponse.json(

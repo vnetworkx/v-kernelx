@@ -18,10 +18,11 @@ interface DagInspectorPanelProps {
   records: VectorRecordDto[];
   snapshots: SnapshotDto[];
   hasSession: boolean;
-  adminToken: string | null;
+  adminToken: string;
+  onAdminTokenChange: (token: string) => void;
   onOpenAuth: () => void;
   onCreateSnapshot: () => Promise<void>;
-  onCreateBackup: (filename?: string) => Promise<void>;
+  onCreateBackup: (filename?: string, adminToken?: string) => Promise<void>;
 }
 
 export function DagInspectorPanel({
@@ -29,6 +30,8 @@ export function DagInspectorPanel({
   records,
   snapshots,
   hasSession,
+  adminToken,
+  onAdminTokenChange,
   onOpenAuth,
   onCreateSnapshot,
   onCreateBackup,
@@ -121,7 +124,7 @@ export function DagInspectorPanel({
     }
     setBusyAction("backup");
     try {
-      await onCreateBackup(backupFilename || undefined);
+      await onCreateBackup(backupFilename || undefined, adminToken || undefined);
       setBackupFilename("");
     } finally {
       setBusyAction(null);
@@ -181,7 +184,7 @@ export function DagInspectorPanel({
                 Canonical Event DAG ({filteredEvents.length})
               </h2>
               <span className="font-mono text-[11px] text-slate-500">
-                Click any row to inspect payload & signature
+                Click any row to inspect payload &amp; signature
               </span>
             </div>
             <div className="max-h-80 overflow-auto">
@@ -191,6 +194,7 @@ export function DagInspectorPanel({
                     <th className="px-5 py-2.5">Clock</th>
                     <th className="px-4 py-2.5">Operation</th>
                     <th className="px-4 py-2.5">Event Hash</th>
+                    <th className="px-4 py-2.5">Region / Kind</th>
                     <th className="px-4 py-2.5">Parents</th>
                     <th className="px-5 py-2.5 text-right">Timestamp</th>
                   </tr>
@@ -213,6 +217,11 @@ export function DagInspectorPanel({
                       </td>
                       <td className="px-4 py-2.5 font-mono text-slate-600">
                         {shortenHash(ev.event_hash, 12, 8)}
+                      </td>
+                      <td className="px-4 py-2.5 font-mono text-slate-500">
+                        {ev.region_id
+                          ? shortenHash(ev.region_id, 10, 6)
+                          : ev.entity_kind ?? "—"}
                       </td>
                       <td className="px-4 py-2.5 font-mono tabular-nums text-slate-500">
                         {ev.parent_hashes.length === 0
@@ -293,7 +302,7 @@ export function DagInspectorPanel({
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5">
               <div>
                 <h3 className="text-sm font-semibold text-slate-900">
-                  Snapshots ({snapshots.length})
+                  Quorum Certificates &amp; Snapshots ({snapshots.length})
                 </h3>
                 <p className="text-[11px] text-slate-500">Canonical state checkpoints</p>
               </div>
@@ -304,11 +313,11 @@ export function DagInspectorPanel({
                 className="inline-flex items-center gap-1 border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-100"
               >
                 <ShieldCheck className="h-3.5 w-3.5 text-blue-600" />
-                {busyAction === "snapshot" ? "Saving..." : "Create"}
+                {busyAction === "snapshot" ? "Checking..." : "Refresh"}
               </button>
             </div>
             {snapshots.length === 0 ? (
-              <div className="px-5 py-4 text-xs text-slate-500">No snapshots saved yet.</div>
+              <div className="px-5 py-4 text-xs text-slate-500">No certificates or snapshots saved yet.</div>
             ) : (
               <div className="max-h-48 divide-y divide-slate-100 overflow-auto px-5 text-xs">
                 {snapshots.map((snap) => (
@@ -324,7 +333,7 @@ export function DagInspectorPanel({
                       {shortenHash(snap.snapshot_id, 14, 10)}
                     </div>
                     <div className="font-mono text-[11px] text-slate-500">
-                      {snap.verification_status ?? "UNVERIFIED"} · events={snap.event_count} · clock={snap.logical_clock} ·{" "}
+                      {snap.verification_status ?? "UNAVAILABLE"} · events={snap.event_count} · clock={snap.logical_clock} ·{" "}
                       {formatTimestampMs(snap.created_at)}
                     </div>
                   </div>
@@ -337,8 +346,15 @@ export function DagInspectorPanel({
               className="space-y-2 border-t border-slate-200 bg-slate-50/70 p-4 text-xs"
             >
               <label className="block text-[11px] font-medium uppercase tracking-wider text-slate-500">
-                WAL &amp; Checkpoint Backup
+                WAL &amp; Checkpoint Backup (Admin Auth)
               </label>
+              <input
+                type="password"
+                value={adminToken}
+                onChange={(e) => onAdminTokenChange(e.target.value)}
+                placeholder="X-Admin-Token (ATLAS_ADMIN_TOKEN)"
+                className="w-full border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-xs focus:border-blue-600 focus:outline-none"
+              />
               <div className="flex gap-2">
                 <input
                   type="text"

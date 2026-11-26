@@ -154,11 +154,14 @@ pub fn apply_create_loan(
         lender_pubkey: lender.owner_pubkey,
         borrower_pubkey: borrower.owner_pubkey,
         principal,
+        disbursed_amount: 0,
         collateral_locked: collateral,
         repaid_amount: 0,
         accrued_interest: 0,
         interest_bps,
         maturity_at_ms,
+        defaulted: false,
+        repayment_history: Vec::new(),
         status: LoanStatus::Created,
         creator_pubkey: actor_pubkey.to_string(),
         created_at_ms: timestamp_ms,
@@ -221,11 +224,17 @@ pub fn apply_execute_loan(
     let norm = action.trim().to_ascii_lowercase();
 
     match norm.as_str() {
-        "fund" | "draw" => {
+        "fund" => {
             if loan.status != LoanStatus::Created {
                 return Err(VNetworkError::Validation("loan already funded".to_string()));
             }
             let draw_amt = if amount == 0 { loan.principal } else { amount };
+            if draw_amt == 0 || draw_amt > loan.principal {
+                return Err(VNetworkError::Validation(format!(
+                    "loan fund amount `{draw_amt}` must be in 1..={}",
+                    loan.principal
+                )));
+            }
             lender.verify_permission(
                 actor_pubkey,
                 WalletPermission::LoanInteract,
@@ -243,6 +252,59 @@ pub fn apply_execute_loan(
                 timestamp_ms,
             )?;
             events.push(tx_ev);
+            loan.disbursed_amount = draw_amt;
+            let interest = draw_amt
+                .checked_mul(loan.interest_bps as u128)
+                .ok_or_else(|| VNetworkError::Validation("loan interest overflow".to_string()))?
+                / 10_000;
+            loan.accrued_interest = loan
+                .accrued_interest
+                .checked_add(interest)
+                .ok_or_else(|| VNetworkError::Validation("accrued interest overflow".to_string()))?;
+            loan.status = LoanStatus::Active;
+        }
+        "draw" => {
+            if loan.status != LoanStatus::Created && loan.status != LoanStatus::Active {
+                return Err(VNetworkError::Validation(
+                    "loan cannot be drawn after settlement or liquidation".to_string(),
+                ));
+            }
+            let remaining_facility = loan
+                .principal
+                .checked_sub(loan.disbursed_amount)
+                .ok_or_else(|| VNetworkError::Validation("disbursed exceeds principal".to_string()))?;
+            if remaining_facility == 0 {
+                return Err(VNetworkError::Validation(
+                    "loan principal facility is already fully disbursed".to_string(),
+                ));
+            }
+            let draw_amt = if amount == 0 { remaining_facility } else { amount };
+            if draw_amt == 0 || draw_amt > remaining_facility {
+                return Err(VNetworkError::Validation(format!(
+                    "loan draw amount `{draw_amt}` exceeds remaining authorized principal `{remaining_facility}`"
+                )));
+            }
+            lender.verify_permission(
+                actor_pubkey,
+                WalletPermission::LoanInteract,
+                Some(&loan.token_id),
+                Some(draw_amt),
+                timestamp_ms,
+            )?;
+            let (_, _, _, tx_ev) = apply_protocol_settlement_transfer(
+                state,
+                &loan.token_id,
+                &loan.lender_wallet_id,
+                &loan.borrower_wallet_id,
+                draw_amt,
+                actor_pubkey,
+                timestamp_ms,
+            )?;
+            events.push(tx_ev);
+            loan.disbursed_amount = loan
+                .disbursed_amount
+                .checked_add(draw_amt)
+                .ok_or_else(|| VNetworkError::Validation("disbursed_amount overflow".to_string()))?;
             let interest = draw_amt
                 .checked_mul(loan.interest_bps as u128)
                 .ok_or_else(|| VNetworkError::Validation("loan interest overflow".to_string()))?
@@ -266,8 +328,12 @@ pub fn apply_execute_loan(
                 None,
                 timestamp_ms,
             )?;
-            let total_owed = loan
-                .principal
+            let base_principal = if loan.disbursed_amount > 0 {
+                loan.disbursed_amount
+            } else {
+                loan.principal
+            };
+            let total_owed = base_principal
                 .checked_add(loan.accrued_interest)
                 .ok_or_else(|| VNetworkError::Validation("loan total owed overflow".to_string()))?;
             let remaining = total_owed
@@ -278,7 +344,12 @@ pub fn apply_execute_loan(
             if remaining == 0 {
                 return Err(VNetworkError::Validation("loan is already fully repaid".to_string()));
             }
-            let repay_amt = if amount == 0 { remaining } else { amount.min(remaining) };
+            let repay_amt = if amount == 0 { remaining } else { amount };
+            if repay_amt > remaining {
+                return Err(VNetworkError::Validation(format!(
+                    "repayment amount `{repay_amt}` exceeds remaining owed `{remaining}`"
+                )));
+            }
             let (_, _, _, tx_ev) = apply_protocol_settlement_transfer(
                 state,
                 &loan.token_id,
@@ -293,6 +364,11 @@ pub fn apply_execute_loan(
                 .repaid_amount
                 .checked_add(repay_amt)
                 .ok_or_else(|| VNetworkError::Validation("repaid_amount overflow".to_string()))?;
+            loan.repayment_history.push(LoanRepaymentRecord {
+                amount: repay_amt,
+                actor_pubkey: actor_pubkey.to_string(),
+                timestamp_ms,
+            });
             if loan.repaid_amount >= total_owed {
                 loan.status = LoanStatus::Repaid;
                 if loan.collateral_locked > 0 {
@@ -321,6 +397,40 @@ pub fn apply_execute_loan(
                 }
             }
         }
+        "default" => {
+            if loan.status != LoanStatus::Active {
+                return Err(VNetworkError::Validation(
+                    "only active loans can transition to defaulted".to_string(),
+                ));
+            }
+            if loan.defaulted {
+                return Err(VNetworkError::Validation("loan is already marked defaulted".to_string()));
+            }
+            lender.verify_permission(
+                actor_pubkey,
+                WalletPermission::LoanInteract,
+                Some(&loan.token_id),
+                None,
+                timestamp_ms,
+            )?;
+            match loan.maturity_at_ms {
+                Some(mat) if timestamp_ms >= mat => {
+                    loan.defaulted = true;
+                }
+                Some(mat) => {
+                    return Err(VNetworkError::Validation(format!(
+                        "cannot mark loan `{}` defaulted before maturity_at_ms {mat}",
+                        loan.name
+                    )));
+                }
+                None => {
+                    return Err(VNetworkError::Validation(format!(
+                        "cannot mark loan `{}` defaulted without an explicit matured schedule",
+                        loan.name
+                    )));
+                }
+            }
+        }
         "liquidate" => {
             if loan.status != LoanStatus::Active {
                 return Err(VNetworkError::Validation("only active loans can liquidate".to_string()));
@@ -332,13 +442,18 @@ pub fn apply_execute_loan(
                 None,
                 timestamp_ms,
             )?;
-            if let Some(mat) = loan.maturity_at_ms {
-                if timestamp_ms < mat {
-                    return Err(VNetworkError::Validation(format!(
+            let matured = loan.maturity_at_ms.is_some_and(|mat| timestamp_ms >= mat);
+            if !matured && !loan.defaulted {
+                return Err(VNetworkError::Validation(match loan.maturity_at_ms {
+                    Some(mat) => format!(
                         "cannot liquidate loan `{}` before maturity_at_ms {mat}",
                         loan.name
-                    )));
-                }
+                    ),
+                    None => format!(
+                        "cannot liquidate loan `{}` without maturity_at_ms or active default",
+                        loan.name
+                    ),
+                }));
             }
             if loan.collateral_locked > 0 {
                 let escrow_id = loan_escrow_wallet_id(&loan.loan_id);

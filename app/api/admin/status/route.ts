@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
-import { fetchNetworkApiJson } from "@/lib/server/network-proxy";
+import { fetchNetworkApiJson, requireAdminToken } from "@/lib/server/kernel";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = requireAdminToken(request);
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.error }, { status: auth.status });
+  }
   const [status, consensus] = await Promise.all([
     fetchNetworkApiJson("/v1/network/status"),
     fetchNetworkApiJson("/v1/consensus/status"),

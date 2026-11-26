@@ -37,32 +37,58 @@ pub fn apply_create_wallet(
     actor_pubkey: &str,
     timestamp_ms: u64,
 ) -> VResult<(WalletEntity, LedgerEvent)> {
-    let parent_region = verify_region_exists(state, region_ref)?.clone();
-    let is_region_creator = parent_region.creator_pubkey == actor_pubkey
-        && require_participant_scope_at(
-            state,
-            actor_pubkey,
-            ParticipationLevel::Network,
-            None,
-            timestamp_ms,
-        )
-        .is_ok();
-    if !is_region_creator {
-        require_participant_scope_at(
-            state,
-            actor_pubkey,
-            ParticipationLevel::Wallet,
-            Some(&parent_region.region_id),
-            timestamp_ms,
-        )?;
-    }
+    let (parent_region_id, parent_space_id, parent_label, id_seed) =
+        if ghost && region_ref.trim().is_empty() {
+            require_participant_scope_at(
+                state,
+                actor_pubkey,
+                ParticipationLevel::Network,
+                None,
+                timestamp_ms,
+            )?;
+            (
+                String::new(),
+                String::new(),
+                "NETWORK".to_string(),
+                "__network_ghost__".to_string(),
+            )
+        } else {
+            let parent_region = verify_region_exists(state, region_ref)?.clone();
+            let is_region_creator = parent_region.creator_pubkey == actor_pubkey
+                && require_participant_scope_at(
+                    state,
+                    actor_pubkey,
+                    ParticipationLevel::Network,
+                    None,
+                    timestamp_ms,
+                )
+                .is_ok();
+            if !is_region_creator {
+                require_participant_scope_at(
+                    state,
+                    actor_pubkey,
+                    ParticipationLevel::Wallet,
+                    Some(&parent_region.region_id),
+                    timestamp_ms,
+                )?;
+            }
 
-    if parent_region.visibility == Visibility::Private && parent_region.creator_pubkey != actor_pubkey {
-        return Err(VNetworkError::Authorization(format!(
-            "cannot create wallet in private region `{}`",
-            parent_region.name
-        )));
-    }
+            if parent_region.visibility == Visibility::Private
+                && parent_region.creator_pubkey != actor_pubkey
+            {
+                return Err(VNetworkError::Authorization(format!(
+                    "cannot create wallet in private region `{}`",
+                    parent_region.name
+                )));
+            }
+            let r_id = parent_region.region_id.clone();
+            (
+                parent_region.region_id,
+                parent_region.space_id,
+                parent_region.name,
+                r_id,
+            )
+        };
 
     let clean_name = name.trim();
     if clean_name.is_empty() {
@@ -76,16 +102,15 @@ pub fn apply_create_wallet(
         ));
     }
 
-    let wallet_id = derive_named_wallet_id(&parent_region.region_id, clean_name, actor_pubkey);
+    let wallet_id = derive_named_wallet_id(&id_seed, clean_name, actor_pubkey);
     if state.wallets.contains_key(&wallet_id)
         || state
             .wallets
             .values()
-            .any(|w| w.region_id == parent_region.region_id && w.name.eq_ignore_ascii_case(clean_name))
+            .any(|w| w.region_id == parent_region_id && w.name.eq_ignore_ascii_case(clean_name))
     {
         return Err(VNetworkError::AlreadyExists(format!(
-            "wallet `{clean_name}` already exists in region `{}`",
-            parent_region.name
+            "wallet `{clean_name}` already exists in `{parent_label}`",
         )));
     }
 
@@ -110,8 +135,8 @@ pub fn apply_create_wallet(
     let wallet = WalletEntity {
         wallet_id: wallet_id.clone(),
         name: clean_name.to_string(),
-        region_id: parent_region.region_id.clone(),
-        space_id: parent_region.space_id.clone(),
+        region_id: parent_region_id,
+        space_id: parent_space_id,
         ghost,
         owner_pubkey: actor_pubkey.to_string(),
         authorized_keys,

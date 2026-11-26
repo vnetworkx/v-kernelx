@@ -1,0 +1,969 @@
+VECTOR NETWORK — COMPLETE REPOSITORY REPAIR, IMPLEMENTATION AND ACCEPTANCE MANDATE
+
+MISSION
+
+You are responsible for bringing Vector Network to a genuinely operational, secure, internally consistent and independently verifiable decentralized network.
+
+This is an implementation mandate, not a request for recommendations, another audit report, a design proposal or a list of future improvements.
+
+Your job is to find and fix everything that is incomplete, incorrect, insecure, inconsistent, broken, misleading or not working across the Vector Network repositories.
+
+Do not stop after fixing the defects listed in this prompt. Perform a complete engineering audit, discover additional defects independently, and fix those as well.
+
+Do not simply make the tests pass by weakening validation, disabling functionality, skipping tests, introducing mocks into production paths or changing the specifications to accommodate broken implementations.
+
+The final result must be working software whose behavior is demonstrated by executable tests and real distributed processes.
+
+1. REPOSITORIES
+
+Work across all three repositories:
+
+1. Kernel: https://github.com/vnetworkx/v-kernelx
+2. Vector Language: https://github.com/vnetworkx/vectorspace
+3. Documentation: https://github.com/vnetworkx/docs
+
+Inspect the latest actual contents and commit history of all repositories before making changes.
+
+The Rust kernel must remain the authoritative implementation of protocol rules, deterministic state transitions, consensus, authorization, ledger operations and verification.
+
+JavaScript, TypeScript, Python and Go SDKs must be clients of the authoritative Rust protocol. They must not independently implement conflicting protocol rules or maintain alternative sources of truth.
+
+The standalone Vector Language repository, the version consumed by the kernel, and the documentation must describe and implement the same language and protocol versions.
+
+2. NON-NEGOTIABLE WORKING RULES
+
+1. Inspect the complete repositories, including source files, tests, scripts, CI, configuration, dependencies, examples, generated files and documentation.
+2. Build a complete defect register before implementation.
+3. Treat previous audit findings as known leads, not as the complete list of defects.
+4. Search independently for additional problems, including silent failures, incorrect assumptions, placeholder implementations, security gaps and incomplete operations.
+5. Fix the underlying causes rather than hiding symptoms.
+6. Add regression tests for every defect.
+7. Run tests after each major repair and rerun affected tests after subsequent changes.
+8. Do not delete tests because they expose defects.
+9. Do not replace real behavior with mocks or simulated success.
+10. Do not use || true, ignored exit codes, disabled checks or false-positive acceptance conditions.
+11. Do not claim that code works merely because it compiles.
+12. Do not claim that distributed behavior works unless separate real node processes demonstrate it.
+13. Do not claim that data is verified, recoverable, final or secure unless the relevant verification actually occurs.
+14. Do not introduce undocumented protocol assumptions, invented economic values or arbitrary security exceptions.
+15. Preserve valid existing functionality and user work.
+16. Do not force-push, rewrite history, reset away user changes or discard unrelated work.
+17. Do not deploy to production, move real assets or modify production infrastructure.
+18. Do not expose private keys, secrets, credentials or populated environment files in source control, logs or reports.
+
+Do not stop when the first test passes. Continue through the entire acceptance process.
+
+When a test exposes another defect, fix it and rerun the relevant tests. When one fix breaks another component, fix the integration rather than leaving an inconsistent repository.
+
+If the execution environment genuinely prevents a task from being completed, identify the precise blocker and complete every other possible task. Never report an unexecuted test as passing.
+
+⸻
+
+PART I — COMPLETE ARCHITECTURE AND PROTOCOL CORRECTNESS
+
+3. Preserve the Vector Network hierarchy
+
+The protocol hierarchy is:
+
+Network → Spaces → Regions → Wallets → Tokens (vTokens)
+
+Every layer must have its own:
+
+* State and deterministic transitions.
+* Authorization and verification rules.
+* Ledger and event history.
+* Cryptographic commitments.
+* Reconstruction and replay capabilities.
+* Relationship to its parent.
+* Appropriate participants and validators.
+
+Ensure that these relationships are consistent throughout the Rust kernel, API, database, Explorer, Vector Language, SDKs and documentation.
+
+No component may silently implement a different hierarchy.
+
+4. Implement Ghost entities properly
+
+Ghost entities can exist directly under Network without their normal parent:
+
+* Ghost Region without a Space.
+* Ghost Wallet without a Region.
+* Ghost Token without a Wallet.
+
+They are not automatically invalid merely because a parent is absent.
+
+They must, however, be explicitly created through Vector Language and undergo the required Network-level authorization and verification.
+
+Implement:
+
+* Explicit parentless entity representations.
+* Network-level authorization.
+* Network-level ledger commitments.
+* Deterministic state transitions.
+* Complete history, verification and reconstruction.
+* Explorer identification and risk flags.
+* API and SDK support.
+* Tests preventing Ghost status from bypassing authorization.
+
+Ordinary non-Ghost entities must continue to require their normal parent.
+
+5. Implement correct participant and identity separation
+
+Keep separate:
+
+* Participant identity.
+* Wallet authorization keys.
+* Node identity.
+* Validator identity and signing keys.
+
+A participant proves possession of a key through cryptographic challenge signing.
+
+A Wallet must support many independent participant keys, including thousands of keys where the implementation permits.
+
+Implement and verify:
+
+* Per-key permissions.
+* Per-token and allocation permissions.
+* Send and receive permissions.
+* Threshold and multisignature authorization.
+* Key revocation.
+* Key rotation.
+* Audit history.
+* Recovery and reconstruction.
+* Secure local signing.
+
+Registering a key must never grant unrestricted access to every Wallet asset.
+
+A participant can have multiple authorized scopes. Possessing multiple keys must not create unlimited consensus power.
+
+6. Separate consensus authority from application authorization
+
+A validator’s ability to verify and vote on proposals must not automatically make it an administrator of every Network, Space, Region, Wallet or Token.
+
+Implement strict separation between:
+
+* Participant authorization.
+* Owner authorization.
+* Validator eligibility.
+* Validator voting.
+* Administrative permissions.
+* Protocol-level operations.
+
+Every state-changing operation must enforce the relevant scope and target.
+
+A validator must not gain unrestricted authority merely because it is active.
+
+Token dimension changes must require the appropriate token authority or explicitly authorized protocol mechanism.
+
+Audit the functions previously identified in:
+
+* crates/vnetwork-core/src/identity.rs
+* crates/vnetwork-core/src/token.rs
+
+Correct any overly broad authorization or delegation logic.
+
+⸻
+
+PART II — CONSENSUS, FINALITY AND NETWORK SECURITY
+
+7. Complete consensus correctness
+
+Audit the entire consensus implementation and prove that it is correct under its documented fault assumptions.
+
+Requirements:
+
+* Genesis-bound Network identity.
+* Genesis-bound consensus parameters.
+* Authenticated validator membership.
+* Versioned membership transitions.
+* Epoch and validator-set binding.
+* Explicit quorum calculation.
+* Deterministic proposal digests.
+* Canonical vote ordering.
+* Signature verification.
+* Duplicate validator and key rejection.
+* Equivocation detection.
+* Anti-equivocation persistence.
+* View changes and leader replacement.
+* Finality certificates.
+* Historical certificate verification.
+* Validator admission and removal.
+* Key rotation.
+* Restart and crash safety.
+* Network partitions and minority rejection.
+
+The certificate must not choose its own weaker quorum threshold.
+
+Quorum must be computed from authoritative, committed Network policy.
+
+Bind certificates and membership transitions to the correct Network ID, genesis hash, epoch, validator-set hash and consensus parameters.
+
+Avoid circular certificate IDs. Derive identifiers from canonical payloads that exclude the identifier itself.
+
+Do not confuse:
+
+* Participant signatures with consensus.
+* Validator votes with ownership proof.
+* Hashes with authorization.
+* A recorded certificate with a verified certificate.
+* A proposed transaction with a committed transaction.
+
+Every eligible validator must independently verify the proposal before voting.
+
+8. Complete anti-equivocation safety
+
+Audit all vote signing, persistence, broadcast, restart and recovery paths.
+
+Ensure:
+
+* Signing intent is durably recorded before signing.
+* A signed vote is durably persisted before broadcast.
+* Conflicting proposals cannot be signed for the same restricted consensus context.
+* Multiple processes cannot race around the same signing identity.
+* Observed votes are cryptographically verified.
+* Persisted votes are cryptographically verified.
+* Equivocation evidence contains genuine conflicting signed votes.
+* Unsigned placeholders cannot be treated as proof of equivocation.
+* Recovery cannot forget previous signing commitments.
+
+Add crash, concurrency, restart, race and tampering tests.
+
+9. Secure the live P2P network
+
+Implement and validate:
+
+* Real peer discovery.
+* Secure node identities.
+* Authenticated communications.
+* Peer admission.
+* Validator messaging.
+* Network synchronization.
+* Replication.
+* Reconnection.
+* Health checks.
+* Rate limits.
+* Connection limits.
+* Misbehavior handling.
+* Protocol version compatibility.
+* Safe upgrades.
+
+Permissionless network participation must not imply unrestricted validator membership or consensus power.
+
+Public gateways may provide connectivity but must not control finality.
+
+Secure administrative peer dialing. Validate supplied addresses and protect endpoints against abuse, unauthorized dialing and inappropriate access to internal infrastructure.
+
+Review all public API routes, CORS, authentication, TLS configuration and administrative operations.
+
+10. Prove finality and atomic settlement
+
+Every committed operation must have a verifiable relationship between:
+
+* Authorized proposal.
+* Deterministic execution.
+* Resulting events.
+* Validator votes.
+* Finality certificate.
+* Committed state.
+* Updated state roots.
+
+No transaction may be displayed as finalized merely because an API accepted it.
+
+No cross-Space transfer may debit one side without its corresponding credit or a valid, recoverable atomic settlement state.
+
+⸻
+
+PART III — VECTOR LANGUAGE AND EXECUTION
+
+11. Make Vector Language the actual creation and execution interface
+
+Creation of Spaces, Regions, Wallets, Tokens, Ghost entities and protocol agreements must occur through executable Vector Language.
+
+Ordinary UI forms or direct database writes must not bypass it.
+
+The Rust kernel must:
+
+1. Parse the actual language.
+2. Validate syntax and declarations.
+3. Resolve imports deterministically.
+4. Compile the program.
+5. Validate protocol permissions.
+6. Validate entity scope.
+7. Execute deterministic state transitions.
+8. Construct ledger events.
+9. Submit proposals for required consensus.
+10. Commit only after valid finality.
+11. Support replay and reconstruction.
+
+Implement source, import, compiler, language version and program commitments.
+
+Ensure .vx programs and .vdx declarations are genuinely supported and tested.
+
+The language implementation in the standalone repository and the kernel must remain synchronized.
+
+Do not present examples as supported merely because they appear in documentation.
+
+Compile and execute actual examples against the kernel.
+
+12. Implement actual vContract execution
+
+The current contract implementation was found to record declared actions without fully executing the underlying business behavior.
+
+Correct this completely.
+
+A vContract must be a deterministic executable agreement, not merely an action log.
+
+Implement:
+
+* Contract creation.
+* Participant authorization.
+* Declared action definitions.
+* Token references.
+* Scope restrictions.
+* Limits.
+* AuthRatio requirements.
+* Deterministic execution.
+* Real state transitions.
+* Escrow and collateral operations where specified.
+* Expiry.
+* Failure handling.
+* Settlement.
+* Auditable event history.
+* Replay and reconstruction.
+
+Execution must be atomic: either all required state transitions commit or none do.
+
+Prevent nondeterministic host operations, arbitrary filesystem access, unrestricted network access and uncontrolled external calls.
+
+Prove through end-to-end tests that executing a contract actually changes authorized protocol state.
+
+13. Correct vLoan accounting and execution
+
+Audit the complete loan lifecycle.
+
+A vLoan must support:
+
+* Lender and borrower.
+* Principal.
+* Actual disbursed amount.
+* Interest rules.
+* Collateral.
+* Repayment schedule.
+* Repayment history.
+* Default conditions.
+* Maturity.
+* Locking.
+* Liquidation.
+* Settlement.
+* Recovery.
+
+Correct the previously identified funding and repayment inconsistency.
+
+Ensure:
+
+* Disbursement never exceeds authorized principal.
+* Partial funding is accounted for consistently if supported.
+* Repayment is based on actual disbursement and agreed interest rules.
+* Missing maturity cannot accidentally authorize liquidation.
+* Early liquidation is rejected unless an explicitly authorized default condition applies.
+* Collateral is never released or liquidated twice.
+* Repeated funding, repayment and liquidation are idempotent or safely rejected.
+* Supply conservation is preserved.
+* All operations are deterministic and atomic.
+
+Add boundary, overflow, insufficient-balance, partial-draw, early-liquidation, maturity and default tests.
+
+Do not invent interest rates, reward rates or economic percentages.
+
+⸻
+
+PART IV — TOKEN, WALLET AND TRANSACTION INVARIANTS
+
+14. Enforce the exact Token vector model
+
+The Token vector dimensions are exactly:
+
+[token, authratio(au), energy]
+
+Only token is transferable.
+
+authratio(au) and energy are non-transferable.
+
+They may change only through separately authorized, deterministic, auditable protocol operations.
+
+Enforce this rule across:
+
+* Rust core.
+* Vector Language.
+* API.
+* All SDKs.
+* Wallet balances.
+* Transfers.
+* vContracts.
+* vLoans.
+* Ledger events.
+* State roots.
+* Replay.
+* Reconstruction.
+* Explorer.
+
+Never allow a transfer to move AuthRatio or Energy between Wallets.
+
+Do not silently invent default values or economic rules.
+
+Find and remove the previously identified unexplained hardcoded Region AuthRatio default of 1_000 basis points. Replace it only with an explicitly authorized, versioned protocol policy or declared operation.
+
+15. Complete Wallet authorization
+
+Implement and test:
+
+* Multi-participant Wallets.
+* Multiple independent signing keys.
+* Per-key permissions.
+* Per-asset permissions.
+* Threshold authorization.
+* Multisignature requirements.
+* Revocation.
+* Rotation.
+* Recovery.
+* Ownership and permission history.
+
+Ensure every transfer validates both source authority and the relevant destination conditions.
+
+16. Complete transfer paths
+
+Verify all transfer categories:
+
+Same Wallet: Token operation and applicable Wallet authorization and verification.
+
+Different Wallets in the same Region: Source and destination Wallet authorization and required verification.
+
+Different Regions in the same Space: Wallet and Region verification paths.
+
+Different Spaces: Source and destination Wallet, Region and Space verification paths, plus Network coordination and finality.
+
+Cross-Space settlement must be atomic and recoverable.
+
+Implement deterministic, versioned and auditable scope-based drains. Drains may affect only the Token dimension.
+
+Do not invent percentages or reward rules.
+
+Verify total supply conservation across holdings, escrow, locked collateral, reserves, burns and other authorized locations.
+
+⸻
+
+PART V — LEDGERS, STORAGE AND RECOVERY
+
+17. Make storage production-capable
+
+Inspect the entire storage architecture.
+
+Implement persistent authoritative storage rather than relying on in-memory state.
+
+Requirements:
+
+* Durable event persistence.
+* Atomic state and event writes.
+* Write-ahead logging.
+* Crash recovery.
+* State snapshots.
+* Event commitments.
+* Parent-child commitments.
+* Canonical serialization.
+* Integrity checks.
+* Versioned storage formats.
+* Safe migrations.
+* Backup and restoration.
+* Replication.
+* Rejoin and synchronization.
+
+Every committed transition must survive process restart.
+
+An acknowledged transaction must not disappear after a crash.
+
+18. Complete hierarchical ledgers
+
+Maintain distinct ledgers for:
+
+* Network.
+* Space.
+* Region.
+* Wallet.
+* Token.
+
+Every child commitment must be bound to the correct parent commitment.
+
+Ghost entities must bind to Network-level commitments.
+
+Ensure ledger records are append-only, canonical, verifiable and linked to the correct state transitions.
+
+19. Make recovery and reconstruction verifiable
+
+Recovery must verify rather than blindly trust stored data.
+
+Verify:
+
+* Genesis.
+* Network identity.
+* Membership history.
+* Historical certificates.
+* Event chain.
+* Snapshot commitments.
+* State roots.
+* Token supply.
+* Parent relationships.
+* Authorization history.
+* Program commitments.
+* Relevant consensus parameters.
+
+A reconstructed state must match the verified committed state.
+
+Preserve:
+
+* Entity IDs.
+* Properties.
+* Permissions.
+* Token dimensions.
+* Supply.
+* History.
+* Links.
+* Certificates.
+* Versions.
+* State roots.
+
+Do not claim recovery is possible if every eligible copy of the required information has been destroyed.
+
+Add tests for corruption, truncation, missing records, tampering, partial writes, interrupted commits and inconsistent snapshots.
+
+⸻
+
+PART VI — EXPLORER, API AND USER INTERFACES
+
+20. Make Explorer truthful
+
+Audit the complete Explorer data pipeline.
+
+Explorer must display actual verified protocol data.
+
+It must correctly show:
+
+* Network status.
+* Spaces.
+* Regions.
+* Wallets.
+* Tokens.
+* Ghost entities.
+* Participants.
+* Nodes.
+* Validators.
+* Transactions.
+* Token dimensions.
+* Drains.
+* Contracts.
+* Loans.
+* Event history.
+* DAG relationships.
+* Ledger commitments.
+* State roots.
+* Consensus certificates.
+* Reconstruction and replay status.
+* Verification status.
+* Risk indicators.
+
+Correct the previously identified placeholder problems in lib/server/snapshot-mapper.ts and other mapping paths.
+
+Never fabricate or hardcode:
+
+* Participant counts.
+* Balances.
+* Rewards.
+* Rounds.
+* Vector values.
+* Transactions.
+* Events.
+* Certificates.
+* Verification results.
+
+Do not infer that a certificate is valid from a nonempty ID, digest or vote count.
+
+The Rust verification layer must provide authoritative verification results.
+
+Display distinct statuses:
+
+* VERIFIED.
+* UNVERIFIED.
+* INVALID.
+* UNAVAILABLE.
+
+Do not substitute empty or synthetic values for missing protocol data.
+
+21. Make all API responses honest and consistent
+
+Audit every API route, handler and serializer.
+
+Ensure:
+
+* Correct authentication.
+* Correct authorization.
+* Scope enforcement.
+* Input validation.
+* Rate limiting where needed.
+* Safe error handling.
+* No secret leakage.
+* No fake success responses.
+* No uncommitted transactions presented as finalized.
+* No unsupported fields presented as verified data.
+* No inconsistent entity relationships.
+
+The API must expose the real Rust protocol state rather than maintaining an independent or invented representation.
+
+⸻
+
+PART VII — SDK AND REPOSITORY CONSISTENCY
+
+22. Complete all language SDKs
+
+Support:
+
+* Rust.
+* JavaScript.
+* TypeScript.
+* Python.
+* Go.
+
+All SDKs must communicate with the authoritative Rust kernel using the same protocol definitions.
+
+They must support the actual available capabilities, including:
+
+* Network connection.
+* Node participation.
+* Scope discovery.
+* Vector Language submission.
+* Wallet interactions.
+* Authorization.
+* Token operations.
+* Transfers.
+* Contracts.
+* Loans.
+* Status queries.
+* Verification proofs.
+* Error handling.
+
+Do not implement SDK methods that merely return simulated success.
+
+Do not give one SDK features or protocol semantics that differ from the others without an explicit versioned compatibility reason.
+
+Build cross-language conformance tests against the same real test network.
+
+23. Synchronize all repositories
+
+Create and enforce a release and compatibility mechanism for the Vector Language source, kernel integration and documentation.
+
+Verify:
+
+* Authoritative source repository.
+* Vendored source commit.
+* Language version.
+* Compiler version.
+* Protocol compatibility.
+* Generated artifacts.
+* SDK versions.
+* Documentation version.
+
+Add automated checks to detect drift.
+
+Do not allow one repository to silently describe a newer or different implementation than the kernel actually executes.
+
+24. Correct all build and CI issues
+
+Audit every CI workflow.
+
+Ensure the full pipeline covers:
+
+* Rust formatting.
+* Rust compilation.
+* Rust clippy.
+* Rust unit tests.
+* Rust integration tests.
+* Rust release builds.
+* JavaScript tests.
+* TypeScript tests.
+* Explorer type checks.
+* Explorer linting.
+* Explorer production build.
+* Python tests.
+* Go tests.
+* SDK conformance.
+* Documentation validation.
+* Dependency and security checks.
+* Four-node network acceptance.
+
+Correct lockfile and package-manager inconsistencies.
+
+Correct Go module and cache paths.
+
+Pin external CI actions and dependencies appropriately.
+
+Do not hide errors or mark failed jobs as successful.
+
+⸻
+
+PART VIII — CONFIGURATION AND SECURITY
+
+25. Complete configuration validation
+
+Audit every environment variable and every actual consumer.
+
+In particular, reconcile:
+
+* ATLAS_ADMIN_TOKEN
+* ATLAS_DATA_DIR
+* ATLAS_KEYSTORE_PASSPHRASE
+* ATLAS_SESSION_SECRET
+* NETWORK_ADVERTISED_ADDRESSES
+* NETWORK_ALLOW_BOOTSTRAP_ATLAS
+* NETWORK_BOOTSTRAP_PEERS
+* NETWORK_DISCOVERY_MODE
+* NETWORK_ENABLE_P2P
+* NETWORK_ENABLE_PUBLIC_API
+* NETWORK_ENABLE_VALIDATOR
+* NETWORK_GENESIS_FILE
+* NETWORK_ID
+* NETWORK_LISTEN_ADDRESSES
+* NETWORK_NAME
+* NETWORK_NODE_IDENTITY
+* NETWORK_NODE_KIND
+* NETWORK_PROFILE
+* NETWORK_PROTOCOL_VERSION
+* NETWORK_PUBLIC_API
+* NETWORK_PUBLIC_API_BIND
+* NETWORK_QUORUM_THRESHOLD_BPS
+* NETWORK_STORAGE_PATH
+* NETWORK_VALIDATOR_ID
+* NETWORK_VALIDATOR_KEY_PATH
+* NETWORK_KEY_PASSPHRASE
+* NETWORK_KEY_PASSPHRASE_FILE
+* VNETWORK_API_URL
+
+These are names that must be audited, not assumptions about accepted configuration.
+
+Every documented variable must have a real, validated consumer or be explicitly marked unsupported/deprecated.
+
+Do not silently ignore malformed environment values.
+
+Use typed, strict configuration parsing.
+
+Reject invalid production configurations.
+
+Ensure consensus-critical values cannot override the committed genesis policy.
+
+Protect secrets, redact debug output, prevent accidental exposure and maintain secure key handling.
+
+Do not commit populated .env files or secrets.
+
+Do not assume the ATLAS bootstrap setting is appropriate for this node. Preserve the distinction between creating a new Network and joining an existing Network.
+
+26. Complete security testing
+
+Conduct a systematic security audit across the three repositories.
+
+At minimum, test:
+
+* Unauthorized state changes.
+* Unauthorized Wallet transfers.
+* Unauthorized Token dimension changes.
+* Validator privilege escalation.
+* Invalid membership transitions.
+* Forged certificates.
+* Weak quorum certificates.
+* Duplicate votes.
+* Equivocation.
+* Replay attacks.
+* Cross-Network replay.
+* Cross-epoch replay.
+* Incorrect parent commitments.
+* Malformed Vector Language.
+* Malicious imports.
+* Nondeterministic execution attempts.
+* Resource exhaustion.
+* Integer overflow.
+* Serialization ambiguity.
+* Storage tampering.
+* Recovery attacks.
+* Unauthorized peer dialing.
+* API abuse.
+* Secret leakage.
+* Invalid SDK inputs.
+* Cross-Space settlement failures.
+
+Use property-based and fuzz testing where appropriate.
+
+Fix every discovered security defect, not merely the examples above.
+
+⸻
+
+PART IX — REAL DISTRIBUTED ACCEPTANCE
+
+27. Operate a real four-node test network
+
+Run:
+
+./scripts/test-network.sh
+
+The test must use four separate node processes with independent identities, keys and persistent storage.
+
+It must not use one process pretending to be four nodes.
+
+Demonstrate:
+
+1. All four nodes start.
+2. Nodes discover and connect to each other.
+3. Network identities are correct.
+4. Validator identities and keys are distinct.
+5. Validator membership is verified.
+6. Nodes synchronize.
+7. Authorized proposals are accepted.
+8. Insufficient-quorum proposals are rejected.
+9. All honest nodes agree on committed state roots.
+10. Conflicting or invalid proposals are rejected.
+11. Vector Language operations execute through the Rust kernel.
+12. Spaces, Regions, Wallets and Tokens are created through proper authorization.
+13. Ghost entities work through Network-level authorization.
+14. Wallet key permissions work.
+15. Multisignature rules work.
+16. Token dimensions remain correct.
+17. Same-Space transfers work.
+18. Cross-Space transfers settle atomically.
+19. vContracts execute real protocol operations.
+20. vLoans correctly fund and settle.
+21. Collateral and supply accounting remain correct.
+22. Restart preserves committed state.
+23. WAL recovery works.
+24. Replay and reconstruction reproduce verified roots.
+25. Tampered data is rejected.
+26. Invalid certificates are rejected.
+27. Minority partitions cannot finalize unauthorized proposals.
+28. Recovery and rejoining nodes synchronize correctly.
+
+Run tests that intentionally kill nodes, interrupt writes, restart processes, partition the network and introduce invalid messages.
+
+Verify that honest nodes recover without violating safety.
+
+Do not claim BFT correctness merely because four nodes can connect.
+
+28. Test every SDK against the same network
+
+Submit real operations from:
+
+* Rust.
+* JavaScript.
+* TypeScript.
+* Python.
+* Go.
+
+Verify that all clients reach the same authoritative Rust implementation and observe consistent committed results.
+
+Compare canonical results and error semantics.
+
+Do not use mocked API responses for acceptance.
+
+⸻
+
+PART X — FINAL COMPLETION AND SIGN-OFF
+
+29. Keep working until the requirements are closed
+
+Use this order:
+
+1. Repository and architecture audit.
+2. Defect register.
+3. Rust formatting and CI repair.
+4. Protocol and consensus correctness.
+5. Identity and authorization.
+6. Token and Wallet invariants.
+7. Vector Language integration.
+8. vContracts and vLoans.
+9. Storage, ledgers and recovery.
+10. P2P networking and API security.
+11. Explorer integrity.
+12. SDK parity.
+13. Documentation and repository synchronization.
+14. Security testing.
+15. Real distributed acceptance.
+16. Full regression and release validation.
+
+After each stage, rerun the relevant tests.
+
+If failures remain, fix them and continue.
+
+Do not prematurely declare completion.
+
+30. Required evidence
+
+Update these documents:
+
+* docs/engineering/FINAL_ACCEPTANCE_RESULTS.md
+* docs/engineering/COMPLETE_REPOSITORY_AUDIT.md
+* docs/engineering/FINAL_DEFECT_REGISTER.md
+
+For every issue, provide:
+
+* Defect description.
+* Root cause.
+* Changed files.
+* Implemented correction.
+* Regression tests.
+* Commands executed.
+* Exact exit status.
+* CI run or other evidence.
+* Remaining limitations, if any.
+
+Use these classifications:
+
+PASS: Implemented and successfully tested with evidence.
+
+IMPLEMENTED — NOT RUNTIME VERIFIED: Code and tests exist, but the required runtime test was not executed.
+
+BLOCKED: Exact external or environment blocker provided.
+
+NOT IMPLEMENTED: Requirement remains incomplete.
+
+No misleading classifications.
+
+31. Final acceptance conditions
+
+The work is complete only when:
+
+* All three repositories are consistent.
+* All required protocol features are implemented.
+* All identified defects are fixed.
+* Additional defects discovered during the audit are addressed.
+* Rust CI passes.
+* All SDK CI passes.
+* Security regression tests pass.
+* The four-node distributed acceptance test passes.
+* State persistence, restart and reconstruction are demonstrated.
+* All five language clients successfully use the same authoritative protocol.
+* Documentation accurately describes verified behavior.
+* No fake, placeholder or simulated success is represented as real protocol functionality.
+* No known unresolved critical or high-severity defect remains.
+
+If one of these conditions cannot be met, do not label the project fully accepted or production-ready.
+
+32. Final report to the user
+
+When implementation and validation are finished, return:
+
+1. A summary of the engineering work completed.
+2. The new commit SHA for each modified repository.
+3. The complete defect register with closure status.
+4. All CI run links and results.
+5. The four-node test results and evidence.
+6. Cross-language test results.
+7. Security test results.
+8. Remaining blocked items, if any.
+9. Exact instructions for the next safe development step.
+10. A clear statement of whether the network is fully accepted, still in development or blocked.
+
+Do not claim that something has been implemented, fixed, tested or deployed unless you have evidence.
+
+FINAL DIRECTIVE: Take responsibility for completing the engineering work. Do not stop at analysis, do not stop after fixing the previously identified defects, and do not deliver another list of recommendations in place of implementation. Find every remaining problem, fix it, prove the fix, and continue until the complete acceptance conditions are satisfied.

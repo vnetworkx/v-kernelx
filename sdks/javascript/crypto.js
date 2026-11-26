@@ -126,6 +126,15 @@ export const PROTOCOL_VERSION = "vector-network/1.0.0";
 export const LANGUAGE_VERSION = "v-langx/1.2.0";
 export const COMPILER_VERSION = "vectorspace-compiler/1.2.0";
 export const DOM_TRANSFER_APPROVAL_V1 = "vnetwork/transfer-approval/v1";
+export const VERIFICATION_STATUSES = Object.freeze(["VERIFIED", "UNVERIFIED", "INVALID", "UNAVAILABLE"]);
+
+export function normalizeVerificationStatus(raw) {
+  const norm = typeof raw === "string" ? raw.trim().toUpperCase() : "";
+  if (norm === "VERIFIED" || norm === "UNVERIFIED" || norm === "INVALID" || norm === "UNAVAILABLE") {
+    return norm;
+  }
+  return "UNAVAILABLE";
+}
 
 export function canonicalProgramSubmitObject({
   actorPubkey,

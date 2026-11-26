@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Copy, Database, RefreshCw, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Check, Copy, Database, Layers, RefreshCw, ShieldCheck } from "lucide-react";
 import {
   extractOperationLabel,
   formatTimestampMs,
@@ -10,34 +10,62 @@ import {
 } from "@/lib/format";
 import type {
   CanonicalEventDto,
+  ContractDto,
+  GhostAssessmentDto,
+  HierarchyCommitmentsDto,
+  LoanDto,
+  NodeDto,
   NodeStatusDto,
+  ParticipantDto,
   RegionDto,
   ReplayDto,
   SnapshotDto,
+  SpaceDto,
   TokenDto,
   WalletDto,
 } from "@/lib/types";
 
 interface OverviewPanelProps {
   status: NodeStatusDto;
+  spaces: SpaceDto[];
   regions: RegionDto[];
   wallets: WalletDto[];
   tokens: TokenDto[];
+  participants: ParticipantDto[];
+  nodes: NodeDto[];
+  contracts: ContractDto[];
+  loans: LoanDto[];
+  ghostAssessment: GhostAssessmentDto | null;
+  hierarchyCommitments: HierarchyCommitmentsDto | null;
   events: CanonicalEventDto[];
   snapshots: SnapshotDto[];
   hasSession: boolean;
   onRunReplay: () => Promise<ReplayDto | null>;
   onCreateSnapshot: () => Promise<void>;
   onCreateBackup: () => Promise<void>;
-  onNavigate: (tab: "regions" | "wallets" | "tokens" | "dag") => void;
+  onNavigate: (tab: "regions" | "wallets" | "tokens" | "vectors" | "dag") => void;
   onOpenAuth: () => void;
+}
+
+function statusTextClass(st: string): string {
+  if (st === "VERIFIED") return "text-emerald-700";
+  if (st === "INVALID") return "text-red-700";
+  if (st === "UNAVAILABLE") return "text-slate-500";
+  return "text-amber-700";
 }
 
 export function OverviewPanel({
   status,
+  spaces,
   regions,
   wallets,
   tokens,
+  participants,
+  nodes,
+  contracts,
+  loans,
+  ghostAssessment,
+  hierarchyCommitments,
   events,
   snapshots,
   hasSession,
@@ -111,10 +139,11 @@ export function OverviewPanel({
           className="border-b border-r border-slate-200 p-4 text-left transition-colors hover:bg-slate-50 lg:border-b-0"
         >
           <div className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
-            Canonical Regions
+            Spaces / Regions
           </div>
           <div className="mt-1.5 font-mono text-2xl font-semibold tabular-nums text-slate-900">
-            {status.region_count}
+            {spaces.length}
+            <span className="ml-1.5 text-sm font-normal text-slate-400">/ {status.region_count}</span>
           </div>
           <div className="mt-1 font-mono text-[11px] text-slate-500">
             {regions[0] ? `${regions[0].region_name} · ${regions[0].region_prefix ?? "—"}` : "No regions"}
@@ -127,13 +156,14 @@ export function OverviewPanel({
           className="border-b border-slate-200 p-4 text-left transition-colors hover:bg-slate-50 lg:border-b-0 lg:border-r"
         >
           <div className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
-            Cryptographic Wallets
+            Wallets / Participants
           </div>
           <div className="mt-1.5 font-mono text-2xl font-semibold tabular-nums text-slate-900">
             {status.wallet_count}
+            <span className="ml-1.5 text-sm font-normal text-slate-400">/ {participants.length}</span>
           </div>
           <div className="mt-1 font-mono text-[11px] text-slate-500">
-            Ed25519 · AES-256-GCM
+            {nodes.length} nodes · {contracts.length} contracts · {loans.length} loans
           </div>
         </button>
 
@@ -143,14 +173,14 @@ export function OverviewPanel({
           className="border-r border-slate-200 p-4 text-left transition-colors hover:bg-slate-50"
         >
           <div className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
-            Event DAG / Records
+            Event DAG / Balance Vectors
           </div>
           <div className="mt-1.5 font-mono text-2xl font-semibold tabular-nums text-slate-900">
             {status.event_count}
-            <span className="ml-1.5 text-sm font-normal text-slate-400">/ {status.record_count}</span>
+            <span className="ml-1.5 text-sm font-normal text-slate-400">/ {status.vector_count}</span>
           </div>
           <div className="mt-1 font-mono text-[11px] text-slate-500">
-            Clock {status.state_root.logical_clock} · {snapshots.length} snapshots
+            Clock {status.state_root.logical_clock} · {snapshots.length} certs
           </div>
         </button>
 
@@ -159,13 +189,7 @@ export function OverviewPanel({
             Deterministic Replay & State
           </div>
           <div
-            className={`mt-1.5 font-mono text-2xl font-semibold tabular-nums ${
-              status.verification_status === "VERIFIED"
-                ? "text-emerald-700"
-                : status.verification_status === "INVALID"
-                  ? "text-red-700"
-                  : "text-amber-700"
-            }`}
+            className={`mt-1.5 font-mono text-2xl font-semibold tabular-nums ${statusTextClass(status.verification_status)}`}
           >
             {status.verification_status}
           </div>
@@ -176,7 +200,7 @@ export function OverviewPanel({
         </div>
       </div>
 
-      {/* Node Cryptographic Identity & Replay Verification */}
+      {/* Node Cryptographic Identity & Primary Token Conservation */}
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <section className="border border-slate-200 bg-white xl:col-span-2">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-3.5">
@@ -247,11 +271,10 @@ export function OverviewPanel({
                 <span className="font-medium text-slate-700">
                   Last Replay Check:{" "}
                   <span
-                    className={
-                      replayResult.matches_stored_state
-                        ? "font-mono text-emerald-700"
-                        : "font-mono text-red-700"
-                    }
+                    className={`font-mono ${statusTextClass(
+                      replayResult.verification_status ??
+                        (replayResult.matches_stored_state ? "VERIFIED" : "INVALID"),
+                    )}`}
                   >
                     {replayResult.matches_stored_state
                       ? `VERIFIED (${replayResult.events_replayed ?? replayResult.applied_event_hashes.length} events replayed)`
@@ -307,13 +330,7 @@ export function OverviewPanel({
                 <div className="flex items-center justify-between py-3 text-xs">
                   <span className="text-slate-500">Supply Conservation</span>
                   <span
-                    className={`font-mono font-medium ${
-                      primaryToken.conservation.verification_status === "VERIFIED"
-                        ? "text-emerald-700"
-                        : primaryToken.conservation.verification_status === "INVALID"
-                          ? "text-red-700"
-                          : "text-amber-700"
-                    }`}
+                    className={`font-mono font-medium ${statusTextClass(primaryToken.conservation.verification_status)}`}
                   >
                     {primaryToken.conservation.verification_status === "VERIFIED"
                       ? "CONSERVED (VERIFIED)"
@@ -325,20 +342,20 @@ export function OverviewPanel({
                 <div className="flex items-center justify-between py-3 text-xs">
                   <span className="text-slate-500">Active Holders</span>
                   <span className="font-mono tabular-nums text-slate-700">
-                    {primaryToken.balances.length} wallets ({wallets.length} total)
+                    {primaryToken.balances.length} accounts ({wallets.length} wallets)
                   </span>
                 </div>
               </div>
             ) : (
               <div className="p-5 text-xs text-slate-500">
-                No vector tokens registered yet. Issue a token in Tokens & Ledger.
+                No vector tokens registered yet. Issue a token in Tokens &amp; Drain.
               </div>
             )}
           </div>
 
           <div className="border-t border-slate-200 bg-slate-50/70 p-4">
             <div className="mb-2 text-[11px] font-medium uppercase tracking-wider text-slate-500">
-              Durability & Checkpoints
+              Durability &amp; Checkpoints
             </div>
             <div className="grid grid-cols-2 gap-2">
               <button
@@ -348,7 +365,7 @@ export function OverviewPanel({
                 className="inline-flex items-center justify-center gap-1.5 border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800 transition-colors hover:bg-slate-50 disabled:opacity-50"
               >
                 <ShieldCheck className="h-3.5 w-3.5 text-blue-600" />
-                {busyOp === "snapshot" ? "Saving..." : "Snapshot"}
+                {busyOp === "snapshot" ? "Saving..." : "Check Certs"}
               </button>
               <button
                 type="button"
@@ -361,6 +378,111 @@ export function OverviewPanel({
               </button>
             </div>
           </div>
+        </section>
+      </div>
+
+      {/* Hierarchy Commitments & Ghost Entity Risk Assessment */}
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <section className="border border-slate-200 bg-white">
+          <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-3.5">
+            <Layers className="h-4 w-4 text-blue-600" />
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">Hierarchy Commitments</h2>
+              <p className="text-xs text-slate-500">
+                Network -&gt; Space -&gt; Region -&gt; Wallet -&gt; Token BLAKE3 commitment chain
+              </p>
+            </div>
+          </div>
+          {hierarchyCommitments ? (
+            <div className="divide-y divide-slate-100 px-5 text-xs">
+              <div className="flex items-center justify-between py-2.5">
+                <span className="text-slate-500">Network Commitment</span>
+                <code className="font-mono text-slate-800">
+                  {shortenHash(hierarchyCommitments.network_commitment, 14, 10)}
+                </code>
+              </div>
+              <div className="flex items-center justify-between py-2.5">
+                <span className="text-slate-500">Ghost Ledger Commitment</span>
+                <code className="font-mono text-slate-800">
+                  {shortenHash(hierarchyCommitments.ghost_commitment, 14, 10)}
+                </code>
+              </div>
+              <div className="grid grid-cols-4 gap-2 py-3 text-center font-mono">
+                <div className="border border-slate-100 bg-slate-50 p-2">
+                  <div className="text-[10px] text-slate-400">Spaces</div>
+                  <div className="font-semibold text-slate-800">
+                    {Object.keys(hierarchyCommitments.space_commitments ?? {}).length}
+                  </div>
+                </div>
+                <div className="border border-slate-100 bg-slate-50 p-2">
+                  <div className="text-[10px] text-slate-400">Regions</div>
+                  <div className="font-semibold text-slate-800">
+                    {Object.keys(hierarchyCommitments.region_commitments ?? {}).length}
+                  </div>
+                </div>
+                <div className="border border-slate-100 bg-slate-50 p-2">
+                  <div className="text-[10px] text-slate-400">Wallets</div>
+                  <div className="font-semibold text-slate-800">
+                    {Object.keys(hierarchyCommitments.wallet_commitments ?? {}).length}
+                  </div>
+                </div>
+                <div className="border border-slate-100 bg-slate-50 p-2">
+                  <div className="text-[10px] text-slate-400">Tokens</div>
+                  <div className="font-semibold text-slate-800">
+                    {Object.keys(hierarchyCommitments.token_commitments ?? {}).length}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="px-5 py-6 text-xs text-slate-500">
+              Hierarchy commitments unavailable while node proofs are missing or disconnected.
+            </div>
+          )}
+        </section>
+
+        <section className="border border-slate-200 bg-white">
+          <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-3.5">
+            <AlertTriangle className="h-4 w-4 text-amber-600" />
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">Ghost Entity Risk Inspection</h2>
+              <p className="text-xs text-slate-500">
+                Authoritative tracking of parentless &amp; ghost-flagged entities under Network scope
+              </p>
+            </div>
+          </div>
+          {ghostAssessment ? (
+            <div className="space-y-3 p-5 text-xs">
+              <div className="grid grid-cols-2 gap-3 font-mono sm:grid-cols-4">
+                <div className="border border-slate-200 bg-slate-50 p-2">
+                  <div className="text-[10px] text-slate-500">Total Ghost</div>
+                  <div className="font-semibold text-slate-900">{ghostAssessment.total_ghost_entities}</div>
+                </div>
+                <div className="border border-slate-200 bg-slate-50 p-2">
+                  <div className="text-[10px] text-slate-500">Parentless Reg</div>
+                  <div className="font-semibold text-slate-900">{ghostAssessment.parentless_regions.length}</div>
+                </div>
+                <div className="border border-slate-200 bg-slate-50 p-2">
+                  <div className="text-[10px] text-slate-500">Parentless Wlt</div>
+                  <div className="font-semibold text-slate-900">{ghostAssessment.parentless_wallets.length}</div>
+                </div>
+                <div className="border border-slate-200 bg-slate-50 p-2">
+                  <div className="text-[10px] text-slate-500">Parentless Tok</div>
+                  <div className="font-semibold text-slate-900">{ghostAssessment.parentless_tokens.length}</div>
+                </div>
+              </div>
+              <div className="font-mono text-[11px] text-slate-600">
+                Risk Flags:{" "}
+                {ghostAssessment.risk_flags.length > 0
+                  ? ghostAssessment.risk_flags.join(", ")
+                  : "NONE"}
+              </div>
+            </div>
+          ) : (
+            <div className="px-5 py-6 text-xs text-slate-500">
+              No Ghost Entity risk assessment available (node disconnected or proofs absent).
+            </div>
+          )}
         </section>
       </div>
 
@@ -395,7 +517,7 @@ export function OverviewPanel({
                   <th className="px-4 py-2.5">Operation</th>
                   <th className="px-4 py-2.5">Entity</th>
                   <th className="px-4 py-2.5">Event Hash</th>
-                  <th className="px-4 py-2.5">Region</th>
+                  <th className="px-4 py-2.5">Region / Kind</th>
                   <th className="px-5 py-2.5 text-right">Timestamp</th>
                 </tr>
               </thead>
@@ -415,7 +537,9 @@ export function OverviewPanel({
                       {shortenHash(ev.event_hash, 12, 8)}
                     </td>
                     <td className="px-4 py-2.5 font-mono text-slate-500">
-                      {shortenHash(ev.region_id, 10, 6)}
+                      {ev.region_id
+                        ? shortenHash(ev.region_id, 10, 6)
+                        : ev.entity_kind ?? "—"}
                     </td>
                     <td className="px-5 py-2.5 text-right font-mono tabular-nums text-slate-500">
                       {formatTimestampMs(ev.timestamp)}

@@ -6,9 +6,9 @@ pub fn derive_transfer_scope(
 ) -> TransferScope {
     if from_wallet.wallet_id == to_wallet.wallet_id {
         TransferScope::SameWallet
-    } else if from_wallet.region_id == to_wallet.region_id {
+    } else if !from_wallet.region_id.is_empty() && from_wallet.region_id == to_wallet.region_id {
         TransferScope::DifferentWalletsSameRegion
-    } else if from_wallet.space_id == to_wallet.space_id {
+    } else if !from_wallet.space_id.is_empty() && from_wallet.space_id == to_wallet.space_id {
         TransferScope::DifferentRegionsSameSpace
     } else {
         TransferScope::DifferentSpaces

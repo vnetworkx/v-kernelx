@@ -83,7 +83,27 @@ const (
 	LanguageVersion       = "v-langx/1.2.0"
 	CompilerVersion       = "vectorspace-compiler/1.2.0"
 	DomTransferApprovalV1 = "vnetwork/transfer-approval/v1"
+
+	VerificationVerified    = "VERIFIED"
+	VerificationUnverified  = "UNVERIFIED"
+	VerificationInvalid     = "INVALID"
+	VerificationUnavailable = "UNAVAILABLE"
 )
+
+func NormalizeVerificationStatus(raw string) string {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case VerificationVerified:
+		return VerificationVerified
+	case VerificationUnverified:
+		return VerificationUnverified
+	case VerificationInvalid:
+		return VerificationInvalid
+	case VerificationUnavailable:
+		return VerificationUnavailable
+	default:
+		return VerificationUnavailable
+	}
+}
 
 func isWeakEd25519Pubkey(pub []byte) bool {
 	if len(pub) != ed25519.PublicKeySize {

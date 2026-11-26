@@ -4,8 +4,11 @@ import type {
   KeypairMaterial,
   NetworkInfo,
   NetworkOperation,
+  NetworkStatus,
   ParticipationLevel,
   ProgramSubmission,
+  ReconstructionReport,
+  VerificationStatus,
 } from "./types.js";
 
 export { blake3Hex } from "./blake3.js";
@@ -30,6 +33,20 @@ export const PROTOCOL_VERSION = "vector-network/1.0.0";
 export const LANGUAGE_VERSION = "v-langx/1.2.0";
 export const COMPILER_VERSION = "vectorspace-compiler/1.2.0";
 export const DOM_TRANSFER_APPROVAL_V1 = "vnetwork/transfer-approval/v1";
+export const VERIFICATION_STATUSES: readonly VerificationStatus[] = [
+  "VERIFIED",
+  "UNVERIFIED",
+  "INVALID",
+  "UNAVAILABLE",
+];
+
+export function normalizeVerificationStatus(raw: unknown): VerificationStatus {
+  const norm = typeof raw === "string" ? raw.trim().toUpperCase() : "";
+  if (norm === "VERIFIED" || norm === "UNVERIFIED" || norm === "INVALID" || norm === "UNAVAILABLE") {
+    return norm;
+  }
+  return "UNAVAILABLE";
+}
 
 function toHex(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -360,6 +377,21 @@ export class BrowserVectorNetworkClient {
     return signBrowserEd25519(cosignerKey.private_key_hex, msg);
   }
 
+  updateWalletReceivePolicy(
+    walletId: string,
+    mode: "OPEN" | "RESTRICTED" | "FROZEN",
+    allowedSenders: string[] = [],
+  ): Promise<Record<string, unknown>> {
+    return this.submitOperation({
+      op: "UpdateWalletReceivePolicy",
+      payload: {
+        wallet_id: walletId,
+        mode,
+        allowed_senders: allowedSenders,
+      },
+    });
+  }
+
   async submitOperation(operation: NetworkOperation): Promise<Record<string, unknown>> {
     if (!this.connectedNetworkId) await this.connect();
     const networkId = this.resolvedNetworkId();
@@ -384,6 +416,77 @@ export class BrowserVectorNetworkClient {
       timestamp_ms: timestampMs,
       signature,
       operation,
+    });
+  }
+
+  getNetworkInfo(): Promise<NetworkInfo> { return this.getJson("/v1/network/info"); }
+  getNetworkStatus(): Promise<NetworkStatus> { return this.getJson("/v1/network/status"); }
+  listNodes(): Promise<Record<string, unknown>> { return this.getJson("/v1/nodes"); }
+  getNodeDetails(nodeId: string): Promise<Record<string, unknown>> { return this.getJson(`/v1/nodes/${nodeId}`); }
+  getExplorerNetwork(): Promise<Record<string, unknown>> { return this.getJson("/v1/explorer/network"); }
+  compileSource(
+    fileName: string,
+    sourceBytes: string,
+    modules: Record<string, string> = {},
+  ): Promise<Record<string, unknown>> {
+    return this.postJson("/v1/language/compile", { file_name: fileName, source_bytes: sourceBytes, modules });
+  }
+  getProgram(programId: string): Promise<ProgramSubmission> { return this.getJson(`/v1/programs/${programId}`); }
+  getProgramStatus(programId: string): Promise<Record<string, unknown>> { return this.getJson(`/v1/programs/${programId}/status`); }
+  getTransaction(txId: string): Promise<Record<string, unknown>> { return this.getJson(`/v1/transactions/${txId}`); }
+  listSpaces(): Promise<unknown[]> { return this.getJson("/v1/spaces"); }
+  listRegions(): Promise<unknown[]> { return this.getJson("/v1/regions"); }
+  listWallets(): Promise<unknown[]> { return this.getJson("/v1/wallets"); }
+  getWallet(walletId: string): Promise<Record<string, unknown>> { return this.getJson(`/v1/wallets/${walletId}`); }
+  listTokens(): Promise<unknown[]> { return this.getJson("/v1/tokens"); }
+  getToken(tokenId: string): Promise<Record<string, unknown>> { return this.getJson(`/v1/tokens/${tokenId}`); }
+  listContracts(): Promise<unknown[]> { return this.getJson("/v1/contracts"); }
+  getContract(contractId: string): Promise<Record<string, unknown>> { return this.getJson(`/v1/contracts/${contractId}`); }
+  listLoans(): Promise<unknown[]> { return this.getJson("/v1/loans"); }
+  getLoan(loanId: string): Promise<Record<string, unknown>> { return this.getJson(`/v1/loans/${loanId}`); }
+  getLedgerEvents(): Promise<unknown[]> { return this.getJson("/v1/ledger/events"); }
+  getLedgerProofs(): Promise<Record<string, unknown>> { return this.getJson("/v1/ledger/proofs"); }
+  verifyLedgerReplay(): Promise<Record<string, unknown>> { return this.getJson("/v1/ledger/replay"); }
+  verifyTokenSupply(tokenId: string): Promise<Record<string, unknown>> { return this.getJson(`/v1/tokens/${tokenId}/supply`); }
+  getConsensusStatus(): Promise<Record<string, unknown>> { return this.getJson("/v1/consensus/status"); }
+  getEquivocations(): Promise<Record<string, unknown>> { return this.getJson("/v1/consensus/equivocations"); }
+  createContract(name: string, regionId: string | null, rules: unknown, actions: unknown[]): Promise<Record<string, unknown>> {
+    return this.submitOperation({ op: "CreateContract", payload: { name, region_id: regionId, rules, actions } });
+  }
+  executeContract(contractId: string, action: string, args: unknown = {}): Promise<Record<string, unknown>> {
+    return this.submitOperation({ op: "ExecuteContract", payload: { contract_id: contractId, action, args } });
+  }
+  createLoan(
+    name: string,
+    tokenId: string,
+    lenderWalletId: string,
+    borrowerWalletId: string,
+    principal: number,
+    collateral: number,
+    interestBps: number,
+    maturityAtMs: number | null = null,
+  ): Promise<Record<string, unknown>> {
+    return this.submitOperation({
+      op: "CreateLoan",
+      payload: {
+        name,
+        token_id: tokenId,
+        lender_wallet_id: lenderWalletId,
+        borrower_wallet_id: borrowerWalletId,
+        principal,
+        collateral,
+        interest_bps: interestBps,
+        maturity_at_ms: maturityAtMs,
+      },
+    });
+  }
+  executeLoan(loanId: string, action: string, amount: number): Promise<Record<string, unknown>> {
+    return this.submitOperation({ op: "ExecuteLoan", payload: { loan_id: loanId, action, amount } });
+  }
+  verifyReconstruction(entityKind: string, entityId: string): Promise<ReconstructionReport> {
+    return this.postJson<ReconstructionReport>("/v1/reconstruction/verify", {
+      entity_kind: entityKind,
+      entity_id: entityId,
     });
   }
 

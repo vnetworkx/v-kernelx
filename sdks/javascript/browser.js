@@ -207,6 +207,15 @@ export const PROTOCOL_VERSION = "vector-network/1.0.0";
 export const LANGUAGE_VERSION = "v-langx/1.2.0";
 export const COMPILER_VERSION = "vectorspace-compiler/1.2.0";
 export const DOM_TRANSFER_APPROVAL_V1 = "vnetwork/transfer-approval/v1";
+export const VERIFICATION_STATUSES = Object.freeze(["VERIFIED", "UNVERIFIED", "INVALID", "UNAVAILABLE"]);
+
+export function normalizeVerificationStatus(raw) {
+  const norm = typeof raw === "string" ? raw.trim().toUpperCase() : "";
+  if (norm === "VERIFIED" || norm === "UNVERIFIED" || norm === "INVALID" || norm === "UNAVAILABLE") {
+    return norm;
+  }
+  return "UNAVAILABLE";
+}
 
 export class BrowserVectorNetworkClient {
   constructor(baseUrl, identity, expectedNetworkId = null) {
@@ -325,6 +334,17 @@ export class BrowserVectorNetworkClient {
     return signBrowserEd25519(cosignerKey.private_key_hex, msg);
   }
 
+  updateWalletReceivePolicy(walletId, mode, allowedSenders = []) {
+    return this.submitOperation({
+      op: "UpdateWalletReceivePolicy",
+      payload: {
+        wallet_id: walletId,
+        mode,
+        allowed_senders: allowedSenders,
+      },
+    });
+  }
+
   async submitOperation(operation) {
     if (!this.connectedNetworkId) await this.connect();
     const networkId = this.resolvedNetworkId();
@@ -350,6 +370,61 @@ export class BrowserVectorNetworkClient {
       signature,
       operation,
     });
+  }
+
+  getNetworkInfo() { return this.getJson("/v1/network/info"); }
+  getNetworkStatus() { return this.getJson("/v1/network/status"); }
+  listNodes() { return this.getJson("/v1/nodes"); }
+  getNodeDetails(nodeId) { return this.getJson(`/v1/nodes/${nodeId}`); }
+  getExplorerNetwork() { return this.getJson("/v1/explorer/network"); }
+  compileSource(fileName, sourceBytes, modules = {}) {
+    return this.postJson("/v1/language/compile", { file_name: fileName, source_bytes: sourceBytes, modules });
+  }
+  getProgram(programId) { return this.getJson(`/v1/programs/${programId}`); }
+  getProgramStatus(programId) { return this.getJson(`/v1/programs/${programId}/status`); }
+  getTransaction(txId) { return this.getJson(`/v1/transactions/${txId}`); }
+  listSpaces() { return this.getJson("/v1/spaces"); }
+  listRegions() { return this.getJson("/v1/regions"); }
+  listWallets() { return this.getJson("/v1/wallets"); }
+  getWallet(walletId) { return this.getJson(`/v1/wallets/${walletId}`); }
+  listTokens() { return this.getJson("/v1/tokens"); }
+  getToken(tokenId) { return this.getJson(`/v1/tokens/${tokenId}`); }
+  listContracts() { return this.getJson("/v1/contracts"); }
+  getContract(contractId) { return this.getJson(`/v1/contracts/${contractId}`); }
+  listLoans() { return this.getJson("/v1/loans"); }
+  getLoan(loanId) { return this.getJson(`/v1/loans/${loanId}`); }
+  getLedgerEvents() { return this.getJson("/v1/ledger/events"); }
+  getLedgerProofs() { return this.getJson("/v1/ledger/proofs"); }
+  verifyLedgerReplay() { return this.getJson("/v1/ledger/replay"); }
+  verifyTokenSupply(tokenId) { return this.getJson(`/v1/tokens/${tokenId}/supply`); }
+  getConsensusStatus() { return this.getJson("/v1/consensus/status"); }
+  getEquivocations() { return this.getJson("/v1/consensus/equivocations"); }
+  createContract(name, regionId, rules, actions) {
+    return this.submitOperation({ op: "CreateContract", payload: { name, region_id: regionId, rules, actions } });
+  }
+  executeContract(contractId, action, args = {}) {
+    return this.submitOperation({ op: "ExecuteContract", payload: { contract_id: contractId, action, args } });
+  }
+  createLoan(name, tokenId, lenderWalletId, borrowerWalletId, principal, collateral, interestBps, maturityAtMs = null) {
+    return this.submitOperation({
+      op: "CreateLoan",
+      payload: {
+        name,
+        token_id: tokenId,
+        lender_wallet_id: lenderWalletId,
+        borrower_wallet_id: borrowerWalletId,
+        principal,
+        collateral,
+        interest_bps: interestBps,
+        maturity_at_ms: maturityAtMs,
+      },
+    });
+  }
+  executeLoan(loanId, action, amount) {
+    return this.submitOperation({ op: "ExecuteLoan", payload: { loan_id: loanId, action, amount } });
+  }
+  verifyReconstruction(entityKind, entityId) {
+    return this.postJson("/v1/reconstruction/verify", { entity_kind: entityKind, entity_id: entityId });
   }
 
   async getJson(path) {

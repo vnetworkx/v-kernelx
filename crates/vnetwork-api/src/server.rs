@@ -4,6 +4,7 @@ use crate::routes;
 use crate::state::{ApiAppState, NetworkNodeBackend};
 use crate::websocket::ws_events_handler;
 use axum::extract::DefaultBodyLimit;
+use axum::http::{header, HeaderName, HeaderValue, Method};
 use axum::middleware;
 use axum::routing::{get, post};
 use axum::Router;
@@ -11,7 +12,7 @@ use axum_server::tls_rustls::RustlsConfig;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 #[derive(Debug, Clone)]
@@ -129,13 +130,45 @@ pub fn build_router(
         .route("/v1/explorer/network", get(routes::explorer::explorer_network))
         .route("/v1/ws", get(ws_events_handler))
         .layer(DefaultBodyLimit::max(max_body_bytes))
-        .layer(CorsLayer::permissive())
+        .layer(build_cors_layer())
         .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn_with_state(
             app_state.clone(),
             rate_limit_middleware,
         ))
         .with_state(app_state)
+}
+
+pub fn parse_cors_allowed_origins(raw: Option<&str>) -> Vec<HeaderValue> {
+    const DEFAULT_ORIGINS: [&str; 2] = ["http://127.0.0.1:3000", "http://localhost:3000"];
+    let Some(val) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return DEFAULT_ORIGINS
+            .iter()
+            .filter_map(|origin| HeaderValue::from_str(origin).ok())
+            .collect();
+    };
+    val.split(',')
+        .map(str::trim)
+        .filter(|origin| {
+            !origin.is_empty()
+                && *origin != "*"
+                && (origin.starts_with("http://") || origin.starts_with("https://"))
+        })
+        .filter_map(|origin| HeaderValue::from_str(origin).ok())
+        .collect()
+}
+
+pub fn build_cors_layer() -> CorsLayer {
+    let env_val = std::env::var("NETWORK_CORS_ALLOWED_ORIGINS").ok();
+    let origins = parse_cors_allowed_origins(env_val.as_deref());
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::list(origins))
+        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_headers([
+            header::CONTENT_TYPE,
+            header::AUTHORIZATION,
+            HeaderName::from_static("x-admin-token"),
+        ])
 }
 
 pub async fn serve_api(
@@ -169,3 +202,35 @@ pub async fn serve_api(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cors_allowed_origins_strict_allowlist() {
+        let defaults = parse_cors_allowed_origins(None);
+        assert_eq!(defaults.len(), 2);
+        assert!(defaults
+            .iter()
+            .any(|v| v.to_str().ok() == Some("http://127.0.0.1:3000")));
+        assert!(defaults
+            .iter()
+            .any(|v| v.to_str().ok() == Some("http://localhost:3000")));
+
+        // Wildcard must never be accepted into the allowlist
+        let wildcard = parse_cors_allowed_origins(Some("*"));
+        assert!(wildcard.is_empty());
+
+        let mixed = parse_cors_allowed_origins(Some(
+            "*, https://explorer.vectornetwork.example , javascript:alert(1), http://localhost:3000",
+        ));
+        assert_eq!(mixed.len(), 2);
+        assert_eq!(
+            mixed[0].to_str().ok(),
+            Some("https://explorer.vectornetwork.example")
+        );
+        assert_eq!(mixed[1].to_str().ok(), Some("http://localhost:3000"));
+    }
+}
+

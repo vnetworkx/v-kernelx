@@ -5,12 +5,17 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const upstream = await fetchNetworkApiJson<unknown[]>("/v1/ledger/events");
-  if (!upstream.ok) {
+  const upstream = await fetchNetworkApiJson<unknown[] | { events?: unknown[] }>("/v1/ledger/events");
+  if (!upstream.ok || !upstream.data) {
     return NextResponse.json(
       { records: [], error: upstream.error ?? "Rust node unreachable" },
       { status: upstream.status },
     );
   }
-  return NextResponse.json({ records: upstream.data ?? [] });
+  const events = Array.isArray(upstream.data)
+    ? upstream.data
+    : Array.isArray(upstream.data.events)
+      ? upstream.data.events
+      : [];
+  return NextResponse.json({ records: events });
 }

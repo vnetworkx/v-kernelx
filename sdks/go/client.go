@@ -360,6 +360,218 @@ func (c *Client) SubmitOperation(operation map[string]any) (map[string]any, erro
 	return out, err
 }
 
+func (c *Client) GetNetworkInfo() (NetworkInfo, error) {
+	var info NetworkInfo
+	err := c.GetJSON("/v1/network/info", &info)
+	return info, err
+}
+
+func (c *Client) GetNetworkStatus() (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/network/status", &out)
+	return out, err
+}
+
+func (c *Client) ListNodes() (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/nodes", &out)
+	return out, err
+}
+
+func (c *Client) GetNodeDetails(nodeID string) (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/nodes/"+nodeID, &out)
+	return out, err
+}
+
+func (c *Client) GetExplorerNetwork() (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/explorer/network", &out)
+	return out, err
+}
+
+func (c *Client) ParticipantStatus(participantID string) (map[string]any, error) {
+	if strings.TrimSpace(participantID) == "" {
+		participantID = c.Identity.ParticipantID
+	}
+	var out map[string]any
+	err := c.GetJSON("/v1/participants/"+participantID+"/scope", &out)
+	return out, err
+}
+
+func (c *Client) CompileSource(fileName, sourceBytes string, modules map[string]string) (map[string]any, error) {
+	if modules == nil {
+		modules = map[string]string{}
+	}
+	var out map[string]any
+	err := c.PostJSON("/v1/language/compile", map[string]any{
+		"file_name":    fileName,
+		"source_bytes": sourceBytes,
+		"modules":      modules,
+	}, &out)
+	return out, err
+}
+
+func (c *Client) GetProgram(programID string) (ProgramSubmission, error) {
+	var out ProgramSubmission
+	err := c.GetJSON("/v1/programs/"+programID, &out)
+	return out, err
+}
+
+func (c *Client) GetProgramStatus(programID string) (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/programs/"+programID+"/status", &out)
+	return out, err
+}
+
+func (c *Client) GetTransaction(txID string) (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/transactions/"+txID, &out)
+	return out, err
+}
+
+func (c *Client) ListSpaces() (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/spaces", &out)
+	return out, err
+}
+
+func (c *Client) ListRegions() (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/regions", &out)
+	return out, err
+}
+
+func (c *Client) ListWallets() (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/wallets", &out)
+	return out, err
+}
+
+func (c *Client) GetWallet(walletID string) (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/wallets/"+walletID, &out)
+	return out, err
+}
+
+func (c *Client) ListTokens() (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/tokens", &out)
+	return out, err
+}
+
+func (c *Client) GetToken(tokenID string) (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/tokens/"+tokenID, &out)
+	return out, err
+}
+
+func (c *Client) ListContracts() (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/contracts", &out)
+	return out, err
+}
+
+func (c *Client) GetContract(contractID string) (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/contracts/"+contractID, &out)
+	return out, err
+}
+
+func (c *Client) ListLoans() (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/loans", &out)
+	return out, err
+}
+
+func (c *Client) GetLoan(loanID string) (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/loans/"+loanID, &out)
+	return out, err
+}
+
+func (c *Client) CreateContract(name string, regionID *string, rules any, actions []any) (map[string]any, error) {
+	if actions == nil {
+		actions = []any{}
+	}
+	return c.SubmitOperation(map[string]any{
+		"op": "CreateContract",
+		"payload": map[string]any{
+			"name":      name,
+			"region_id": regionID,
+			"rules":     rules,
+			"actions":   actions,
+		},
+	})
+}
+
+func (c *Client) ExecuteContract(contractID, action string, args any) (map[string]any, error) {
+	if args == nil {
+		args = map[string]any{}
+	}
+	return c.SubmitOperation(map[string]any{
+		"op": "ExecuteContract",
+		"payload": map[string]any{
+			"contract_id": contractID,
+			"action":      action,
+			"args":        args,
+		},
+	})
+}
+
+func (c *Client) CreateLoan(
+	name, tokenID, lenderWalletID, borrowerWalletID string,
+	principal, collateral, interestBps uint64,
+	maturityAtMs *uint64,
+) (map[string]any, error) {
+	return c.SubmitOperation(map[string]any{
+		"op": "CreateLoan",
+		"payload": map[string]any{
+			"name":               name,
+			"token_id":           tokenID,
+			"lender_wallet_id":   lenderWalletIdOr(lenderWalletID),
+			"borrower_wallet_id": borrowerWalletID,
+			"principal":          principal,
+			"collateral":         collateral,
+			"interest_bps":       interestBps,
+			"maturity_at_ms":     maturityAtMs,
+		},
+	})
+}
+
+func lenderWalletIdOr(v string) string {
+	return v
+}
+
+func (c *Client) ExecuteLoan(loanID, action string, amount uint64) (map[string]any, error) {
+	return c.SubmitOperation(map[string]any{
+		"op": "ExecuteLoan",
+		"payload": map[string]any{
+			"loan_id": loanID,
+			"action":  action,
+			"amount":  amount,
+		},
+	})
+}
+
+func (c *Client) GetLedgerEvents() (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/ledger/events", &out)
+	return out, err
+}
+
+func (c *Client) GetLedgerProofs() (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/ledger/proofs", &out)
+	return out, err
+}
+
+func (c *Client) GetConsensusStatus() (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/consensus/status", &out)
+	return out, err
+}
+
 func (c *Client) VerifyReconstruction(entityKind, entityID string) (ReconstructionReport, error) {
 	var rep ReconstructionReport
 	err := c.PostJSON("/v1/reconstruction/verify", map[string]string{

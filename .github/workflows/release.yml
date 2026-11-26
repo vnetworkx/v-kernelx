@@ -22,21 +22,21 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d88513c861a588a5d810c54d1e7f93a895d # stable
         with:
           components: rustfmt, clippy
 
       - name: Install Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.11"
 
       - name: Install MSYS2 toolchain
         if: runner.os == 'Windows'
-        uses: msys2/setup-msys2@v2
+        uses: msys2/setup-msys2@85751146a9c63f739bf57012c73c7df5c7701df7 # v2.25.0
         with:
           msystem: UCRT64
           update: true
@@ -105,7 +105,7 @@ jobs:
           Write-Host "Windows GNU build verified"
 
       - name: Build Python wheels
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@4b9e6d8c52509d516244f2232c191ec3e80f8fb2 # v1.46.0
         with:
           command: build
           args: --release --out dist
@@ -163,28 +163,28 @@ jobs:
       #
 
       - name: Upload wheel artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f42607fa48 # v4.6.2
         with:
           name: wheels-${{ matrix.os }}
           path: dist
 
       - name: Upload Windows native artifact
         if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f42607fa48 # v4.6.2
         with:
           name: v-kernelx-windows-x86_64
           path: v-kernelx-windows-x86_64.zip
 
       - name: Upload Linux native artifact
         if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f42607fa48 # v4.6.2
         with:
           name: v-kernelx-linux-x86_64
           path: v-kernelx-linux-x86_64.tar.gz
 
       - name: Upload macOS native artifact
         if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f42607fa48 # v4.6.2
         with:
           name: v-kernelx-macos-x86_64
           path: v-kernelx-macos-x86_64.tar.gz

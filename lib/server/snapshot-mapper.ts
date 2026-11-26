@@ -1,11 +1,20 @@
 import type {
   CanonicalEventDto,
   ConsensusRoundDto,
+  ContractDto,
   DrainPolicyDto,
   DrainRewardDto,
+  GhostAssessmentDto,
+  GhostEntitiesDto,
+  HierarchyCommitmentsDto,
+  LoanDto,
+  NodeDto,
   NodeStatusDto,
+  ParticipantDto,
+  ProgramDto,
   RegionDto,
   SnapshotDto,
+  SpaceDto,
   TokenBalanceDto,
   TokenDto,
   ValidatorNodeDto,
@@ -18,12 +27,21 @@ import type {
 
 export interface WorkbenchInitialProps {
   initialStatus: NodeStatusDto;
+  initialSpaces: SpaceDto[];
   initialRegions: RegionDto[];
   initialWallets: WalletDto[];
   initialTokens: TokenDto[];
   initialVectors: VectorStateDto[];
   initialRewards: DrainRewardDto[];
   initialValidators: ValidatorNodeDto[];
+  initialParticipants: ParticipantDto[];
+  initialNodes: NodeDto[];
+  initialContracts: ContractDto[];
+  initialLoans: LoanDto[];
+  initialPrograms: ProgramDto[];
+  ghostEntities: GhostEntitiesDto | null;
+  ghostAssessment: GhostAssessmentDto | null;
+  hierarchyCommitments: HierarchyCommitmentsDto | null;
   initialRounds: ConsensusRoundDto[];
   initialEvents: CanonicalEventDto[];
   initialRecords: VectorRecordDto[];
@@ -46,8 +64,8 @@ export function disconnectedStatusDto(endpoint: string): NodeStatusDto {
     wal_consistency_ok: false,
     equivocation_store_ok: false,
     equivocation_count: 0,
-    verification_status: "UNKNOWN",
-    replay_status: "UNKNOWN",
+    verification_status: "UNAVAILABLE",
+    replay_status: "UNAVAILABLE",
     key_storage_mode: "unknown",
     vector_count: 0,
     record_count: 0,
@@ -90,8 +108,7 @@ export function parseVerificationStatus(raw: unknown): VerificationStatus | null
     upper === "VERIFIED" ||
     upper === "UNVERIFIED" ||
     upper === "INVALID" ||
-    upper === "UNKNOWN" ||
-    upper === "PENDING"
+    upper === "UNAVAILABLE"
   ) {
     return upper;
   }
@@ -133,12 +150,21 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
   if (!snapshot.reachable || !snapshot.data) {
     return {
       initialStatus: disconnectedStatusDto(snapshot.endpoint),
+      initialSpaces: [],
       initialRegions: [],
       initialWallets: [],
       initialTokens: [],
       initialVectors: [],
       initialRewards: [],
       initialValidators: [],
+      initialParticipants: [],
+      initialNodes: [],
+      initialContracts: [],
+      initialLoans: [],
+      initialPrograms: [],
+      ghostEntities: null,
+      ghostAssessment: null,
+      hierarchyCommitments: null,
       initialRounds: [],
       initialEvents: [],
       initialRecords: [],
@@ -163,12 +189,18 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
     : [];
   const rawDrainPolicy = (d.drain_policy as DrainPolicyDto | null | undefined) ?? null;
 
+  const rawSpaces = Array.isArray(d.spaces) ? (d.spaces as Array<Record<string, unknown>>) : [];
   const rawRegions = Array.isArray(d.regions) ? (d.regions as Array<Record<string, unknown>>) : [];
   const rawWallets = Array.isArray(d.wallets) ? (d.wallets as Array<Record<string, unknown>>) : [];
   const rawTokens = Array.isArray(d.tokens) ? (d.tokens as Array<Record<string, unknown>>) : [];
   const rawBalances = Array.isArray(d.balances) ? (d.balances as Array<Record<string, unknown>>) : null;
   const rawEvents = Array.isArray(d.events) ? (d.events as Array<Record<string, unknown>>) : [];
   const rawCerts = Array.isArray(d.certificates) ? (d.certificates as Array<Record<string, unknown>>) : [];
+  const rawParticipants = Array.isArray(d.participants) ? (d.participants as Array<Record<string, unknown>>) : [];
+  const rawNodes = Array.isArray(d.nodes) ? (d.nodes as Array<Record<string, unknown>>) : [];
+  const rawContracts = Array.isArray(d.contracts) ? (d.contracts as Array<Record<string, unknown>>) : [];
+  const rawLoans = Array.isArray(d.loans) ? (d.loans as Array<Record<string, unknown>>) : [];
+  const rawPrograms = Array.isArray(d.programs) ? (d.programs as Array<Record<string, unknown>>) : [];
   const rawConsensus = (d.consensus ?? {}) as Record<string, unknown>;
   const rawValidators = Array.isArray(rawConsensus.validators)
     ? (rawConsensus.validators as Array<Record<string, unknown>>)
@@ -230,7 +262,6 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
 
   const dbIntegrityOk = storageOk && walConsistencyOk && equivocationStoreOk;
 
-  // Authoritative Rust certificate verification summaries (NEVER trust client heuristics or raw votes.length)
   const rawCertVerifications = Array.isArray(rawProofs?.certificate_verifications)
     ? (rawProofs!.certificate_verifications as Array<Record<string, unknown>>)
     : null;
@@ -297,7 +328,6 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
       replayStatus = "VERIFIED";
       replayVerified = true;
     } else {
-      // Missing ledger proof report MUST remain UNVERIFIED, never default to true
       replayStatus = "UNVERIFIED";
       replayVerified = false;
     }
@@ -312,6 +342,12 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
     const eventId = String(e.event_id ?? "");
     const payloadObj =
       e.payload && typeof e.payload === "object" ? (e.payload as Record<string, unknown>) : null;
+    const entityKind = parseOptionalString(e.entity_kind);
+    const entityId = String(e.entity_id ?? "");
+    const resolvedRegionId =
+      parseOptionalString(e.region_id) ??
+      parseOptionalString(payloadObj?.region_id) ??
+      (entityKind === "region" ? entityId : "");
     const coveringVerifiedCert =
       verifiedCertForEventHash.get(eventHash) ?? verifiedCertForEventId.get(eventId) ?? null;
     const eventVerified = proofsChainValid === true && coveringVerifiedCert !== null;
@@ -324,8 +360,9 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
     return {
       event_id: eventId,
       parent_hashes: Array.isArray(e.parent_hashes) ? (e.parent_hashes as string[]) : [],
-      region_id: String(e.entity_kind ?? ""),
-      entity_id: String(e.entity_id ?? ""),
+      entity_kind: entityKind ?? undefined,
+      region_id: resolvedRegionId,
+      entity_id: entityId,
       operation: { type: String(e.operation ?? e.operation_name ?? "EVENT") },
       vector_before: { components: [], owner_public_key: "", type_tag: "vector3", metadata: {} },
       vector_after: { components: [], owner_public_key: "", type_tag: "vector3", metadata: {} },
@@ -345,6 +382,20 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
     };
   });
 
+  const initialSpaces: SpaceDto[] = rawSpaces.map((s) => ({
+    space_id: String(s.space_id ?? ""),
+    name: String(s.name ?? ""),
+    visibility: String(s.visibility ?? "PUBLIC").toLowerCase() === "private" ? "private" : "public",
+    ghost: s.ghost === true,
+    owner_pubkey: String(s.owner_pubkey ?? ""),
+    created_at_ms: Number(s.created_at_ms ?? 0),
+    version: Number(s.version ?? 1),
+    metadata:
+      s.metadata && typeof s.metadata === "object"
+        ? (s.metadata as Record<string, string>)
+        : {},
+  }));
+
   const initialRegions: RegionDto[] = rawRegions.map((r) => {
     const regionId = String(r.region_id ?? "");
     const matchingCreateEvent = rawEvents.find((e) => {
@@ -363,6 +414,7 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
       null;
     return {
       region_id: regionId,
+      space_id: parseOptionalString(r.space_id),
       region_root: String(r.space_id ?? ""),
       region_name: String(r.name ?? ""),
       normalized_name: String(r.name ?? "").toLowerCase(),
@@ -370,6 +422,7 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
       suggested_title: (r.title as string | null) ?? null,
       visibility: String(r.visibility ?? "PUBLIC").toLowerCase() === "private" ? "private" : "public",
       section: parseOptionalNumber(r.section),
+      ghost: r.ghost === true,
       auth_ratio_bps: parseOptionalNumber(r.auth_ratio_bps),
       creator_public_key: String(r.creator_pubkey ?? ""),
       trigger_event_hash: matchedHash,
@@ -403,8 +456,9 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
       wallet_id: wid,
       public_key_hex: String(w.owner_pubkey ?? ""),
       label: String(w.name ?? wid),
-      region_id: (w.region_id as string | null) ?? null,
-      space_id: (w.space_id as string | null) ?? null,
+      region_id: parseOptionalString(w.region_id),
+      space_id: parseOptionalString(w.space_id),
+      ghost: w.ghost === true,
       creator_wallet_id: null,
       receive_policy: parseReceivePolicy(w.receive_policy),
       created_at_ms: Number(w.created_at_ms ?? 0),
@@ -439,6 +493,7 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
     let escrowSum = 0n;
     let lockedCollateralSum = 0n;
     let reserveSum = 0n;
+    let ghostCustodySum = 0n;
     let unknownSum = 0n;
     let balanceParseFailed = false;
     for (const b of tBals) {
@@ -453,13 +508,16 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
         escrowSum += parsed;
       } else if (b.wallet_id.startsWith("reserve::")) {
         reserveSum += parsed;
+      } else if (b.wallet_id.startsWith("ghost_custody::")) {
+        ghostCustodySum += parsed;
       } else if (walletIdSet.has(b.wallet_id)) {
         walletSum += parsed;
       } else {
         unknownSum += parsed;
       }
     }
-    const localSumAll = walletSum + escrowSum + lockedCollateralSum + reserveSum + unknownSum;
+    const localSumAll =
+      walletSum + escrowSum + lockedCollateralSum + reserveSum + ghostCustodySum + unknownSum;
     const totalSupplyBig = parseBigIntSafe(totalSupplyStr);
     const maxSupplyBig = parseBigIntSafe(t.max_supply);
     const initialBig = parseBigIntSafe(initialTokenVal ?? mintedSupplyStr);
@@ -476,6 +534,7 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
     let escrowBalancesStr = escrowSum.toString();
     let lockedCollateralStr = lockedCollateralSum.toString();
     let reserveBalancesStr = reserveSum.toString();
+    let ghostCustodyStr = ghostCustodySum.toString();
     let unknownBalancesStr = unknownSum.toString();
     let burnedSupplyStr: string | null = null;
     let drainedFeesStr: string | null = null;
@@ -488,6 +547,7 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
       escrowBalancesStr = String(breakdown.escrow_balances_total ?? escrowSum.toString());
       lockedCollateralStr = String(breakdown.locked_collateral_total ?? lockedCollateralSum.toString());
       reserveBalancesStr = String(breakdown.reserve_balances_total ?? reserveSum.toString());
+      ghostCustodyStr = String(breakdown.ghost_custody_balances_total ?? ghostCustodySum.toString());
       unknownBalancesStr = String(breakdown.unknown_account_balances_total ?? unknownSum.toString());
       burnedSupplyStr =
         breakdown.burned_supply != null ? String(breakdown.burned_supply) : null;
@@ -516,9 +576,10 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
         balanceParseFailed ||
         unknownSum > 0n ||
         upstreamUnknownBig > 0n ||
-        upstreamStatus === "UNVERIFIED"
+        upstreamStatus === "UNVERIFIED" ||
+        upstreamStatus === "UNAVAILABLE"
       ) {
-        conservationStatus = "UNVERIFIED";
+        conservationStatus = upstreamStatus === "UNAVAILABLE" ? "UNAVAILABLE" : "UNVERIFIED";
         conserved = false;
         anyTokenUnverified = true;
       } else if (breakdown.conserved === true && upstreamStatus === "VERIFIED") {
@@ -530,7 +591,6 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
         anyTokenUnverified = true;
       }
     } else {
-      // Missing authoritative kernel breakdown: partial balances or missing proof MUST be UNVERIFIED (or INVALID if arithmetically inconsistent)
       if (rawBalances !== null && !balanceParseFailed && totalSupplyBig !== null) {
         if (!capOk || (unknownSum === 0n && localSumAll > totalSupplyBig)) {
           conservationStatus = "INVALID";
@@ -553,7 +613,10 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
       token_id: tid,
       name: String(t.name ?? ""),
       symbol: String(t.symbol ?? ""),
+      wallet_id: parseOptionalString(t.wallet_id),
       region_id: String(t.region_id ?? ""),
+      space_id: parseOptionalString(t.space_id),
+      ghost: t.ghost === true,
       decimals: Number(t.decimals ?? 0),
       max_supply: String(t.max_supply ?? "0"),
       total_supply: totalSupplyStr,
@@ -580,6 +643,7 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
         escrow_balances_total: escrowBalancesStr,
         locked_collateral_total: lockedCollateralStr,
         reserve_balances_total: reserveBalancesStr,
+        ghost_custody_balances_total: ghostCustodyStr,
         unknown_account_balances_total: unknownBalancesStr,
         burned_supply: burnedSupplyStr,
         drained_fees_total: drainedFeesStr,
@@ -600,11 +664,101 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
     joined_at_ms: Number(v.joined_epoch ?? 0),
   }));
 
+  const initialParticipants: ParticipantDto[] = rawParticipants.map((p) => ({
+    participant_id: String(p.participant_id ?? ""),
+    identity_pubkey: String(p.identity_pubkey ?? ""),
+    display_name: String(p.display_name ?? p.participant_id ?? ""),
+    created_at_ms: Number(p.created_at_ms ?? 0),
+    scopes: Array.isArray(p.scopes) ? (p.scopes as ParticipantDto["scopes"]) : [],
+    active: p.active !== false,
+  }));
+
+  const initialNodes: NodeDto[] = rawNodes.map((n) => ({
+    node_id: String(n.node_id ?? ""),
+    operator_pubkey: String(n.operator_pubkey ?? ""),
+    listen_addr: String(n.listen_addr ?? ""),
+    roles: Array.isArray(n.roles) ? n.roles.map((r) => String(r)) : [],
+    region_id: parseOptionalString(n.region_id),
+    active: n.active !== false,
+    joined_at_ms: Number(n.joined_at_ms ?? 0),
+  }));
+
+  const initialContracts: ContractDto[] = rawContracts.map((c) => ({
+    contract_id: String(c.contract_id ?? ""),
+    name: String(c.name ?? ""),
+    space_id: parseOptionalString(c.space_id),
+    region_id: parseOptionalString(c.region_id),
+    creator_pubkey: String(c.creator_pubkey ?? ""),
+    rules: c.rules && typeof c.rules === "object" ? (c.rules as Record<string, unknown>) : {},
+    actions: Array.isArray(c.actions) ? c.actions : [],
+    execution_count: Number(c.execution_count ?? 0),
+    active: c.active !== false,
+    state_data:
+      c.state_data && typeof c.state_data === "object"
+        ? (c.state_data as Record<string, unknown>)
+        : {},
+    escrow_balances:
+      c.escrow_balances && typeof c.escrow_balances === "object"
+        ? (c.escrow_balances as Record<string, string | number>)
+        : {},
+    created_at_ms: Number(c.created_at_ms ?? 0),
+    version: Number(c.version ?? 1),
+  }));
+
+  const initialLoans: LoanDto[] = rawLoans.map((l) => ({
+    loan_id: String(l.loan_id ?? ""),
+    name: String(l.name ?? ""),
+    token_id: String(l.token_id ?? ""),
+    lender_wallet_id: String(l.lender_wallet_id ?? ""),
+    borrower_wallet_id: String(l.borrower_wallet_id ?? ""),
+    principal: String(l.principal ?? "0"),
+    disbursed_amount: l.disbursed_amount != null ? String(l.disbursed_amount) : undefined,
+    collateral_locked: String(l.collateral_locked ?? "0"),
+    repaid_amount: String(l.repaid_amount ?? "0"),
+    accrued_interest: l.accrued_interest != null ? String(l.accrued_interest) : undefined,
+    interest_bps: Number(l.interest_bps ?? 0),
+    maturity_at_ms: parseOptionalNumber(l.maturity_at_ms),
+    defaulted: l.defaulted === true,
+    status: String(l.status ?? "CREATED"),
+    created_at_ms: Number(l.created_at_ms ?? 0),
+    version: Number(l.version ?? 1),
+  }));
+
+  const initialPrograms: ProgramDto[] = rawPrograms.map((p) => ({
+    program_id: String(p.program_id ?? ""),
+    file_name: String(p.file_name ?? ""),
+    actor_pubkey: String(p.actor_pubkey ?? ""),
+    status: String(p.status ?? ""),
+    source_hash: String(p.source_hash ?? ""),
+    compiled_program_hash: parseOptionalString(p.compiled_program_hash),
+    resulting_event_ids: Array.isArray(p.resulting_event_ids)
+      ? p.resulting_event_ids.map((x) => String(x))
+      : [],
+    created_entities: Array.isArray(p.created_entities)
+      ? p.created_entities.map((x) => String(x))
+      : [],
+    outputs: Array.isArray(p.outputs) ? p.outputs.map((x) => String(x)) : [],
+    error_message: parseOptionalString(p.error_message),
+    submitted_at_ms: Number(p.submitted_at_ms ?? 0),
+  }));
+
+  const ghostEntities =
+    d.ghost_entities && typeof d.ghost_entities === "object"
+      ? (d.ghost_entities as GhostEntitiesDto)
+      : null;
+  const ghostAssessment =
+    d.ghost_assessment && typeof d.ghost_assessment === "object"
+      ? (d.ghost_assessment as GhostAssessmentDto)
+      : ghostEntities?.assessment ?? null;
+  const hierarchyCommitments =
+    rawProofs?.hierarchy_commitments && typeof rawProofs.hierarchy_commitments === "object"
+      ? (rawProofs.hierarchy_commitments as HierarchyCommitmentsDto)
+      : null;
+
   const initialSnapshots: SnapshotDto[] = rawCerts.map((c) => {
     const cid = String(c.certificate_id ?? "");
     const cStatus =
-      (cid ? certStatusById.get(cid) : undefined) ??
-      (rawCertVerifications ? "UNVERIFIED" : "UNVERIFIED");
+      (cid ? certStatusById.get(cid) : undefined) ?? "UNVERIFIED";
     return {
       snapshot_id: cid,
       state_root: {
@@ -612,7 +766,6 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
         event_count: Array.isArray(c.event_hashes) ? c.event_hashes.length : 0,
         logical_clock: Number(c.height ?? logicalClock),
       },
-      // NEVER display proposal_digest as event_root
       event_root: eventHistoryRoot ?? null,
       proposal_digest: String(c.proposal_digest ?? ""),
       verification_status: cStatus,
@@ -672,8 +825,8 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
     replay_status: replayStatus,
     key_storage_mode:
       typeof rawHealth.key_storage_mode === "string" ? rawHealth.key_storage_mode : undefined,
-    vector_count: rawTokens.length,
-    record_count: rawEvents.length,
+    vector_count: rawBalances ? rawBalances.length : 0,
+    record_count: Number(rawStatus.transaction_count ?? rawEvents.length ?? 0),
     event_count: eventCount,
     region_count: rawRegions.length,
     wallet_count: rawWallets.length,
@@ -693,12 +846,21 @@ export function mapNetworkSnapshotToWorkbenchProps(snapshot: {
 
   return {
     initialStatus,
+    initialSpaces,
     initialRegions,
     initialWallets,
     initialTokens,
     initialVectors: [],
     initialRewards: [],
     initialValidators,
+    initialParticipants,
+    initialNodes,
+    initialContracts,
+    initialLoans,
+    initialPrograms,
+    ghostEntities,
+    ghostAssessment,
+    hierarchyCommitments,
     initialRounds: [],
     initialEvents,
     initialRecords: [],

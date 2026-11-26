@@ -26,10 +26,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d88513c861a588a5d810c54d1e7f93a895d # stable
         with:
           components: clippy, rustfmt
 
@@ -38,7 +38,7 @@ jobs:
         run: rustup target add x86_64-pc-windows-gnu
 
       - name: Cache Rust dependencies
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.7.5
 
       - name: Format check
         run: cargo fmt --all --check
@@ -60,21 +60,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@39370e3970a6d050c4088adace56679d69b0f14e # v4.1.0
         with:
           node-version: "22"
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.2
         with:
           bun-version: latest
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.11"
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@0a12ed9d6a96ab950c8f028ed4e21a23da42c642 # v5.2.0
         with:
           go-version: "1.22"
           cache: false
@@ -86,6 +86,7 @@ jobs:
           bun tests/cross_language/verify_parity.ts
           python3 tests/cross_language/verify_parity.py
           go -C tests/cross_language run .
+          go -C sdks/go test ./...
           go -C sdks/go build ./...
           go -C examples/go build ./...
           ./node_modules/.bin/tsc -p sdks/typescript/tsconfig.json --noEmit
@@ -96,11 +97,13 @@ jobs:
           ./node_modules/.bin/tsc --noEmit
           npm run lint
           npm run build
-      - name: Validate shell scripts syntax
+      - name: Validate VectorSpace parity, shell scripts syntax & safety
         run: |
+          bash scripts/sync-vectorspace.sh --check
           for s in scripts/*.sh tests/cross_language/*.sh tests/e2e/*.sh tests/multi_node/*.sh; do
             bash -n "$s"
           done
+          bash tests/e2e/script_safety.test.sh
       - name: Validate config TOML manifests
         run: |
           python3 -c 'import glob, tomllib; [tomllib.load(open(p, "rb")) for p in glob.glob("config/*.toml")]'

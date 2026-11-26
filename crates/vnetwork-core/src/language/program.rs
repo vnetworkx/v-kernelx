@@ -524,9 +524,12 @@ fn execute_single_compiled_op(
             let amount = parse_u128_str(op.params.get("amount").and_then(|v| v.as_str()).unwrap_or("0"))?;
             let token_id = resolve_alias(aliases, token_ref);
             let wallet_id = if wallet_ref.trim().is_empty() {
-                crate::hierarchy::verify_token_exists(state, &token_id)?
-                    .wallet_id
-                    .clone()
+                let tok = crate::hierarchy::verify_token_exists(state, &token_id)?;
+                if tok.ghost && tok.wallet_id.is_empty() {
+                    format!("ghost_custody::{}", tok.token_id)
+                } else {
+                    tok.wallet_id.clone()
+                }
             } else {
                 resolve_alias(aliases, wallet_ref)
             };
@@ -694,12 +697,214 @@ fn execute_single_compiled_op(
         }
         "CERTIFY" => {
             let target = op.params.get("target").and_then(|v| v.as_str()).unwrap_or("");
+            if target.trim().is_empty() {
+                return Err(VNetworkError::Validation(
+                    "certify requires a non-empty target entity".to_string(),
+                ));
+            }
             let ratio = op
                 .params
                 .get("auth_ratio")
                 .and_then(|v| v.as_str())
                 .unwrap_or("0.8000");
-            outs.push(format!("certify({target}): auth_ratio={ratio}"));
+            let bps = op
+                .params
+                .get("auth_ratio_bps")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| {
+                    VNetworkError::Validation("certify missing integer auth_ratio_bps".to_string())
+                })?;
+            if bps > 10_000 {
+                return Err(VNetworkError::Validation(format!(
+                    "certify auth_ratio_bps `{bps}` exceeds 10000"
+                )));
+            }
+            let certified_flag = op
+                .params
+                .get("certified")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(bps >= 8000);
+            let resolved = resolve_alias(aliases, target);
+
+            if let Ok(reg_snapshot) = crate::hierarchy::verify_region_exists(state, &resolved).cloned()
+            {
+                let authorized = if reg_snapshot.ghost && reg_snapshot.space_id.is_empty() {
+                    reg_snapshot.creator_pubkey == actor_pubkey
+                        || crate::identity::require_participant_scope_at(
+                            state,
+                            actor_pubkey,
+                            ParticipationLevel::Network,
+                            None,
+                            timestamp_ms,
+                        )
+                        .is_ok()
+                } else {
+                    reg_snapshot.creator_pubkey == actor_pubkey
+                        || crate::identity::require_participant_scope_at(
+                            state,
+                            actor_pubkey,
+                            ParticipationLevel::Region,
+                            Some(&reg_snapshot.region_id),
+                            timestamp_ms,
+                        )
+                        .is_ok()
+                        || crate::identity::require_participant_scope_at(
+                            state,
+                            actor_pubkey,
+                            ParticipationLevel::Space,
+                            Some(&reg_snapshot.space_id),
+                            timestamp_ms,
+                        )
+                        .is_ok()
+                };
+                if !authorized {
+                    return Err(VNetworkError::Authorization(format!(
+                        "actor `{actor_pubkey}` is not authorized to certify region `{}`",
+                        reg_snapshot.name
+                    )));
+                }
+                let before_hash = blake3_hex(&canonical_json_bytes(&reg_snapshot)?);
+                let mut reg = reg_snapshot;
+                reg.auth_ratio_bps = bps;
+                reg.metadata
+                    .insert("certification_auth_ratio".to_string(), ratio.to_string());
+                reg.metadata
+                    .insert("certified".to_string(), certified_flag.to_string());
+                reg.version = reg
+                    .version
+                    .checked_add(1)
+                    .ok_or_else(|| VNetworkError::Validation("region version overflow".to_string()))?;
+                state.regions.insert(reg.region_id.clone(), reg.clone());
+                state.logical_clock = state
+                    .logical_clock
+                    .checked_add(1)
+                    .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
+                let sequence = (state.events.len() as u64)
+                    .checked_add(1)
+                    .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
+                let parents = state.latest_event_hash().into_iter().collect();
+                let after_hash = blake3_hex(&canonical_json_bytes(&reg)?);
+                let ev = LedgerEvent::build(
+                    sequence,
+                    parents,
+                    &state.network_id,
+                    "region",
+                    &reg.region_id,
+                    "ENTITY_CERTIFY",
+                    actor_pubkey,
+                    state.logical_clock,
+                    timestamp_ms,
+                    serde_json::json!({
+                        "entity_kind": "region",
+                        "entity_id": reg.region_id,
+                        "auth_ratio": ratio,
+                        "auth_ratio_bps": bps,
+                        "certified": certified_flag,
+                        "entity": reg,
+                    }),
+                    before_hash,
+                    after_hash,
+                )?;
+                state.events.push(ev.clone());
+                events.push(ev);
+                outs.push(format!(
+                    "certified region {} ({}): auth_ratio={ratio} bps={bps}",
+                    reg.name, reg.region_id
+                ));
+            } else if let Ok(tok) = crate::hierarchy::verify_token_exists(state, &resolved).cloned() {
+                let target_wallet = if tok.ghost && tok.wallet_id.is_empty() {
+                    format!("ghost_custody::{}", tok.token_id)
+                } else {
+                    tok.wallet_id.clone()
+                };
+                let net_op = NetworkOperation::AdjustNonTransferableDimensions {
+                    token_id: tok.token_id.clone(),
+                    wallet_id: target_wallet,
+                    new_auth_ratio_au: Some(bps as u128),
+                    new_energy: None,
+                    reason: format!("certify({ratio})"),
+                };
+                let outcome = apply_network_operation_with_genesis(
+                    state,
+                    genesis,
+                    &net_op,
+                    actor_pubkey,
+                    timestamp_ms,
+                )?;
+                events.extend(outcome.events);
+                outs.extend(outcome.outputs);
+            } else if let Ok(space_snapshot) =
+                crate::hierarchy::verify_space_exists(state, &resolved).cloned()
+            {
+                let authorized = space_snapshot.owner_pubkey == actor_pubkey
+                    || crate::identity::require_participant_scope_at(
+                        state,
+                        actor_pubkey,
+                        ParticipationLevel::Space,
+                        Some(&space_snapshot.space_id),
+                        timestamp_ms,
+                    )
+                    .is_ok();
+                if !authorized {
+                    return Err(VNetworkError::Authorization(format!(
+                        "actor `{actor_pubkey}` is not authorized to certify space `{}`",
+                        space_snapshot.name
+                    )));
+                }
+                let before_hash = blake3_hex(&canonical_json_bytes(&space_snapshot)?);
+                let mut space = space_snapshot;
+                space
+                    .metadata
+                    .insert("certification_auth_ratio".to_string(), ratio.to_string());
+                space
+                    .metadata
+                    .insert("certified".to_string(), certified_flag.to_string());
+                space.version = space
+                    .version
+                    .checked_add(1)
+                    .ok_or_else(|| VNetworkError::Validation("space version overflow".to_string()))?;
+                state.spaces.insert(space.space_id.clone(), space.clone());
+                state.logical_clock = state
+                    .logical_clock
+                    .checked_add(1)
+                    .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
+                let sequence = (state.events.len() as u64)
+                    .checked_add(1)
+                    .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
+                let parents = state.latest_event_hash().into_iter().collect();
+                let after_hash = blake3_hex(&canonical_json_bytes(&space)?);
+                let ev = LedgerEvent::build(
+                    sequence,
+                    parents,
+                    &state.network_id,
+                    "space",
+                    &space.space_id,
+                    "ENTITY_CERTIFY",
+                    actor_pubkey,
+                    state.logical_clock,
+                    timestamp_ms,
+                    serde_json::json!({
+                        "entity_kind": "space",
+                        "entity_id": space.space_id,
+                        "auth_ratio": ratio,
+                        "auth_ratio_bps": bps,
+                        "certified": certified_flag,
+                        "entity": space,
+                    }),
+                    before_hash,
+                    after_hash,
+                )?;
+                state.events.push(ev.clone());
+                events.push(ev);
+                outs.push(format!(
+                    "certified space {} ({}): auth_ratio={ratio} bps={bps}",
+                    space.name, space.space_id
+                ));
+            } else {
+                return Err(VNetworkError::NotFound(format!(
+                    "certify target `{resolved}` not found"
+                )));
+            }
         }
         "EVENT_RECORD" => {
             let expr = op.params.get("expr").and_then(|v| v.as_str()).unwrap_or("record");

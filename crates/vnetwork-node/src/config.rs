@@ -1,6 +1,6 @@
-use libp2p::Multiaddr;
+use libp2p::{multiaddr::Protocol, Multiaddr};
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use vnetwork_core::state::GenesisConfig;
 use vnetwork_types::*;
@@ -93,6 +93,7 @@ pub struct NodeConfig {
     pub key_passphrase_env: String,
     pub key_passphrase_file: Option<PathBuf>,
     pub allow_plaintext_key_fallback: bool,
+    pub allow_local_p2p: bool,
     pub drain_policy: DrainPolicy,
     pub tls: TlsConfig,
 }
@@ -131,6 +132,7 @@ impl Default for NodeConfig {
             key_passphrase_env: default_passphrase_env(),
             key_passphrase_file: None,
             allow_plaintext_key_fallback: false,
+            allow_local_p2p: false,
             drain_policy: DrainPolicy::unconfigured(),
             tls: TlsConfig::default(),
         }
@@ -366,6 +368,9 @@ impl NodeConfig {
             })?;
             dp.validate()?;
             self.drain_policy = dp;
+        }
+        if let Ok(v) = std::env::var("NETWORK_ALLOW_LOCAL_P2P") {
+            self.allow_local_p2p = parse_strict_bool(&v, "NETWORK_ALLOW_LOCAL_P2P")?;
         }
         if let Ok(v) = std::env::var("NETWORK_TLS_CONFIGURATION") {
             let tls = serde_json::from_str::<TlsConfig>(&v).map_err(|e| {
@@ -621,4 +626,106 @@ fn parse_strict_bool(raw: &str, var_name: &str) -> VResult<bool> {
             "invalid boolean `{other}` for {var_name}; expected true/false/1/0/yes/no/on/off"
         ))),
     }
+}
+
+fn is_non_public_ipv4(ip: Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    let is_cgnat = octets[0] == 100 && (octets[1] & 0xc0) == 64;
+    ip.is_loopback()
+        || ip.is_private()
+        || ip.is_link_local()
+        || ip.is_unspecified()
+        || ip.is_broadcast()
+        || ip.is_multicast()
+        || ip.is_documentation()
+        || is_cgnat
+}
+
+fn is_non_public_ipv6(ip: Ipv6Addr) -> bool {
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return is_non_public_ipv4(v4);
+    }
+    let seg0 = ip.segments()[0];
+    let is_unique_local = (seg0 & 0xfe00) == 0xfc00;
+    let is_unicast_link_local = (seg0 & 0xffc0) == 0xfe80;
+    ip.is_loopback()
+        || ip.is_unspecified()
+        || ip.is_multicast()
+        || is_unique_local
+        || is_unicast_link_local
+}
+
+pub fn validate_peer_dial_multiaddr(
+    ma: &Multiaddr,
+    profile: NetworkProfile,
+    allow_local_p2p: bool,
+) -> VResult<()> {
+    let permit_local = profile == NetworkProfile::Development || allow_local_p2p;
+    let mut has_host_proto = false;
+
+    for proto in ma.iter() {
+        match proto {
+            Protocol::Ip4(ip) => {
+                has_host_proto = true;
+                if !permit_local && is_non_public_ipv4(ip) {
+                    return Err(VNetworkError::Authorization(format!(
+                        "refusing non-public IPv4 peer multiaddr `{ma}` under {:?} profile without NETWORK_ALLOW_LOCAL_P2P=true",
+                        profile
+                    )));
+                }
+            }
+            Protocol::Ip6(ip) => {
+                has_host_proto = true;
+                if !permit_local && is_non_public_ipv6(ip) {
+                    return Err(VNetworkError::Authorization(format!(
+                        "refusing non-public IPv6 peer multiaddr `{ma}` under {:?} profile without NETWORK_ALLOW_LOCAL_P2P=true",
+                        profile
+                    )));
+                }
+            }
+            Protocol::Dns(host)
+            | Protocol::Dns4(host)
+            | Protocol::Dns6(host)
+            | Protocol::Dnsaddr(host) => {
+                has_host_proto = true;
+                let lower = host.trim().to_ascii_lowercase();
+                if lower.is_empty() {
+                    return Err(VNetworkError::Validation(
+                        "peer multiaddr DNS host cannot be empty".to_string(),
+                    ));
+                }
+                if let Ok(parsed_ip) = lower.parse::<IpAddr>() {
+                    let blocked = match parsed_ip {
+                        IpAddr::V4(v4) => is_non_public_ipv4(v4),
+                        IpAddr::V6(v6) => is_non_public_ipv6(v6),
+                    };
+                    if !permit_local && blocked {
+                        return Err(VNetworkError::Authorization(format!(
+                            "refusing non-public IP DNS target `{ma}` under {:?} profile",
+                            profile
+                        )));
+                    }
+                }
+                if !permit_local
+                    && (lower == "localhost"
+                        || lower.ends_with(".localhost")
+                        || lower.ends_with(".local")
+                        || lower.ends_with(".internal"))
+                {
+                    return Err(VNetworkError::Authorization(format!(
+                        "refusing local/internal DNS peer multiaddr `{ma}` under {:?} profile without NETWORK_ALLOW_LOCAL_P2P=true",
+                        profile
+                    )));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if !has_host_proto {
+        return Err(VNetworkError::Validation(format!(
+            "peer multiaddr `{ma}` must contain an /ip4, /ip6, or /dns* network address component"
+        )));
+    }
+    Ok(())
 }

@@ -2,8 +2,7 @@ export type VerificationStatus =
   | "VERIFIED"
   | "UNVERIFIED"
   | "INVALID"
-  | "UNKNOWN"
-  | "PENDING";
+  | "UNAVAILABLE";
 
 export type TransferScopeDto =
   | "SAME_WALLET"
@@ -60,8 +59,20 @@ export interface NodeStatusDto {
   replay_verified: boolean;
 }
 
+export interface SpaceDto {
+  space_id: string;
+  name: string;
+  visibility: "public" | "private";
+  ghost: boolean;
+  owner_pubkey: string;
+  created_at_ms: number;
+  version: number;
+  metadata: Record<string, string>;
+}
+
 export interface RegionDto {
   region_id: string;
+  space_id?: string | null;
   region_root: string;
   region_name: string;
   normalized_name: string;
@@ -69,6 +80,7 @@ export interface RegionDto {
   suggested_title: string | null;
   visibility: "public" | "private";
   section: number | null;
+  ghost?: boolean;
   auth_ratio_bps: number | null;
   creator_public_key: string;
   trigger_event_hash: string | null;
@@ -132,6 +144,7 @@ export interface WalletDto {
   label: string;
   region_id: string | null;
   space_id?: string | null;
+  ghost?: boolean;
   creator_wallet_id: string | null;
   receive_policy?: WalletReceivePolicyDto;
   created_at_ms: number;
@@ -150,6 +163,7 @@ export interface SupplyConservationDto {
   escrow_balances_total?: string;
   locked_collateral_total?: string;
   reserve_balances_total?: string;
+  ghost_custody_balances_total?: string;
   unknown_account_balances_total?: string;
   burned_supply?: string | null;
   drained_fees_total?: string | null;
@@ -161,7 +175,10 @@ export interface TokenDto {
   token_id: string;
   name: string;
   symbol: string;
+  wallet_id?: string | null;
   region_id: string;
+  space_id?: string | null;
+  ghost?: boolean;
   decimals: number;
   max_supply: string;
   total_supply: string;
@@ -179,6 +196,113 @@ export interface TokenDto {
   version: number;
   balances: TokenBalanceDto[];
   conservation: SupplyConservationDto;
+}
+
+export interface ParticipantScopeDto {
+  level: string;
+  target_id?: string | null;
+  granted_by?: string;
+  granted_at_ms?: number;
+  expires_at_ms?: number | null;
+}
+
+export interface ParticipantDto {
+  participant_id: string;
+  identity_pubkey: string;
+  display_name: string;
+  created_at_ms: number;
+  scopes: ParticipantScopeDto[];
+  active: boolean;
+}
+
+export interface NodeDto {
+  node_id: string;
+  operator_pubkey: string;
+  listen_addr: string;
+  roles: string[];
+  region_id: string | null;
+  active: boolean;
+  joined_at_ms: number;
+}
+
+export interface ContractDto {
+  contract_id: string;
+  name: string;
+  space_id: string | null;
+  region_id: string | null;
+  creator_pubkey: string;
+  rules: Record<string, unknown>;
+  actions: unknown[];
+  execution_count: number;
+  active: boolean;
+  state_data?: Record<string, unknown>;
+  escrow_balances?: Record<string, string | number>;
+  created_at_ms: number;
+  version: number;
+}
+
+export interface LoanDto {
+  loan_id: string;
+  name: string;
+  token_id: string;
+  lender_wallet_id: string;
+  borrower_wallet_id: string;
+  principal: string;
+  disbursed_amount?: string;
+  collateral_locked: string;
+  repaid_amount: string;
+  accrued_interest?: string;
+  interest_bps: number;
+  maturity_at_ms?: number | null;
+  defaulted?: boolean;
+  status: string;
+  created_at_ms: number;
+  version: number;
+}
+
+export interface ProgramDto {
+  program_id: string;
+  file_name: string;
+  actor_pubkey: string;
+  status: string;
+  source_hash: string;
+  compiled_program_hash?: string | null;
+  resulting_event_ids: string[];
+  created_entities: string[];
+  outputs: string[];
+  error_message?: string | null;
+  submitted_at_ms: number;
+}
+
+export interface GhostAssessmentDto {
+  network_id: string;
+  total_ghost_entities: number;
+  ghost_spaces: string[];
+  ghost_regions: string[];
+  parentless_regions: string[];
+  ghost_wallets: string[];
+  parentless_wallets: string[];
+  ghost_tokens: string[];
+  parentless_tokens: string[];
+  risk_flags: string[];
+  ghost_ledger_commitment: string;
+}
+
+export interface GhostEntitiesDto {
+  spaces: SpaceDto[];
+  regions: Array<Record<string, unknown>>;
+  wallets: Array<Record<string, unknown>>;
+  tokens: Array<Record<string, unknown>>;
+  assessment: GhostAssessmentDto | null;
+}
+
+export interface HierarchyCommitmentsDto {
+  network_commitment: string;
+  ghost_commitment: string;
+  space_commitments: Record<string, string>;
+  region_commitments: Record<string, string>;
+  wallet_commitments: Record<string, string>;
+  token_commitments: Record<string, string>;
 }
 
 export interface ProjectionStateDto {
@@ -236,6 +360,7 @@ export interface VectorRecordDto {
 export interface CanonicalEventDto {
   event_id: string;
   parent_hashes: string[];
+  entity_kind?: string;
   region_id: string;
   entity_id: string;
   operation: { type: string; value?: string };

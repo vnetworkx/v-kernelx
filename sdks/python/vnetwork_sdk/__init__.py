@@ -6,6 +6,7 @@ from .crypto import (
     DOM_TRANSFER_APPROVAL_V1,
     LANGUAGE_VERSION,
     PROTOCOL_VERSION,
+    VERIFICATION_STATUSES,
     ClientIdentity,
     KeypairMaterial,
     canonical_program_submit_object,
@@ -14,6 +15,7 @@ from .crypto import (
     derive_node_id,
     derive_participant_id,
     format_decimal_amount,
+    normalize_verification_status,
     verify_ed25519,
 )
 
@@ -22,6 +24,7 @@ __all__ = [
     "DOM_TRANSFER_APPROVAL_V1",
     "LANGUAGE_VERSION",
     "PROTOCOL_VERSION",
+    "VERIFICATION_STATUSES",
     "VectorNetworkClient",
     "VectorNetworkError",
     "ClientIdentity",
@@ -37,5 +40,6 @@ __all__ = [
     "derive_node_id",
     "derive_participant_id",
     "format_decimal_amount",
+    "normalize_verification_status",
     "verify_ed25519",
 ]

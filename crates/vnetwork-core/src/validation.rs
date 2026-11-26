@@ -38,11 +38,12 @@ pub fn validate_operation_preconditions_with_policy(
             name,
             prefix,
             visibility,
+            ghost,
             ..
         } => {
-            if space_id.trim().is_empty() || name.trim().is_empty() {
+            if (!*ghost && space_id.trim().is_empty()) || name.trim().is_empty() {
                 return Err(VNetworkError::Validation(
-                    "space_id and region name are required".to_string(),
+                    "region name is required, and non-ghost regions require space_id".to_string(),
                 ));
             }
             Visibility::parse(visibility).ok_or_else(|| {
@@ -67,12 +68,12 @@ pub fn validate_operation_preconditions_with_policy(
         NetworkOperation::CreateWallet {
             region_id,
             name,
+            ghost,
             approval_threshold,
-            ..
         } => {
-            if region_id.trim().is_empty() || name.trim().is_empty() {
+            if (!*ghost && region_id.trim().is_empty()) || name.trim().is_empty() {
                 return Err(VNetworkError::Validation(
-                    "region_id and wallet name are required".to_string(),
+                    "wallet name is required, and non-ghost wallets require region_id".to_string(),
                 ));
             }
             if let Some(t) = approval_threshold {
@@ -169,11 +170,16 @@ pub fn validate_operation_preconditions_with_policy(
             max_supply,
             unlimited_supply,
             drain_bps,
+            ghost,
             ..
         } => {
-            if wallet_id.trim().is_empty() || name.trim().is_empty() || symbol.trim().is_empty() {
+            if (!*ghost && wallet_id.trim().is_empty())
+                || name.trim().is_empty()
+                || symbol.trim().is_empty()
+            {
                 return Err(VNetworkError::Validation(
-                    "wallet_id, token name, and symbol are required".to_string(),
+                    "token name and symbol are required, and non-ghost tokens require wallet_id"
+                        .to_string(),
                 ));
             }
             if !atlas_allowed

@@ -1,68 +1,53 @@
 # Final Acceptance Results — Vector Network
 
-**Status Classification (Strict Section 22 Evidence Discipline)**:
-- `TESTED`: Commands executed directly in this environment with observed passing exit code `0`.
-- `IMPLEMENTED`: Source changes and regression tests complete in repository; compilation/execution requires external toolchains not present in this container.
-- `BLOCKED BY ENVIRONMENT`: Container lacks `cargo`, `rustc`, `go`, and `docker` (`which` confirmed only `/usr/local/bin/node`, `/usr/local/bin/npm`, `/usr/bin/python3`, `/usr/local/bin/tsx`, `/usr/local/bin/bun`).
+**Status Classification Discipline**:
+- `PASS`: Executed directly in this container and observed exit code `0`.
+- `IMPLEMENTED — NOT RUNTIME VERIFIED`: Code & regression tests completed cleanly in repository, but runtime compilation/execution is not possible inside this container.
+- `BLOCKED`: Requires toolchains not installed in this container (`cargo`, `rustc`, `rustfmt`, `clippy`, `go`, `docker`).
+- `NOT IMPLEMENTED`: Explicit outstanding work (none in current mandate scope).
 
 ---
 
-## 1. Repository State & Key Deliverables
+## 1. Container Toolchain Availability
 
-- **Workspace Path**: `/app/applet` (archive snapshot, no `.git` metadata directory present).
-- **Important Changed Subsystems**:
-  - Consensus & Equivocation: `crates/vnetwork-consensus/src/{certificate,eligibility,epochs,equivocation,membership,proposal,quorum}.rs`, `tests/{quorum_bft,strict_bft_security}.rs`
-  - Keys, Config & Lifecycle: `crates/vnetwork-types/src/identity.rs`, `crates/vnetwork-node/src/{config,identity,lifecycle}.rs`, `crates/vnetwork-node/tests/{config_validation,security_keys_and_equivocation}.rs`
-  - Storage & WAL Recovery: `crates/vnetwork-storage/src/{database,recovery,snapshots,transactions}.rs`, `crates/vnetwork-storage/tests/{certified_recovery_and_wal,wal_recovery}.rs`
-  - Core Protocol & CLI: `crates/vnetwork-core/src/{ghost,transition,identity,wallet,contracts,loans,token,replay,reconstruction,engine}.rs`, `crates/vnetwork-core/src/language/program.rs`, `crates/vnetwork-core/tests/protocol_domain_invariants.rs`, `crates/vnetwork-cli/src/{config,commands/join}.rs`
-  - Vector Language & 5 SDKs: `vendor/vectorspace/src/compiler.rs`, `crates/vnetwork-core/tests/language_conformance.rs`, `sdks/{rust,javascript,typescript,python,go}`, `tests/cross_language/{sdk_parity.test.mjs,test_python_sdk.py}`
-  - Explorer UI & API Proxies: `lib/{client-crypto,server/snapshot-mapper}.ts`, `app/api/*/route.ts`, `components/*.tsx`, `tests/explorer/integrity_and_crypto.test.mjs`
-  - Cluster Automation & Safety: `scripts/{devnet-up,devnet-down,test-network,release-check}.sh`, `tests/e2e/script_safety.test.sh`
-  - Engineering Documentation (`docs/engineering/`): `COMPLETE_REPOSITORY_AUDIT.md`, `FINAL_DEFECT_REGISTER.md`, `SECURITY_REMEDIATION.md`, `CONSENSUS_VERIFICATION.md`, `STORAGE_AND_RECOVERY_VERIFICATION.md`, `FINAL_ACCEPTANCE_RESULTS.md`
+- **Present**: `node`, `npm`, `python3`, `tsx`, `bun`, `bash`, `tsc`
+- **Absent**: `cargo`, `rustc`, `rustfmt`, `clippy`, `go`, `docker`, `pytest`, `pip3`
 
 ---
 
-## 2. Actual Command Verification Log
+## 2. Direct Verification Execution Log
 
-| Command | Outcome | Scope Verified |
+| Check / Command | Status | Observed Result |
 |---|---|---|
-| `bash -n scripts/*.sh tests/e2e/*.sh tests/multi_node/*.sh tests/cross_language/*.sh` | **PASSED** (`TESTED`) | Clean shell syntax across all automation and acceptance scripts |
-| `bash tests/e2e/script_safety.test.sh` | **PASSED — 4/4** (`TESTED`) | Ownership marker gate, symlink & `..` traversal refusal, reused-PID non-kill guard, dangerous `DEVNET_DIR` refusal |
-| `node --test tests/explorer/integrity_and_crypto.test.mjs` | **PASSED — 17/17** (`TESTED`) | Client transfer approval domain tag, weak Ed25519 pubkey rejection, honest Explorer `VERIFIED`/`UNVERIFIED`/`INVALID` proof/replay/conservation mapping |
-| `node --test tests/cross_language/sdk_parity.test.mjs` | **PASSED — 5/5** (`TESTED`) | Bit-identical BLAKE3, canonical JSON, IDs & Ed25519 signatures across JS, TS, Browser-JS, Browser-TS, Python; `u128` string precision; malformed key rejection; canonical `loadModulesForSource` symlink/traversal escape rejection |
-| `python3 -m unittest tests/cross_language/test_python_sdk.py` | **PASSED — 5/5** (`TESTED`) | Python canonical JSON, BLAKE3 commitments, Ed25519 sign/verify, `ProtectedSigningKey` repr redaction, path containment |
-| `npm --prefix sdks/typescript run check` (`tsc -p tsconfig.json --noEmit`) | **PASSED** (`TESTED`) | Zero TypeScript compile errors in `@vnetwork/ts-sdk` |
-| `npm exec -- tsc --noEmit` | **PASSED** (`TESTED`) | Zero TypeScript compile errors across Next.js Explorer & API routes |
-| `python3` TOML & `.vx`/`.vdx` corpus validator | **PASSED** (`TESTED`) | Valid TOML (`Cargo.toml`, `config/{bootstrap,network,node}.example.toml`) and 16 `.vx`/`.vdx` example files present |
-| Static `grep` safety sweeps (`todo!`, `unimplemented!`, `panic!`, `saturating_*`, `let _ =`, `unwrap_or_default`) | **PASSED** (`TESTED`) | Zero panicking macros or silent storage/consensus discards in production Rust sources |
-| `npm run build` & `npm run lint` (`compile_applet` / `lint_applet`) | Pending final co-execution | Verified in final build step |
-| `cargo test --workspace --all-features` | **BLOCKED BY ENVIRONMENT** | `cargo` and `rustc` are not installed in this container |
-| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | **BLOCKED BY ENVIRONMENT** | `cargo` / `clippy` not installed in this container |
-| `go test ./...` / `go build ./...` (`sdks/go`, `examples/go`) | **BLOCKED BY ENVIRONMENT** | `go` compiler not installed in this container |
-| `./scripts/test-network.sh` (4-node libp2p live devnet acceptance) | **BLOCKED BY ENVIRONMENT** | Requires compiled `vnetwork-node` and `vnetwork-cli` Rust binaries |
+| `npm run build` (`compile_applet`) | `PASS` | Next.js production bundle compiled with zero errors |
+| `npm run lint` (`lint_applet`) | `PASS` | Zero ESLint warnings or errors (`✔ No ESLint warnings or errors`) |
+| `npm exec -- tsc --noEmit` | `PASS` | Zero TypeScript errors across Explorer (`app/`, `components/`, `lib/`) |
+| `npm --prefix sdks/typescript run check` | `PASS` | Zero TypeScript errors across `@vnetwork/ts-sdk` |
+| `node --test tests/cross_language/sdk_parity.test.mjs tests/explorer/integrity_and_crypto.test.mjs` | `PASS` | `27/27` subtests passed (`6/6` JS/TS/Browser/Python parity & client API checks + `21/21` Explorer mapper, recursive canonical JSON, envelope signing, `ghost_custody::`, and API hardening checks) |
+| `python3 -m unittest discover -s tests/cross_language -p "test_*.py"` | `PASS` | `6/6` Python SDK security, parity, and method-exposure tests passed |
+| `bash -n scripts/*.sh tests/cross_language/*.sh tests/e2e/*.sh tests/multi_node/*.sh` | `PASS` | Clean Bash syntax across all scripts |
+| `bash tests/e2e/script_safety.test.sh` | `PASS` | `6/6` passed (`devnet-down`/`devnet-up` path & PID guards, `scripts/sync-vectorspace.sh --check`, zero `|| true` in `.github/workflows`, `.env.example` admin auth variables) |
+| `python3` TOML manifest parser (`Cargo.toml`, `config/*.toml`) | `PASS` | Valid TOML syntax across workspace and example manifests |
+| `cargo fmt --all --check` / `cargo clippy` / `cargo test --workspace` | `BLOCKED` (`IMPLEMENTED — NOT RUNTIME VERIFIED`) | `cargo` / `rustc` / `clippy` / `rustfmt` not installed in container |
+| `go test ./...` / `go build ./...` (`sdks/go`, `examples/go`) | `BLOCKED` (`IMPLEMENTED — NOT RUNTIME VERIFIED`) | `go` toolchain not installed in container |
+| `./scripts/test-network.sh` (4-node BFT cluster, `.vx` live execution) | `BLOCKED` (`IMPLEMENTED — NOT RUNTIME VERIFIED`) | Requires compiled `vnetwork-node` and `vnetwork-cli` Rust binaries |
 
 ---
 
-## 3. Summary by Target Domain
+## 3. Domain Summary
 
+- **Rust Kernel, Vector Language, Consensus, Storage, API, Node, CLI (`crates/*`, `vendor/vectorspace`)**: `IMPLEMENTED — NOT RUNTIME VERIFIED` (parentless Ghost entities scoped to `NETWORK`, `ghost_custody::` supply conservation, real `vContract`/`vLoan` state machine transitions, `VerificationStatus::Unavailable`, fail-closed replay & `CERTIFY`, `require_admin_token`, strict CORS, `allow_local_p2p` + P2P SSRF validation). Runtime execution `BLOCKED` in container due to missing Rust toolchain.
 - **SDKs**:
-  - JavaScript & TypeScript (Node + Browser): `TESTED` (`5/5` parity suite + `tsc --noEmit`).
-  - Python: `TESTED` (`5/5` unittest + cross-language parity).
-  - Rust (`sdks/rust`) & Go (`sdks/go`): `IMPLEMENTED` with canonical path containment and parity updates; binary compilation `BLOCKED BY ENVIRONMENT`.
-- **Vector Language (`v-langx/1.2.0`)**:
-  - Compiler canonical module containment (`vendor/vectorspace/src/compiler.rs`), deterministic integer `AuthRatio`, and negative traversal tests (`crates/vnetwork-core/tests/language_conformance.rs`): `IMPLEMENTED`; `examples/vector-language/*.vx` live API submission inside 4-node network: `BLOCKED BY ENVIRONMENT` (requires `cargo`).
-- **Four-Node Distributed Consensus, P2P, WAL Recovery, Entity Reconstruction**:
-  - Protocol implementations and regression suites in `crates/vnetwork-{consensus,storage,core,node,api,cli}` plus automated 4-node harness in `scripts/test-network.sh`: `IMPLEMENTED`; live execution: `BLOCKED BY ENVIRONMENT`.
+  - JavaScript & TypeScript (Node + Browser) & Python: `PASS` (`27/27` unified Node suite + `6/6` Python suite + `tsc --noEmit`).
+  - Rust (`sdks/rust`) & Go (`sdks/go`, `sdks/go/client_test.go`): `IMPLEMENTED — NOT RUNTIME VERIFIED` (`BLOCKED` in container due to absent `cargo`/`go`).
+- **Next.js Explorer & Proxy (`app/`, `components/`, `lib/`)**: `PASS` (`next build`, `next lint`, `tsc --noEmit`, `21/21` mapper/crypto/route unit tests). Live HTTP roundtrips against `vnetwork-node` remain unverified in container until Rust node binary is running.
+- **CI Workflows, Scripts, & Configs**: `PASS` for static syntax, action SHA pinning, zero `|| true` audit, `sync-vectorspace.sh --check`, TOML validation, and shell safety harness; `BLOCKED` for live multi-node cluster orchestration.
 
 ---
 
-## 4. Remaining Actions on a Full Toolchain Host (Linux/macOS with Rust `>=1.82` & Go `>=1.22`)
-
-Run the unified release & live network verification suite directly on a host with `cargo` and `go` installed:
+## 4. Required Next Verification on Full Host (Rust `>=1.82` & Go `>=1.22`)
 
 ```bash
 ./scripts/release-check.sh
 ./scripts/test-network.sh
 ```
-
-Do not promote to `PRODUCTION CANDIDATE` or deploy publicly until `./scripts/release-check.sh` and `./scripts/test-network.sh` pass cleanly end-to-end, a signed `genesis.json` with approved economic `DrainPolicy` is provisioned, and Validator HSM/KMS or file-backed encrypted passphrases are active behind TLS termination.

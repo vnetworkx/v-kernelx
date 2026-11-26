@@ -76,4 +76,16 @@ if DEVNET_DIR="$UNOWNED" bash "$ROOT/scripts/devnet-up.sh" 2>/dev/null; then
 fi
 [[ -f "$UNOWNED/important-user-file.txt" ]]
 
+echo "[5/6] Verifying vendored vectorspace compiler drift check..."
+bash "$ROOT/scripts/sync-vectorspace.sh" --check
+
+echo "[6/6] Verifying CI workflows have zero '|| true' bypasses and .env.example declares auth vars..."
+if grep -rnE '\|\|\s*true' "$ROOT/.github/workflows"; then
+  echo "ERROR: found '|| true' bypass in GitHub Actions workflows" >&2
+  exit 1
+fi
+grep -q "ATLAS_ADMIN_TOKEN" "$ROOT/.env.example"
+grep -q "NETWORK_ADMIN_TOKEN" "$ROOT/.env.example"
+
 echo "Shell script safety verification PASSED."
+

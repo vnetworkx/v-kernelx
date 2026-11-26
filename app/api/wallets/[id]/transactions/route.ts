@@ -9,14 +9,21 @@ export async function GET(
   context: { params: Promise<{ id: string }> },
 ) {
   const { id } = await context.params;
-  const upstream = await fetchNetworkApiJson<Array<Record<string, unknown>>>("/v1/ledger/events");
-  if (!upstream.ok || !Array.isArray(upstream.data)) {
+  const upstream = await fetchNetworkApiJson<
+    Array<Record<string, unknown>> | { events?: Array<Record<string, unknown>> }
+  >("/v1/ledger/events");
+  if (!upstream.ok || !upstream.data) {
     return NextResponse.json(
       { error: upstream.error ?? "Rust node unreachable" },
       { status: upstream.status },
     );
   }
-  const events = upstream.data.filter(
+  const allEvents = Array.isArray(upstream.data)
+    ? upstream.data
+    : Array.isArray(upstream.data.events)
+      ? upstream.data.events
+      : [];
+  const events = allEvents.filter(
     (e) =>
       String(e.entity_id ?? "") === id ||
       JSON.stringify(e.payload ?? "").includes(id),

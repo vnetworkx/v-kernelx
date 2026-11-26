@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { blake3Hex } from "./blake3.js";
-import type { KeypairMaterial } from "./types.js";
+import type { KeypairMaterial, VerificationStatus } from "./types.js";
 
 const ED25519_PKCS8_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
 
@@ -65,6 +65,20 @@ export const PROTOCOL_VERSION = "vector-network/1.0.0";
 export const LANGUAGE_VERSION = "v-langx/1.2.0";
 export const COMPILER_VERSION = "vectorspace-compiler/1.2.0";
 export const DOM_TRANSFER_APPROVAL_V1 = "vnetwork/transfer-approval/v1";
+export const VERIFICATION_STATUSES: readonly VerificationStatus[] = [
+  "VERIFIED",
+  "UNVERIFIED",
+  "INVALID",
+  "UNAVAILABLE",
+];
+
+export function normalizeVerificationStatus(raw: unknown): VerificationStatus {
+  const norm = typeof raw === "string" ? raw.trim().toUpperCase() : "";
+  if (norm === "VERIFIED" || norm === "UNVERIFIED" || norm === "INVALID" || norm === "UNAVAILABLE") {
+    return norm;
+  }
+  return "UNAVAILABLE";
+}
 
 const WEAK_PUBKEY_HEXES = new Set([
   "0".repeat(64),

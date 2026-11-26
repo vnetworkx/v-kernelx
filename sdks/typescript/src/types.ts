@@ -13,7 +13,7 @@ export type ProgramLifecycleStatus =
   | "REJECTED"
   | "FAILED";
 
-export type VerificationStatus = "VERIFIED" | "UNVERIFIED" | "INVALID" | "UNKNOWN" | "PENDING";
+export type VerificationStatus = "VERIFIED" | "UNVERIFIED" | "INVALID" | "UNAVAILABLE";
 
 export interface KeypairMaterial {
   key_role: string;

@@ -105,39 +105,60 @@ fn grantor_can_delegate_level(
     if grantor_pubkey.trim().is_empty() {
         return false;
     }
-    if state
-        .validators
-        .iter()
-        .any(|v| v.active && v.validator_pubkey_hex == grantor_pubkey)
-    {
-        return true;
-    }
     match level {
-        ParticipationLevel::Network => true,
-        ParticipationLevel::Space => state
-            .participants
-            .values()
-            .any(|p| {
-                p.public_key_hex == grantor_pubkey
-                    && p.status == ParticipationStatus::Active
-                    && p.scope.has_active_scope(ParticipationLevel::Space, target_id, now_ms)
-            }),
+        ParticipationLevel::Network => state.participants.values().any(|p| {
+            p.public_key_hex == grantor_pubkey
+                && p.status == ParticipationStatus::Active
+                && p.scope.has_active_scope(ParticipationLevel::Network, None, now_ms)
+        }),
+        ParticipationLevel::Space => state.participants.values().any(|p| {
+            p.public_key_hex == grantor_pubkey
+                && p.status == ParticipationStatus::Active
+                && p.scope.has_active_scope(ParticipationLevel::Space, target_id, now_ms)
+        }),
         ParticipationLevel::Region => state.spaces.values().any(|s| {
             s.owner_pubkey == grantor_pubkey
                 && target_id.map_or(false, |tid| tid == s.space_id)
         }),
-        ParticipationLevel::Wallet => state.regions.values().any(|r| {
-            r.creator_pubkey == grantor_pubkey
-                && target_id.map_or(false, |tid| tid == r.region_id)
-        }) || state.wallets.values().any(|w| {
-            w.owner_pubkey == grantor_pubkey
-                && target_id.map_or(false, |tid| tid == w.wallet_id)
-        }),
+        ParticipationLevel::Wallet => {
+            state.regions.values().any(|r| {
+                r.creator_pubkey == grantor_pubkey
+                    && target_id.map_or(false, |tid| tid == r.region_id)
+            }) || state.wallets.values().any(|w| {
+                w.owner_pubkey == grantor_pubkey
+                    && target_id.map_or(false, |tid| tid == w.wallet_id)
+            })
+        }
         ParticipationLevel::Token => state.wallets.values().any(|w| {
             w.owner_pubkey == grantor_pubkey
                 && target_id.map_or(false, |tid| tid == w.wallet_id)
         }),
     }
+}
+
+fn can_authorize_join_scope(
+    state: &NetworkLedgerState,
+    auth: &SignedScopeAuthorization,
+    level: ParticipationLevel,
+    now_ms: u64,
+) -> bool {
+    if grantor_can_delegate_level(
+        state,
+        &auth.grantor_pubkey,
+        level,
+        auth.target_id.as_deref(),
+        now_ms,
+    ) {
+        return true;
+    }
+    // Genesis bootstrap validator onboarding is only valid during JoinNetworkRequest when
+    // targeting no existing entity and explicitly declaring a genesis authorization_basis.
+    auth.target_id.is_none()
+        && auth.authorization_basis.trim().to_ascii_lowercase().starts_with("genesis")
+        && state
+            .validators
+            .iter()
+            .any(|v| v.active && v.validator_pubkey_hex == auth.grantor_pubkey)
 }
 
 pub fn verify_and_register_participant(
@@ -204,13 +225,7 @@ pub fn verify_and_register_participant(
         }
         auth.verify_signature(&state.network_id)?;
         for &lvl in &auth.scopes {
-            if !grantor_can_delegate_level(
-                state,
-                &auth.grantor_pubkey,
-                lvl,
-                auth.target_id.as_deref(),
-                timestamp_ms,
-            ) {
+            if !can_authorize_join_scope(state, auth, lvl, timestamp_ms) {
                 return Err(VNetworkError::Authorization(format!(
                     "grantor `{}` is not authorized to delegate `{}` scope",
                     auth.grantor_pubkey,
@@ -500,15 +515,6 @@ pub fn require_participant_scope_at(
     target_id: Option<&str>,
     now_ms: u64,
 ) -> VResult<()> {
-    // Active genesis/epoch validators hold bootstrap authority on the network
-    if state
-        .validators
-        .iter()
-        .any(|v| v.active && v.validator_pubkey_hex == actor_pubkey)
-    {
-        return Ok(());
-    }
-
     if let Some(p) = state
         .participants
         .values()

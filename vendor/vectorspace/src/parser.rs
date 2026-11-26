@@ -399,8 +399,14 @@ impl Parser {
         self.expect_kind(|k| k == &TokenKind::Region, "`region`")?;
         self.expect_kind(|k| k == &TokenKind::Create, "`create`")?;
         let name = self.take_ident_or_kw()?;
-        self.expect_kind(|k| k == &TokenKind::In, "`in`")?;
-        let space = self.take_string_like()?;
+        let space = if self.kind_eq(&TokenKind::In) {
+            self.advance();
+            self.take_string_like()?
+        } else if ghost {
+            String::new()
+        } else {
+            return Err(self.error_here("`in`"));
+        };
         let fields = if self.kind_eq(&TokenKind::LBrace) {
             let f = self.parse_property_block()?;
             self.eat_optional_semi();
@@ -423,8 +429,14 @@ impl Parser {
         if self.kind_eq(&TokenKind::Create) {
             self.advance();
             let name = self.take_ident_or_kw()?;
-            self.expect_kind(|k| k == &TokenKind::In, "`in`")?;
-            let region = self.take_string_like()?;
+            let region = if self.kind_eq(&TokenKind::In) {
+                self.advance();
+                self.take_string_like()?
+            } else if ghost {
+                String::new()
+            } else {
+                return Err(self.error_here("`in`"));
+            };
             let mut context = None;
             if self.kind_eq(&TokenKind::With) {
                 self.advance();
@@ -495,8 +507,14 @@ impl Parser {
         self.expect_kind(|k| k == &TokenKind::Token, "`token`")?;
         self.expect_kind(|k| k == &TokenKind::Create, "`create`")?;
         let name = self.take_ident_or_kw()?;
-        self.expect_kind(|k| k == &TokenKind::In, "`in`")?;
-        let wallet = self.take_string_like()?;
+        let wallet = if self.kind_eq(&TokenKind::In) {
+            self.advance();
+            self.take_string_like()?
+        } else if ghost {
+            String::new()
+        } else {
+            return Err(self.error_here("`in`"));
+        };
         let fields = if self.kind_eq(&TokenKind::LBrace) {
             let f = self.parse_property_block()?;
             self.eat_optional_semi();

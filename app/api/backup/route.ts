@@ -1,10 +1,18 @@
 import { NextResponse } from "next/server";
-import { fetchNetworkApiJson, resolveSafeBackupPath } from "@/lib/server/kernel";
+import {
+  fetchNetworkApiJson,
+  requireAdminToken,
+  resolveSafeBackupPath,
+} from "@/lib/server/kernel";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
+  const auth = requireAdminToken(request);
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.error }, { status: auth.status });
+  }
   const body = (await request.json().catch(() => ({}))) as { filename?: unknown };
   try {
     const dest = resolveSafeBackupPath(

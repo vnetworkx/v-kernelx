@@ -59,6 +59,15 @@ PROTOCOL_VERSION = "vector-network/1.0.0"
 LANGUAGE_VERSION = "v-langx/1.2.0"
 COMPILER_VERSION = "vectorspace-compiler/1.2.0"
 DOM_TRANSFER_APPROVAL_V1 = "vnetwork/transfer-approval/v1"
+VERIFICATION_STATUSES = ("VERIFIED", "UNVERIFIED", "INVALID", "UNAVAILABLE")
+
+
+def normalize_verification_status(raw: object) -> str:
+    if isinstance(raw, str):
+        norm = raw.strip().upper()
+        if norm in VERIFICATION_STATUSES:
+            return norm
+    return "UNAVAILABLE"
 
 _HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 _HEX128_RE = re.compile(r"^[0-9a-f]{128}$")

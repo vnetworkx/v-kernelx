@@ -1,26 +1,27 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { Check, Copy, Network, Plus, ShieldCheck } from "lucide-react";
+import { FileCode2, Landmark, Layers, Play } from "lucide-react";
 import { formatTimestampMs, shortenHash } from "@/lib/format";
-import {
-  canonicalVectorOpSigningBytes,
-  findBlake3NonceClient,
-  signBytesWithPrivateKey,
-} from "@/lib/client-crypto";
+import { signTransactionEnvelopeClient } from "@/lib/client-crypto";
 import type {
   BrowserSignerKey,
-  ConsensusRoundDto,
+  ContractDto,
+  LoanDto,
   RegionDto,
-  SyncBundle,
-  ValidatorNodeDto,
+  TokenDto,
   VectorStateDto,
   WalletDto,
 } from "@/lib/types";
 
 interface VectorsPanelProps {
+  networkId: string;
   regions: RegionDto[];
   wallets: WalletDto[];
+  tokens: TokenDto[];
+  contracts: ContractDto[];
+  loans: LoanDto[];
+  initialVectors?: VectorStateDto[];
   signerKeys: Record<string, BrowserSignerKey>;
   activeSignerId: string | null;
   onOpenWallets: () => void;
@@ -28,53 +29,64 @@ interface VectorsPanelProps {
   onNotify: (kind: "success" | "error", msg: string) => void;
 }
 
-type VecOpMode = "origin" | "transport" | "transfer" | "project" | "reconstruct" | "certify" | "drain";
+type OpMode = "create_contract" | "execute_contract" | "create_loan" | "execute_loan";
 
 export function VectorsPanel({
+  networkId,
   regions,
   wallets,
+  tokens,
+  contracts,
+  loans,
+  initialVectors = [],
   signerKeys,
   activeSignerId,
   onOpenWallets,
   onRefresh,
   onNotify,
 }: VectorsPanelProps) {
-  const [vectors, setVectors] = useState<VectorStateDto[]>([]);
+  const [vectors, setVectors] = useState<VectorStateDto[]>(initialVectors);
   const [loading, setLoading] = useState(true);
-  const [mode, setMode] = useState<VecOpMode>("origin");
-  const [selectedVectorId, setSelectedVectorId] = useState("");
+  const [mode, setMode] = useState<OpMode>("create_contract");
   const [submitting, setSubmitting] = useState(false);
 
-  // Form fields
-  const [vectorIdInput, setVectorIdInput] = useState("");
-  const [spaceIdInput, setSpaceIdInput] = useState(regions[0]?.region_id ?? "");
-  const [componentsInput, setComponentsInput] = useState("1000,2000");
-  const [labelsInput, setLabelsInput] = useState("Compute,Storage");
+  // CreateContract fields
+  const [contractName, setContractName] = useState("");
+  const [contractRegionId, setContractRegionId] = useState(regions[0]?.region_id ?? "");
+  const [contractRulesJson, setContractRulesJson] = useState('{"escrow_mode":"deterministic"}');
+  const [contractActionName, setContractActionName] = useState("settle");
 
-  // Transport & Transfer fields
-  const [targetVectorId, setTargetVectorId] = useState("");
-  const [amountInput, setAmountInput] = useState("100,200");
+  // ExecuteContract fields
+  const [selectedContractId, setSelectedContractId] = useState(contracts[0]?.contract_id ?? "");
+  const [execActionName, setExecActionName] = useState("settle");
+  const [execArgsJson, setExecArgsJson] = useState(
+    wallets[0] ? `{"recipient_wallet_id":"${wallets[0].wallet_id}","amount":10}` : '{"amount":10}',
+  );
 
-  // Escrow / Projection / Reconstruct
-  const [escrowIdInput, setEscrowIdInput] = useState("escrow-1");
-  const [gainsInput, setGainsInput] = useState("10,10");
-  const [lossesInput, setLossesInput] = useState("0,0");
-  const [outcomeTagInput, setOutcomeTagInput] = useState("settled");
-  const [drainBpsInput, setDrainBpsInput] = useState("");
+  // CreateLoan fields
+  const [loanName, setLoanName] = useState("");
+  const [loanTokenId, setLoanTokenId] = useState(tokens[0]?.token_id ?? "");
+  const [lenderWalletId, setLenderWalletId] = useState(wallets[0]?.wallet_id ?? "");
+  const [borrowerWalletId, setBorrowerWalletId] = useState(
+    wallets[1]?.wallet_id ?? wallets[0]?.wallet_id ?? "",
+  );
+  const [loanPrincipal, setLoanPrincipal] = useState("500");
+  const [loanCollateral, setLoanCollateral] = useState("100");
+  const [loanInterestBps, setLoanInterestBps] = useState("250");
+
+  // ExecuteLoan fields
+  const [selectedLoanId, setSelectedLoanId] = useState(loans[0]?.loan_id ?? "");
+  const [loanAction, setLoanAction] = useState<"DISBURSE" | "REPAY" | "LIQUIDATE">("REPAY");
+  const [loanExecAmount, setLoanExecAmount] = useState("100");
 
   const activeSigner = activeSignerId ? signerKeys[activeSignerId] : null;
-  const activeVector = vectors.find((v) => v.vectorId === selectedVectorId) ?? vectors[0] ?? null;
 
   const loadVectors = useCallback(async () => {
     try {
       const res = await fetch("/api/vectors");
       if (res.ok) {
         const data = (await res.json()) as { vectors?: VectorStateDto[] };
-        const nextVectors = data.vectors ?? [];
-        setVectors(nextVectors);
-        if (nextVectors[0]) {
-          setSelectedVectorId((prev) => prev || nextVectors[0].vectorId);
-        }
+        setVectors(data.vectors ?? []);
       }
     } finally {
       setLoading(false);
@@ -85,7 +97,19 @@ export function VectorsPanel({
     void loadVectors();
   }, [loadVectors]);
 
-  async function handleVectorOp(e: FormEvent) {
+  useEffect(() => {
+    if (contracts.length > 0 && !selectedContractId) {
+      setSelectedContractId(contracts[0].contract_id);
+    }
+  }, [contracts, selectedContractId]);
+
+  useEffect(() => {
+    if (loans.length > 0 && !selectedLoanId) {
+      setSelectedLoanId(loans[0].loan_id);
+    }
+  }, [loans, selectedLoanId]);
+
+  async function handleSignedSubmit(e: FormEvent) {
     e.preventDefault();
     if (!activeSigner) {
       onNotify("error", "No active signer wallet unlocked. Unlock or create one in Wallets.");
@@ -95,150 +119,108 @@ export function VectorsPanel({
 
     setSubmitting(true);
     try {
-      const requestId = `vec_op_${Date.now()}`;
-      let body: Record<string, unknown> = {};
+      const requestId = `vec_${mode}_${Date.now()}`;
+      const nonce = Date.now();
+      const timestampMs = Date.now();
+      let operation: { op: string; payload: Record<string, unknown> };
 
-      if (mode === "origin") {
-        const vId = vectorIdInput.trim();
-        const space = spaceIdInput.trim();
-        const comps = componentsInput.split(",").map((s) => Number(s.trim())).filter(Number.isInteger);
-        const labels = labelsInput.split(",").map((s) => s.trim()).filter(Boolean);
-
-        const seed = `vector-origin-${vId}`;
-        const { nonce } = findBlake3NonceClient(seed, 1);
-
-        const params = {
-          components: comps,
-          difficulty: 1,
-          nonce,
-          seed,
-          space_id: space,
-          vector_id: vId,
-        };
-        const signingBytes = canonicalVectorOpSigningBytes("VECTOR_ORIGIN_CREATE", requestId, activeSigner.public_key_hex, params);
-        const signature = await signBytesWithPrivateKey(activeSigner.private_key_hex, signingBytes);
-
-        body = {
-          action: "origin",
-          request_id: requestId,
-          vector_id: vId,
-          space_id: space,
-          components: comps,
-          dimension_labels: labels,
-          seed,
-          nonce,
-          difficulty: 1,
-          actor_public_key: activeSigner.public_key_hex,
-          signature,
-        };
-      } else if (mode === "transfer") {
-        const comps = amountInput.split(",").map((s) => Number(s.trim())).filter(Number.isInteger);
-        const params = {
-          amount: comps,
-          from_vector_id: activeVector?.vectorId,
-          to_vector_id: targetVectorId,
-        };
-        const signingBytes = canonicalVectorOpSigningBytes("VECTOR_TRANSFER", requestId, activeSigner.public_key_hex, params);
-        const signature = await signBytesWithPrivateKey(activeSigner.private_key_hex, signingBytes);
-
-        body = {
-          action: "transfer",
-          request_id: requestId,
-          from_vector_id: activeVector?.vectorId,
-          to_vector_id: targetVectorId,
-          amount: comps,
-          actor_public_key: activeSigner.public_key_hex,
-          signature,
-        };
-      } else if (mode === "project") {
-        const comps = amountInput.split(",").map((s) => Number(s.trim())).filter(Number.isInteger);
-        const params = {
-          escrow_id: escrowIdInput,
-          projected_components: comps,
-          vector_id: activeVector?.vectorId,
-        };
-        const signingBytes = canonicalVectorOpSigningBytes("VECTOR_PROJECT", requestId, activeSigner.public_key_hex, params);
-        const signature = await signBytesWithPrivateKey(activeSigner.private_key_hex, signingBytes);
-
-        body = {
-          action: "project",
-          request_id: requestId,
-          vector_id: activeVector?.vectorId,
-          projected_components: comps,
-          escrow_id: escrowIdInput,
-          actor_public_key: activeSigner.public_key_hex,
-          signature,
-        };
-      } else if (mode === "reconstruct") {
-        const gains = gainsInput.split(",").map((s) => Number(s.trim())).filter(Number.isInteger);
-        const losses = lossesInput.split(",").map((s) => Number(s.trim())).filter(Number.isInteger);
-        const params = {
-          gains,
-          losses,
-          outcome_tag: outcomeTagInput,
-          vector_id: activeVector?.vectorId,
-        };
-        const signingBytes = canonicalVectorOpSigningBytes("VECTOR_RECONSTRUCT", requestId, activeSigner.public_key_hex, params);
-        const signature = await signBytesWithPrivateKey(activeSigner.private_key_hex, signingBytes);
-
-        body = {
-          action: "reconstruct",
-          request_id: requestId,
-          vector_id: activeVector?.vectorId,
-          gains,
-          losses,
-          outcome_tag: outcomeTagInput,
-          actor_public_key: activeSigner.public_key_hex,
-          signature,
-        };
-      } else if (mode === "certify") {
-        const params = { vector_id: activeVector?.vectorId };
-        const signingBytes = canonicalVectorOpSigningBytes("VECTOR_CERTIFY", requestId, activeSigner.public_key_hex, params);
-        const signature = await signBytesWithPrivateKey(activeSigner.private_key_hex, signingBytes);
-
-        body = {
-          action: "certify",
-          request_id: requestId,
-          vector_id: activeVector?.vectorId,
-          actor_public_key: activeSigner.public_key_hex,
-          signature,
-        };
-      } else if (mode === "drain") {
-        const bps = Number(drainBpsInput);
-        if (!Number.isInteger(bps) || bps <= 0 || bps > 10_000) {
-          onNotify("error", "Enter an explicit drain rate between 1 and 10000 bps");
-          return;
+      if (mode === "create_contract") {
+        let parsedRules: Record<string, unknown> = {};
+        if (contractRulesJson.trim()) {
+          const parsed = JSON.parse(contractRulesJson) as unknown;
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            throw new Error("Contract rules must be a JSON object");
+          }
+          parsedRules = parsed as Record<string, unknown>;
         }
-        const params = { basis_points: bps, vector_id: activeVector?.vectorId };
-        const signingBytes = canonicalVectorOpSigningBytes("VECTOR_DRAIN", requestId, activeSigner.public_key_hex, params);
-        const signature = await signBytesWithPrivateKey(activeSigner.private_key_hex, signingBytes);
-
-        body = {
-          action: "drain",
-          request_id: requestId,
-          vector_id: activeVector?.vectorId,
-          basis_points: bps,
-          actor_public_key: activeSigner.public_key_hex,
-          signature,
+        operation = {
+          op: "CreateContract",
+          payload: {
+            name: contractName.trim(),
+            region_id: contractRegionId.trim() || null,
+            rules: parsedRules,
+            actions: [{ action: contractActionName.trim() || "settle" }],
+          },
+        };
+      } else if (mode === "execute_contract") {
+        if (!selectedContractId) {
+          throw new Error("Select a contract to execute");
+        }
+        let parsedArgs: Record<string, unknown> = {};
+        if (execArgsJson.trim()) {
+          const parsed = JSON.parse(execArgsJson) as unknown;
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            throw new Error("Execution args must be a JSON object");
+          }
+          parsedArgs = parsed as Record<string, unknown>;
+        }
+        operation = {
+          op: "ExecuteContract",
+          payload: {
+            contract_id: selectedContractId,
+            action: execActionName.trim(),
+            args: parsedArgs,
+          },
+        };
+      } else if (mode === "create_loan") {
+        if (!loanTokenId || !lenderWalletId || !borrowerWalletId) {
+          throw new Error("Select token, lender wallet, and borrower wallet");
+        }
+        operation = {
+          op: "CreateLoan",
+          payload: {
+            name: loanName.trim(),
+            token_id: loanTokenId,
+            lender_wallet_id: lenderWalletId,
+            borrower_wallet_id: borrowerWalletId,
+            principal: Number(loanPrincipal),
+            collateral: Number(loanCollateral),
+            interest_bps: Number(loanInterestBps),
+            maturity_at_ms: null,
+          },
+        };
+      } else {
+        if (!selectedLoanId) {
+          throw new Error("Select a loan");
+        }
+        operation = {
+          op: "ExecuteLoan",
+          payload: {
+            loan_id: selectedLoanId,
+            action: loanAction,
+            amount: Number(loanExecAmount) || 0,
+          },
         };
       }
+
+      const envelope = await signTransactionEnvelopeClient({
+        privateKeyHex: activeSigner.private_key_hex,
+        actorPubkey: activeSigner.public_key_hex,
+        networkId,
+        requestId,
+        nonce,
+        timestampMs,
+        operation,
+      });
 
       const res = await fetch("/api/vectors/action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify(envelope),
       });
-      const data = (await res.json()) as { error?: string };
+      const data = (await res.json()) as { entity_id?: string; event_id?: string; error?: string };
       if (!res.ok) {
-        onNotify("error", data.error ?? "Vector operation failed");
+        onNotify("error", data.error ?? `${operation.op} transaction rejected`);
         return;
       }
 
+      if (mode === "create_contract") setContractName("");
+      if (mode === "create_loan") setLoanName("");
       await loadVectors();
       await onRefresh();
-      onNotify("success", `Executed multidimensional vector operation (${mode})`);
+      onNotify("success", `Committed ${operation.op} (${data.entity_id ?? data.event_id ?? "ok"})`);
     } catch (err) {
-      onNotify("error", err instanceof Error ? err.message : "Request failed");
+      onNotify("error", err instanceof Error ? err.message : "Operation failed");
     } finally {
       setSubmitting(false);
     }
@@ -247,66 +229,168 @@ export function VectorsPanel({
   return (
     <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
       <div className="space-y-6 xl:col-span-2">
+        {/* 3D Balance Vectors */}
         <section className="border border-slate-200 bg-white">
-          <div className="border-b border-slate-200 px-5 py-3.5">
-            <h2 className="text-sm font-semibold text-slate-900">Multidimensional Vector States</h2>
-            <p className="text-xs text-slate-500">
-              Persistent N-dimensional balances, auth ratios, escrow projections & settlements
-            </p>
+          <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-3.5">
+            <Layers className="h-4 w-4 text-blue-600" />
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">
+                3D Balance Vectors ({vectors.length})
+              </h2>
+              <p className="text-xs text-slate-500">
+                Live kernel vector coordinates [token, auth_ratio_au, energy] derived from /v1/explorer/network
+              </p>
+            </div>
           </div>
 
           {loading ? (
-            <div className="px-5 py-8 text-xs text-slate-500">Loading vectors...</div>
+            <div className="px-5 py-8 text-xs text-slate-500">Loading balance vectors...</div>
           ) : vectors.length === 0 ? (
             <div className="px-5 py-8 text-center text-xs text-slate-500">
-              No vectors created yet. Use the action console to create an origin vector.
+              No active balance vectors found on node.
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-left text-xs">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-medium uppercase tracking-wider text-slate-500">
-                    <th className="px-5 py-2.5">Vector ID / Space</th>
-                    <th className="px-4 py-2.5">Type & Status</th>
+                    <th className="px-5 py-2.5">Vector Account</th>
+                    <th className="px-4 py-2.5">Scope</th>
                     <th className="px-4 py-2.5">Auth Ratio</th>
-                    <th className="px-5 py-2.5 text-right">Components [D0, D1, ...]</th>
+                    <th className="px-5 py-2.5 text-right">[Token, AuthAU, Energy]</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {vectors.map((vec) => {
-                    const isSelected = activeVector?.vectorId === vec.vectorId;
-                    return (
-                      <tr
-                        key={vec.vectorId}
-                        onClick={() => setSelectedVectorId(vec.vectorId)}
-                        className={`cursor-pointer transition-colors ${
-                          isSelected ? "bg-blue-50/60" : "hover:bg-slate-50"
-                        }`}
-                      >
-                        <td className="px-5 py-3">
-                          <div className="font-semibold text-slate-900">{vec.vectorId}</div>
-                          <div className="font-mono text-[11px] text-slate-400">
-                            space={shortenHash(vec.spaceId, 10, 6)} · owner={shortenHash(vec.ownerPubkey, 8, 6)}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 font-mono text-slate-700">
-                          <div>{vec.vectorType}</div>
-                          <div className="text-[10px] text-slate-400">{vec.status}</div>
-                        </td>
-                        <td className="px-4 py-3 font-mono tabular-nums">
-                          <span className={vec.certification.certified ? "text-emerald-700 font-semibold" : "text-amber-700"}>
-                            {vec.certification.authRatio} / 1000
-                          </span>
-                          <div className="text-[10px] text-slate-400">
-                            {vec.certification.certified ? "Certified" : "Uncertified"}
-                          </div>
-                        </td>
-                        <td className="px-5 py-3 text-right font-mono font-semibold tabular-nums text-slate-900">
-                          [{vec.components.join(", ")}]
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {vectors.map((vec) => (
+                    <tr key={vec.vectorId} className="hover:bg-slate-50">
+                      <td className="px-5 py-2.5">
+                        <div className="font-mono font-semibold text-slate-900">{vec.vectorId}</div>
+                        <div className="font-mono text-[11px] text-slate-400">
+                          v{vec.version} · {vec.status}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5 font-mono text-slate-600">
+                        {shortenHash(vec.spaceId, 12, 8)}
+                      </td>
+                      <td className="px-4 py-2.5 font-mono tabular-nums">
+                        <span className={vec.certification.certified ? "font-semibold text-emerald-700" : "text-amber-700"}>
+                          {vec.certification.authRatio} au
+                        </span>
+                      </td>
+                      <td className="px-5 py-2.5 text-right font-mono font-semibold tabular-nums text-slate-900">
+                        [{vec.components.join(", ")}]
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        {/* Smart Contracts (vContracts) */}
+        <section className="border border-slate-200 bg-white">
+          <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-3.5">
+            <FileCode2 className="h-4 w-4 text-blue-600" />
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">
+                vContracts Registry ({contracts.length})
+              </h2>
+              <p className="text-xs text-slate-500">
+                Deterministic multi-party state machines with escrow balance custody
+              </p>
+            </div>
+          </div>
+
+          {contracts.length === 0 ? (
+            <div className="px-5 py-6 text-xs text-slate-500">No vContracts deployed yet.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-left text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-medium uppercase tracking-wider text-slate-500">
+                    <th className="px-5 py-2.5">Contract</th>
+                    <th className="px-4 py-2.5">Scope</th>
+                    <th className="px-4 py-2.5">Executions</th>
+                    <th className="px-5 py-2.5 text-right">Escrow / State</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {contracts.map((c) => (
+                    <tr key={c.contract_id} className="hover:bg-slate-50">
+                      <td className="px-5 py-2.5">
+                        <div className="font-semibold text-slate-900">{c.name}</div>
+                        <div className="font-mono text-[11px] text-slate-400">{c.contract_id}</div>
+                      </td>
+                      <td className="px-4 py-2.5 font-mono text-slate-600">
+                        {c.region_id ? shortenHash(c.region_id, 10, 6) : "NETWORK"}
+                      </td>
+                      <td className="px-4 py-2.5 font-mono tabular-nums text-slate-700">
+                        {c.execution_count} · {c.active ? "ACTIVE" : "CLOSED"}
+                      </td>
+                      <td className="px-5 py-2.5 text-right font-mono text-[11px] text-slate-600">
+                        {Object.keys(c.escrow_balances ?? {}).length > 0
+                          ? Object.entries(c.escrow_balances ?? {})
+                              .map(([k, v]) => `${shortenHash(k, 8, 4)}:${v}`)
+                              .join(", ")
+                          : `v${c.version} · ${formatTimestampMs(c.created_at_ms)}`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        {/* Collateralized Loans (vLoans) */}
+        <section className="border border-slate-200 bg-white">
+          <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-3.5">
+            <Landmark className="h-4 w-4 text-emerald-700" />
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">
+                vLoans Registry ({loans.length})
+              </h2>
+              <p className="text-xs text-slate-500">
+                Escrowed principal, locked collateral, deterministic repayment &amp; liquidation
+              </p>
+            </div>
+          </div>
+
+          {loans.length === 0 ? (
+            <div className="px-5 py-6 text-xs text-slate-500">No vLoans active on node.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-left text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-medium uppercase tracking-wider text-slate-500">
+                    <th className="px-5 py-2.5">Loan</th>
+                    <th className="px-4 py-2.5">Parties</th>
+                    <th className="px-4 py-2.5">Principal / Repaid</th>
+                    <th className="px-5 py-2.5 text-right">Collateral / Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {loans.map((l) => (
+                    <tr key={l.loan_id} className="hover:bg-slate-50">
+                      <td className="px-5 py-2.5">
+                        <div className="font-semibold text-slate-900">{l.name}</div>
+                        <div className="font-mono text-[11px] text-slate-400">
+                          {l.loan_id} · {l.interest_bps} bps
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5 font-mono text-[11px] text-slate-600">
+                        {shortenHash(l.lender_wallet_id, 8, 4)} -&gt; {shortenHash(l.borrower_wallet_id, 8, 4)}
+                      </td>
+                      <td className="px-4 py-2.5 font-mono tabular-nums text-slate-800">
+                        {l.principal} / {l.repaid_amount}
+                      </td>
+                      <td className="px-5 py-2.5 text-right font-mono tabular-nums">
+                        <span className="font-semibold text-slate-900">{l.collateral_locked}</span>{" "}
+                        <span className="text-slate-500">· {l.status}</span>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -314,40 +398,40 @@ export function VectorsPanel({
         </section>
       </div>
 
+      {/* Signed Contract / Loan Console */}
       <section className="h-fit border border-slate-200 bg-white">
         <div className="border-b border-slate-200 px-5 py-3.5">
-          <h2 className="text-sm font-semibold text-slate-900">Multidimensional Vector Action Console</h2>
-          <p className="text-xs text-slate-500">Signed with active Ed25519 signer wallet</p>
+          <h2 className="text-sm font-semibold text-slate-900">Contracts &amp; Loans Console</h2>
+          <p className="text-xs text-slate-500">
+            Submitted via Rust SignedOperationHttpRequest (/v1/transactions)
+          </p>
         </div>
 
-        <div className="grid grid-cols-4 border-b border-slate-200 bg-slate-50 text-[10px] font-medium">
+        <div className="grid grid-cols-2 border-b border-slate-200 bg-slate-50 text-[11px] font-medium">
           {(
             [
-              { id: "origin", label: "Origin" },
-              { id: "transfer", label: "Transfer" },
-              { id: "project", label: "Project" },
-              { id: "reconstruct", label: "Reconstruct" },
-              { id: "certify", label: "Certify" },
-              { id: "drain", label: "Drain" },
+              { id: "create_contract", label: "New vContract" },
+              { id: "execute_contract", label: "Exec Contract" },
+              { id: "create_loan", label: "New vLoan" },
+              { id: "execute_loan", label: "Exec Loan" },
             ] as const
-          ).map((tab) => {
-            const active = mode === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setMode(tab.id as VecOpMode)}
-                className={`border-r border-b border-slate-200 py-2 text-center ${
-                  active ? "bg-white font-semibold text-blue-600" : "text-slate-600 hover:bg-slate-100"
-                }`}
-              >
-                {tab.label}
-              </button>
-            );
-          })}
+          ).map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setMode(tab.id)}
+              className={`border-b border-r border-slate-200 py-2 text-center ${
+                mode === tab.id
+                  ? "bg-white font-semibold text-blue-600"
+                  : "text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
 
-        <form onSubmit={handleVectorOp} className="space-y-3.5 p-5 text-xs">
+        <form onSubmit={handleSignedSubmit} className="space-y-3.5 p-5 text-xs">
           <div>
             <label className="mb-1 block font-medium text-slate-700">Active Signer</label>
             <div className="rounded border border-slate-200 bg-slate-50 p-2 font-mono text-xs">
@@ -355,43 +439,27 @@ export function VectorsPanel({
             </div>
           </div>
 
-          {mode !== "origin" && (
-            <div>
-              <label className="mb-1 block font-medium text-slate-700">Target Vector</label>
-              <select
-                value={activeVector?.vectorId ?? ""}
-                onChange={(e) => setSelectedVectorId(e.target.value)}
-                className="w-full border border-slate-300 bg-white px-2.5 py-2 font-mono text-xs focus:border-blue-600 focus:outline-none"
-              >
-                {vectors.map((v) => (
-                  <option key={v.vectorId} value={v.vectorId}>
-                    {v.vectorId} ([{v.components.join(", ")}])
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {mode === "origin" && (
+          {mode === "create_contract" && (
             <>
               <div>
-                <label className="mb-1 block font-medium text-slate-700">Vector ID</label>
+                <label className="mb-1 block font-medium text-slate-700">Contract Name</label>
                 <input
                   type="text"
                   required
-                  value={vectorIdInput}
-                  onChange={(e) => setVectorIdInput(e.target.value)}
-                  placeholder="v-alpha"
+                  value={contractName}
+                  onChange={(e) => setContractName(e.target.value)}
+                  placeholder="settlement-escrow"
                   className="w-full border border-slate-300 px-2.5 py-2 font-mono text-xs focus:border-blue-600 focus:outline-none"
                 />
               </div>
               <div>
-                <label className="mb-1 block font-medium text-slate-700">Space / Region</label>
+                <label className="mb-1 block font-medium text-slate-700">Region Scope (optional)</label>
                 <select
-                  value={spaceIdInput}
-                  onChange={(e) => setSpaceIdInput(e.target.value)}
+                  value={contractRegionId}
+                  onChange={(e) => setContractRegionId(e.target.value)}
                   className="w-full border border-slate-300 bg-white px-2.5 py-2 font-mono text-xs focus:border-blue-600 focus:outline-none"
                 >
+                  <option value="">Network Scope (optional)</option>
                   {regions.map((r) => (
                     <option key={r.region_id} value={r.region_id}>
                       {r.region_name} ({r.region_id})
@@ -400,139 +468,223 @@ export function VectorsPanel({
                 </select>
               </div>
               <div>
-                <label className="mb-1 block font-medium text-slate-700">Components (comma separated integers)</label>
+                <label className="mb-1 block font-medium text-slate-700">Primary Action Name</label>
                 <input
                   type="text"
                   required
-                  value={componentsInput}
-                  onChange={(e) => setComponentsInput(e.target.value)}
-                  placeholder="1000,2000"
+                  value={contractActionName}
+                  onChange={(e) => setContractActionName(e.target.value)}
                   className="w-full border border-slate-300 px-2.5 py-2 font-mono text-xs focus:border-blue-600 focus:outline-none"
                 />
               </div>
               <div>
-                <label className="mb-1 block font-medium text-slate-700">Dimension Labels</label>
-                <input
-                  type="text"
-                  value={labelsInput}
-                  onChange={(e) => setLabelsInput(e.target.value)}
-                  placeholder="Compute,Storage"
-                  className="w-full border border-slate-300 px-2.5 py-2 text-xs focus:border-blue-600 focus:outline-none"
+                <label className="mb-1 block font-medium text-slate-700">Rules JSON</label>
+                <textarea
+                  rows={3}
+                  value={contractRulesJson}
+                  onChange={(e) => setContractRulesJson(e.target.value)}
+                  className="w-full border border-slate-300 px-2.5 py-2 font-mono text-xs focus:border-blue-600 focus:outline-none"
                 />
               </div>
             </>
           )}
 
-          {mode === "transfer" && (
+          {mode === "execute_contract" && (
             <>
               <div>
-                <label className="mb-1 block font-medium text-slate-700">To Vector ID</label>
+                <label className="mb-1 block font-medium text-slate-700">Target Contract</label>
+                <select
+                  value={selectedContractId}
+                  onChange={(e) => setSelectedContractId(e.target.value)}
+                  required
+                  className="w-full border border-slate-300 bg-white px-2.5 py-2 font-mono text-xs focus:border-blue-600 focus:outline-none"
+                >
+                  <option value="">Select vContract...</option>
+                  {contracts.map((c) => (
+                    <option key={c.contract_id} value={c.contract_id}>
+                      {c.name} ({c.contract_id})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block font-medium text-slate-700">Action</label>
                 <input
                   type="text"
                   required
-                  value={targetVectorId}
-                  onChange={(e) => setTargetVectorId(e.target.value)}
-                  placeholder="v-beta"
+                  value={execActionName}
+                  onChange={(e) => setExecActionName(e.target.value)}
+                  placeholder="settle"
                   className="w-full border border-slate-300 px-2.5 py-2 font-mono text-xs focus:border-blue-600 focus:outline-none"
                 />
               </div>
               <div>
-                <label className="mb-1 block font-medium text-slate-700">Transfer Amounts per Dimension</label>
-                <input
-                  type="text"
-                  required
-                  value={amountInput}
-                  onChange={(e) => setAmountInput(e.target.value)}
-                  placeholder="250,250"
+                <label className="mb-1 block font-medium text-slate-700">Args JSON</label>
+                <textarea
+                  rows={3}
+                  value={execArgsJson}
+                  onChange={(e) => setExecArgsJson(e.target.value)}
                   className="w-full border border-slate-300 px-2.5 py-2 font-mono text-xs focus:border-blue-600 focus:outline-none"
                 />
               </div>
             </>
           )}
 
-          {mode === "project" && (
+          {mode === "create_loan" && (
             <>
               <div>
-                <label className="mb-1 block font-medium text-slate-700">Escrow ID</label>
+                <label className="mb-1 block font-medium text-slate-700">Loan Name</label>
                 <input
                   type="text"
                   required
-                  value={escrowIdInput}
-                  onChange={(e) => setEscrowIdInput(e.target.value)}
+                  value={loanName}
+                  onChange={(e) => setLoanName(e.target.value)}
+                  placeholder="working-capital-loan"
                   className="w-full border border-slate-300 px-2.5 py-2 font-mono text-xs focus:border-blue-600 focus:outline-none"
                 />
               </div>
               <div>
-                <label className="mb-1 block font-medium text-slate-700">Projected Components</label>
-                <input
-                  type="text"
+                <label className="mb-1 block font-medium text-slate-700">Token</label>
+                <select
+                  value={loanTokenId}
+                  onChange={(e) => setLoanTokenId(e.target.value)}
                   required
-                  value={amountInput}
-                  onChange={(e) => setAmountInput(e.target.value)}
-                  placeholder="100,100"
-                  className="w-full border border-slate-300 px-2.5 py-2 font-mono text-xs focus:border-blue-600 focus:outline-none"
-                />
+                  className="w-full border border-slate-300 bg-white px-2.5 py-2 font-mono text-xs focus:border-blue-600 focus:outline-none"
+                >
+                  <option value="">Select Token...</option>
+                  {tokens.map((t) => (
+                    <option key={t.token_id} value={t.token_id}>
+                      {t.symbol} ({t.token_id})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="mb-1 block font-medium text-slate-700">Lender</label>
+                  <select
+                    value={lenderWalletId}
+                    onChange={(e) => setLenderWalletId(e.target.value)}
+                    required
+                    className="w-full border border-slate-300 bg-white px-2 py-2 font-mono text-xs focus:border-blue-600 focus:outline-none"
+                  >
+                    {wallets.map((w) => (
+                      <option key={w.wallet_id} value={w.wallet_id}>
+                        {w.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block font-medium text-slate-700">Borrower</label>
+                  <select
+                    value={borrowerWalletId}
+                    onChange={(e) => setBorrowerWalletId(e.target.value)}
+                    required
+                    className="w-full border border-slate-300 bg-white px-2 py-2 font-mono text-xs focus:border-blue-600 focus:outline-none"
+                  >
+                    {wallets.map((w) => (
+                      <option key={w.wallet_id} value={w.wallet_id}>
+                        {w.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="mb-1 block font-medium text-slate-700">Principal</label>
+                  <input
+                    type="number"
+                    min={1}
+                    required
+                    value={loanPrincipal}
+                    onChange={(e) => setLoanPrincipal(e.target.value)}
+                    className="w-full border border-slate-300 px-2 py-2 font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block font-medium text-slate-700">Collateral</label>
+                  <input
+                    type="number"
+                    min={0}
+                    required
+                    value={loanCollateral}
+                    onChange={(e) => setLoanCollateral(e.target.value)}
+                    className="w-full border border-slate-300 px-2 py-2 font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block font-medium text-slate-700">Rate bps</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={10000}
+                    required
+                    value={loanInterestBps}
+                    onChange={(e) => setLoanInterestBps(e.target.value)}
+                    className="w-full border border-slate-300 px-2 py-2 font-mono text-xs"
+                  />
+                </div>
               </div>
             </>
           )}
 
-          {mode === "reconstruct" && (
+          {mode === "execute_loan" && (
             <>
               <div>
-                <label className="mb-1 block font-medium text-slate-700">Gains per Dimension</label>
-                <input
-                  type="text"
+                <label className="mb-1 block font-medium text-slate-700">Target Loan</label>
+                <select
+                  value={selectedLoanId}
+                  onChange={(e) => setSelectedLoanId(e.target.value)}
                   required
-                  value={gainsInput}
-                  onChange={(e) => setGainsInput(e.target.value)}
-                  placeholder="20,10"
-                  className="w-full border border-slate-300 px-2.5 py-2 font-mono text-xs focus:border-blue-600 focus:outline-none"
-                />
+                  className="w-full border border-slate-300 bg-white px-2.5 py-2 font-mono text-xs focus:border-blue-600 focus:outline-none"
+                >
+                  <option value="">Select vLoan...</option>
+                  {loans.map((l) => (
+                    <option key={l.loan_id} value={l.loan_id}>
+                      {l.name} ({l.status})
+                    </option>
+                  ))}
+                </select>
               </div>
-              <div>
-                <label className="mb-1 block font-medium text-slate-700">Losses per Dimension</label>
-                <input
-                  type="text"
-                  required
-                  value={lossesInput}
-                  onChange={(e) => setLossesInput(e.target.value)}
-                  placeholder="5,2"
-                  className="w-full border border-slate-300 px-2.5 py-2 font-mono text-xs focus:border-blue-600 focus:outline-none"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block font-medium text-slate-700">Outcome Tag</label>
-                <input
-                  type="text"
-                  required
-                  value={outcomeTagInput}
-                  onChange={(e) => setOutcomeTagInput(e.target.value)}
-                  className="w-full border border-slate-300 px-2.5 py-2 text-xs focus:border-blue-600 focus:outline-none"
-                />
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="mb-1 block font-medium text-slate-700">Loan Action</label>
+                  <select
+                    value={loanAction}
+                    onChange={(e) =>
+                      setLoanAction(e.target.value as "DISBURSE" | "REPAY" | "LIQUIDATE")
+                    }
+                    className="w-full border border-slate-300 bg-white px-2.5 py-2 font-mono text-xs"
+                  >
+                    <option value="DISBURSE">DISBURSE</option>
+                    <option value="REPAY">REPAY</option>
+                    <option value="LIQUIDATE">LIQUIDATE</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block font-medium text-slate-700">Amount</label>
+                  <input
+                    type="number"
+                    min={0}
+                    required
+                    value={loanExecAmount}
+                    onChange={(e) => setLoanExecAmount(e.target.value)}
+                    className="w-full border border-slate-300 px-2.5 py-2 font-mono text-xs"
+                  />
+                </div>
               </div>
             </>
-          )}
-
-          {mode === "drain" && (
-            <div>
-              <label className="mb-1 block font-medium text-slate-700">Basis Points (bps)</label>
-              <input
-                type="number"
-                min={1}
-                max={10000}
-                value={drainBpsInput}
-                onChange={(e) => setDrainBpsInput(e.target.value)}
-                className="w-full border border-slate-300 px-2.5 py-2 font-mono text-xs focus:border-blue-600 focus:outline-none"
-              />
-            </div>
           )}
 
           <button
             type="submit"
             disabled={submitting || !activeSigner}
-            className="w-full bg-blue-600 px-4 py-2.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+            className="inline-flex w-full items-center justify-center gap-1.5 bg-blue-600 px-4 py-2.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
           >
-            {submitting ? "Executing Signed Vector Op..." : `Execute ${mode.toUpperCase()}`}
+            <Play className="h-3.5 w-3.5" />
+            {submitting ? "Submitting Signed Tx..." : `Sign & Submit ${mode.replace("_", " ").toUpperCase()}`}
           </button>
         </form>
       </section>

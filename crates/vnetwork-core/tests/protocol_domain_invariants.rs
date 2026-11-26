@@ -1,12 +1,18 @@
 use std::collections::BTreeMap;
 use vnetwork_core::engine::ProtocolEngine;
+use vnetwork_core::contracts::{apply_create_contract, apply_execute_contract};
+use vnetwork_core::ghost::inspect_ghost_entities;
 use vnetwork_core::identity::{
     canonical_join_signing_bytes, JoinNetworkRequest, SignedScopeAuthorization,
 };
+use vnetwork_core::ledger::build_ledger_proof_report;
 use vnetwork_core::loans::apply_execute_loan;
+use vnetwork_core::replay::apply_event_to_state;
 use vnetwork_core::state::GenesisConfig;
 use vnetwork_core::supply::verify_token_supply_conservation;
-use vnetwork_core::token::canonical_transfer_approval_bytes;
+use vnetwork_core::token::{
+    apply_adjust_non_transferable_dimensions, canonical_transfer_approval_bytes,
+};
 use vnetwork_core::wallet::canonical_wallet_pop_bytes;
 use vnetwork_types::*;
 
@@ -203,7 +209,8 @@ fn test_genesis_commitment_covers_all_consensus_critical_fields() {
     assert_ne!(diff_quorum.commitment_hash().unwrap(), h_base);
 
     let mut diff_fault = base.clone();
-    diff_fault.consensus_parameters.max_byzantine_fault_weight_bps = 3_000;
+    diff_fault.consensus_parameters.validator_fault_assumption =
+        "BFT_CUSTOM_QUORUM".to_string();
     assert_ne!(diff_fault.commitment_hash().unwrap(), h_base);
 
     let mut diff_weight = base.clone();
@@ -478,4 +485,237 @@ fn test_wallet_pop_replay_expiry_revocation_multisig_and_ghost_isolation() {
     assert_eq!(liq_loan.status, LoanStatus::Liquidated);
     assert_eq!(liq_loan.collateral_locked, 0);
     assert!(verify_token_supply_conservation(&engine.state, &tok).unwrap());
+}
+
+#[test]
+fn test_validator_cannot_bypass_app_authorization_or_mutate_token_dimensions() {
+    let (mut engine, val_kp, owner_kp) = setup_test_engine();
+    let mut nonce = 1u64;
+    let mut ts = 1_000u64;
+    let mut commit_as = |actor: &KeypairMaterial, op: NetworkOperation| -> String {
+        let n = nonce;
+        let t = ts;
+        nonce += 1;
+        ts += 1;
+        let env = sign_envelope(actor, "vector-devnet-invariants", n, &format!("vreq_{n}"), t, &op);
+        let b = engine
+            .stage_signed_operation(&env, &op, "val_1", |bytes| val_kp.sign(bytes), t)
+            .unwrap();
+        let qc = sign_qc(&b.proposal, &val_kp, t);
+        engine.commit_proposal_with_qc(&b.proposal, &qc, t).unwrap();
+        b.created_entities.first().map(|e| e.id.clone()).unwrap_or_default()
+    };
+
+    let s = commit_as(&owner_kp, NetworkOperation::CreateSpace {
+        name: "AuthIsoSpace".to_string(),
+        visibility: "public".to_string(),
+        ghost: false,
+    });
+    let r = commit_as(&owner_kp, NetworkOperation::CreateRegion {
+        space_id: s.clone(),
+        name: "AuthIsoRegion".to_string(),
+        prefix: Some("ISO".to_string()),
+        title: None,
+        visibility: "public".to_string(),
+        section: 1,
+        ghost: false,
+    });
+    // Policy-derived initial_region_auth_ratio_bps defaults to 0 (never hardcoded 1_000)
+    assert_eq!(engine.state.regions.get(&r).unwrap().auth_ratio_bps, 0);
+
+    let w = commit_as(&owner_kp, NetworkOperation::CreateWallet {
+        region_id: r,
+        name: "OwnerVault".to_string(),
+        ghost: false,
+        approval_threshold: None,
+    });
+    let tok = commit_as(&owner_kp, NetworkOperation::CreateToken {
+        wallet_id: w.clone(),
+        name: "IsoToken".to_string(),
+        symbol: "ISOT".to_string(),
+        initial_supply: 5_000,
+        max_supply: 5_000,
+        unlimited_supply: false,
+        auth_ratio_au: 200,
+        energy: 10,
+        drain_bps: 0,
+        purpose: "isolation".to_string(),
+        external_monetary_value: "None".to_string(),
+        ghost: false,
+    });
+
+    // Validator is NOT token authority and MUST be rejected adjusting dimensions
+    let dim_err = apply_adjust_non_transferable_dimensions(
+        &mut engine.state,
+        &tok,
+        &w,
+        Some(9_999),
+        None,
+        "validator override attempt",
+        &val_kp.public_key_hex,
+        1_100,
+    )
+    .unwrap_err();
+    assert!(matches!(dim_err, VNetworkError::Authorization(_)));
+
+    // Validator cannot create entities in owner's space without explicit participant Space scope
+    let unauth_region = NetworkOperation::CreateRegion {
+        space_id: s,
+        name: "ValidatorInjected".to_string(),
+        prefix: Some("VI".to_string()),
+        title: None,
+        visibility: "public".to_string(),
+        section: 2,
+        ghost: false,
+    };
+    let env_val = sign_envelope(&val_kp, "vector-devnet-invariants", 1, "req_val_bypass", 1_101, &unauth_region);
+    assert!(engine
+        .stage_signed_operation(&env_val, &unauth_region, "val_1", |b| val_kp.sign(b), 1_101)
+        .is_err());
+}
+
+#[test]
+fn test_contract_state_and_escrow_execution_and_loan_draw_maturity_guards() {
+    let (mut engine, val_kp, owner_kp) = setup_test_engine();
+    let mut nonce = 1u64;
+    let mut ts = 2_000u64;
+    let mut commit = |op: NetworkOperation| -> String {
+        let n = nonce;
+        let t = ts;
+        nonce += 1;
+        ts += 1;
+        let env = sign_envelope(&owner_kp, "vector-devnet-invariants", n, &format!("creq_{n}"), t, &op);
+        let b = engine
+            .stage_signed_operation(&env, &op, "val_1", |bytes| val_kp.sign(bytes), t)
+            .unwrap();
+        let qc = sign_qc(&b.proposal, &val_kp, t);
+        engine.commit_proposal_with_qc(&b.proposal, &qc, t).unwrap();
+        b.created_entities.first().map(|e| e.id.clone()).unwrap_or_default()
+    };
+
+    let s = commit(NetworkOperation::CreateSpace { name: "ExecSpace".to_string(), visibility: "public".to_string(), ghost: false });
+    let r = commit(NetworkOperation::CreateRegion { space_id: s, name: "ExecReg".to_string(), prefix: Some("EXR".to_string()), title: None, visibility: "public".to_string(), section: 1, ghost: false });
+    let w_a = commit(NetworkOperation::CreateWallet { region_id: r.clone(), name: "LenderW".to_string(), ghost: false, approval_threshold: None });
+    let w_b = commit(NetworkOperation::CreateWallet { region_id: r.clone(), name: "BorrowerW".to_string(), ghost: false, approval_threshold: None });
+    let tok = commit(NetworkOperation::CreateToken {
+        wallet_id: w_a.clone(),
+        name: "ExecToken".to_string(),
+        symbol: "EXEC".to_string(),
+        initial_supply: 20_000,
+        max_supply: 20_000,
+        unlimited_supply: false,
+        auth_ratio_au: 400,
+        energy: 25,
+        drain_bps: 0,
+        purpose: "contracts".to_string(),
+        external_monetary_value: "None".to_string(),
+        ghost: false,
+    });
+    commit(NetworkOperation::TransferToken {
+        token_id: tok.clone(),
+        from_wallet_id: w_a.clone(),
+        to_wallet_id: w_b.clone(),
+        amount: 2_000,
+        cosignatures: vec![],
+    });
+
+    // Reject nondeterministic rules on contract creation
+    let mut bad_rules = BTreeMap::new();
+    bad_rules.insert("http_call".to_string(), serde_json::json!("https://example.com"));
+    assert!(apply_create_contract(
+        &mut engine.state,
+        "BadContract",
+        Some(&r),
+        bad_rules,
+        vec![],
+        &owner_kp.public_key_hex,
+        2_050,
+    )
+    .is_err());
+
+    // Create deterministic escrow contract + execute deposit & payout
+    let mut rules = BTreeMap::new();
+    rules.insert("token".to_string(), serde_json::json!(tok.clone()));
+    rules.insert("max_amount_per_op".to_string(), serde_json::json!(5_000));
+    rules.insert("initial_state".to_string(), serde_json::json!({ "counter": "0" }));
+    let contract_id = commit(NetworkOperation::CreateContract {
+        name: "EscrowVault".to_string(),
+        region_id: Some(r),
+        rules: serde_json::Value::Object(rules.into_iter().collect()),
+        actions: vec![
+            serde_json::json!({ "name": "deposit" }),
+            serde_json::json!({ "name": "release" }),
+            serde_json::json!({ "name": "increment" }),
+        ],
+    });
+
+    commit(NetworkOperation::ExecuteContract {
+        contract_id: contract_id.clone(),
+        action: "deposit".to_string(),
+        args: serde_json::json!({ "token": tok.clone(), "from_wallet": w_a.clone(), "amount": 1_500 }),
+    });
+    assert_eq!(engine.state.contracts.get(&contract_id).unwrap().escrow_balances.get(&tok).copied(), Some(1_500));
+
+    // Excessive release fails atomically leaving escrow & wallet balances intact
+    assert!(apply_execute_contract(
+        &mut engine.state,
+        &contract_id,
+        "release",
+        serde_json::json!({ "token": tok.clone(), "to_wallet": w_b.clone(), "amount": 9_999 }),
+        &owner_kp.public_key_hex,
+        2_060,
+    ).is_err());
+    assert_eq!(engine.state.contracts.get(&contract_id).unwrap().escrow_balances.get(&tok).copied(), Some(1_500));
+
+    commit(NetworkOperation::ExecuteContract {
+        contract_id: contract_id.clone(),
+        action: "release".to_string(),
+        args: serde_json::json!({ "token": tok.clone(), "to_wallet": w_b.clone(), "amount": 500 }),
+    });
+    commit(NetworkOperation::ExecuteContract {
+        contract_id: contract_id.clone(),
+        action: "increment".to_string(),
+        args: serde_json::json!({ "key": "counter", "delta": 3 }),
+    });
+    assert_eq!(engine.state.contracts.get(&contract_id).unwrap().state_data.get("counter").unwrap(), "3");
+    assert_eq!(engine.state.contracts.get(&contract_id).unwrap().escrow_balances.get(&tok).copied(), Some(1_000));
+    assert!(verify_token_supply_conservation(&engine.state, &tok).unwrap());
+
+    // Loan with missing maturity CANNOT liquidate unless defaulted, and partial draw <= principal
+    let no_mat_loan = commit(NetworkOperation::CreateLoan {
+        name: "NoMatLoan".to_string(),
+        token_id: tok.clone(),
+        lender_wallet_id: w_a.clone(),
+        borrower_wallet_id: w_b.clone(),
+        principal: 1_000,
+        collateral: 100,
+        interest_bps: 1000,
+        maturity_at_ms: None,
+    });
+    commit(NetworkOperation::ExecuteLoan { loan_id: no_mat_loan.clone(), action: "draw".to_string(), amount: 400 });
+    assert_eq!(engine.state.loans.get(&no_mat_loan).unwrap().disbursed_amount, 400);
+    // Drawing more than remaining facility (600) MUST fail
+    assert!(apply_execute_loan(&mut engine.state, &no_mat_loan, "draw", 700, &owner_kp.public_key_hex, 2_070).is_err());
+    // Liquidation without maturity MUST fail
+    assert!(apply_execute_loan(&mut engine.state, &no_mat_loan, "liquidate", 0, &owner_kp.public_key_hex, 2_071).is_err());
+    // Repay based on actual disbursement (400 + 10% = 440) settles & releases collateral
+    commit(NetworkOperation::ExecuteLoan { loan_id: no_mat_loan.clone(), action: "repay".to_string(), amount: 440 });
+    let settled = engine.state.loans.get(&no_mat_loan).unwrap();
+    assert_eq!(settled.status, LoanStatus::Repaid);
+    assert_eq!(settled.collateral_locked, 0);
+    assert_eq!(settled.repayment_history.len(), 1);
+    assert!(engine.verify_replay().unwrap().valid);
+
+    // Proof report includes hierarchical commitments & ghost inspection
+    let report = build_ledger_proof_report(&engine.state).unwrap();
+    assert!(!report.hierarchy_commitments.network_commitment.is_empty());
+    assert!(report.hierarchy_commitments.token_commitments.contains_key(&tok));
+    let ghost_info = inspect_ghost_entities(&engine.state).unwrap();
+    assert_eq!(ghost_info.total_ghost_entities, 0);
+
+    // Replay rejects tampered unknown event operations fail-closed
+    let mut bad_ev = engine.state.events.last().unwrap().clone();
+    bad_ev.operation = "UNKNOWN_ROGUE_OP".to_string();
+    let mut cloned_state = engine.state.clone();
+    assert!(apply_event_to_state(&mut cloned_state, &bad_ev).is_err());
 }
