@@ -76,7 +76,7 @@ export function TokensPanel({
   const activeSignerWallet = activeSigner ? wallets.find((w) => w.wallet_id === activeSigner.wallet_id) : null;
   const toWalletObj = wallets.find((w) => w.wallet_id === toWallet) ?? null;
   const transferScope = deriveTransferScopeClient(activeSignerWallet, toWalletObj);
-  const authRatio = activeSignerWallet?.auth_ratio ?? 1000;
+  const authRatio = activeSignerWallet?.auth_ratio ?? null;
   const effectivePolicy = drainPolicy ?? activeToken?.drain_policy ?? null;
   const baseDrainBps = resolveScopeDrainBps(effectivePolicy, transferScope);
 
@@ -438,10 +438,24 @@ export function TokensPanel({
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="font-semibold text-slate-900">{activeSigner.label}</div>
-                    <div className="text-[11px] text-slate-500">auth_ratio = {authRatio} / 1000</div>
+                    <div className="text-[11px] text-slate-500">
+                      auth_ratio = {authRatio !== null ? `${authRatio} / 1000` : "Unknown"}
+                    </div>
                   </div>
-                  <span className={authRatio >= 700 ? "text-emerald-700 font-bold" : "text-amber-700"}>
-                    {authRatio >= 700 ? "50% Fee Discount" : "Base Fee Rate"}
+                  <span
+                    className={
+                      authRatio === null
+                        ? "text-slate-500"
+                        : authRatio >= 700
+                          ? "font-bold text-emerald-700"
+                          : "text-amber-700"
+                    }
+                  >
+                    {authRatio === null
+                      ? "Unknown Tier"
+                      : authRatio >= 700
+                        ? "50% Fee Discount"
+                        : "Base Fee Rate"}
                   </span>
                 </div>
               ) : (
@@ -532,10 +546,14 @@ export function TokensPanel({
               {mode === "transfer" && !drainPreview && (
                 <div className="rounded border border-amber-200 bg-amber-50/70 p-3 text-[11px] font-mono text-amber-900 space-y-1">
                   <div className="font-semibold">
-                    Transfer Drain Policy: UNCONFIGURED ({transferScope ?? "SELECT_WALLETS"})
+                    {baseDrainBps !== null && authRatio === null
+                      ? `Transfer Drain Policy: AUTH RATIO UNKNOWN (${transferScope ?? "UNKNOWN"})`
+                      : `Transfer Drain Policy: UNCONFIGURED (${transferScope ?? "SELECT_WALLETS"})`}
                   </div>
                   <div>
-                    Protocol fails closed for transfers whose scope drain rate is unconfigured.
+                    {baseDrainBps !== null && authRatio === null
+                      ? "Wallet auth_ratio unavailable — cannot preview fee discount tier without fabricating authorization data."
+                      : "Protocol fails closed for transfers whose scope drain rate is unconfigured."}
                   </div>
                 </div>
               )}

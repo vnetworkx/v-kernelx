@@ -9,8 +9,12 @@ if [[ -z "${DEVNET_DIR:-}" ]]; then
   AUTO_TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vnetwork-acceptance-XXXXXX")"
   DEVNET_DIR="$AUTO_TEMP_DIR"
 else
-  if [[ -d "$DEVNET_DIR" && ! -f "$DEVNET_DIR/.vnetwork-devnet-marker" ]]; then
-    echo "Refusing to reuse existing non-devnet directory '$DEVNET_DIR' without .vnetwork-devnet-marker." >&2
+  if [[ -L "$DEVNET_DIR" || "$DEVNET_DIR" == *".."* ]]; then
+    echo "Refusing symlinked or traversal DEVNET_DIR: '$DEVNET_DIR'" >&2
+    exit 1
+  fi
+  if [[ -d "$DEVNET_DIR" && ! -f "$DEVNET_DIR/.vnetwork-devnet-owner" && ! -f "$DEVNET_DIR/.vnetwork-devnet-marker" ]]; then
+    echo "Refusing to reuse existing non-devnet directory '$DEVNET_DIR' without .vnetwork-devnet-owner." >&2
     exit 1
   fi
 fi
@@ -20,13 +24,41 @@ CLI_HOME="$(mktemp -d "${TMPDIR:-/tmp}/vnetwork-cli-XXXXXX")"
 export VNETWORK_CLI_PASSPHRASE="${VNETWORK_CLI_PASSPHRASE:-$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')}"
 export NETWORK_KEY_PASSPHRASE="${NETWORK_KEY_PASSPHRASE:-$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')}"
 
+stop_verified_node() {
+  local node_idx="$1"
+  local pidfile="$DEVNET_DIR/node${node_idx}/node.pid"
+  local cfg="$DEVNET_DIR/node${node_idx}/node.toml"
+  [[ -f "$pidfile" ]] || return 0
+  local pid
+  pid="$(tr -d '[:space:]' < "$pidfile" || true)"
+  if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+    local cmdline=""
+    if [[ -r "/proc/${pid}/cmdline" ]]; then
+      cmdline="$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true)"
+    else
+      cmdline="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+    fi
+    if [[ "$cmdline" == *"vnetwork-node"* && "$cmdline" == *"$cfg"* ]]; then
+      kill -TERM "$pid" 2>/dev/null || true
+      for _ in $(seq 1 50); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.1
+      done
+      if kill -0 "$pid" 2>/dev/null; then
+        kill -KILL "$pid" 2>/dev/null || true
+      fi
+    fi
+  fi
+  rm -f "$pidfile" "$DEVNET_DIR/node${node_idx}/node.meta"
+}
+
 cleanup() {
   echo "Stopping devnet nodes..."
   bash "$ROOT/scripts/devnet-down.sh" || true
-  if [[ -n "$CLI_HOME" && "$CLI_HOME" == "${TMPDIR:-/tmp}/vnetwork-cli-"* && -d "$CLI_HOME" ]]; then
+  if [[ -n "$CLI_HOME" && ! -L "$CLI_HOME" && "$CLI_HOME" == "${TMPDIR:-/tmp}/vnetwork-cli-"* && -d "$CLI_HOME" ]]; then
     rm -rf -- "$CLI_HOME"
   fi
-  if [[ -n "$AUTO_TEMP_DIR" && "$AUTO_TEMP_DIR" == "${TMPDIR:-/tmp}/vnetwork-acceptance-"* && -d "$AUTO_TEMP_DIR" ]]; then
+  if [[ -n "$AUTO_TEMP_DIR" && ! -L "$AUTO_TEMP_DIR" && "$AUTO_TEMP_DIR" == "${TMPDIR:-/tmp}/vnetwork-acceptance-"* && -d "$AUTO_TEMP_DIR" ]]; then
     rm -rf -- "$AUTO_TEMP_DIR"
   fi
 }
@@ -41,6 +73,7 @@ echo "=================================================================="
 echo "STEP 2: Cross-language cryptographic & canonical parity (5 SDKs)"
 echo "=================================================================="
 bash "$ROOT/tests/cross_language/run_parity.sh"
+bash "$ROOT/tests/e2e/script_safety.test.sh"
 
 echo "=================================================================="
 echo "STEP 3: Compile check all 16 .vx / .vdx language examples"
@@ -111,7 +144,7 @@ echo "=================================================================="
 VNETWORK_ENDPOINT=http://127.0.0.1:18081 VNETWORK_NETWORK_ID="$NETWORK_ID" python3 - <<'PY'
 import json, os, sys, urllib.request, urllib.error
 sys.path.insert(0, "sdks/python")
-from vnetwork_sdk import ClientIdentity, VectorNetworkClient, PROTOCOL_VERSION
+from vnetwork_sdk import ClientIdentity, VectorNetworkClient
 
 ep = os.environ["VNETWORK_ENDPOINT"]
 net_id = os.environ["VNETWORK_NETWORK_ID"]
@@ -123,7 +156,6 @@ c.join(["NETWORK"])
 
 before = json.loads(urllib.request.urlopen(f"{ep}/v1/network/status").read().decode())
 
-# 1. Invalid .vx transfer causes atomic rollback (zero partial Space/Region/Wallet created)
 failing_vx = '''
 space create ShouldRollbackSpace { visibility = "public" }
 region create ShouldRollbackRegion in "ShouldRollbackSpace" { prefix = "RBK"; visibility = "public"; section = 1; }
@@ -138,7 +170,6 @@ assert after["spaces"] == before["spaces"]
 assert after["state_root"] == before["state_root"]
 print("Verified atomic rollback: status=", sub["status"], "state_root unchanged.")
 
-# 2. Tampered program signature MUST be rejected
 try:
     req_data = urllib.request.Request(
         f"{ep}/v1/programs/submit",
@@ -166,8 +197,7 @@ PY
 echo "=================================================================="
 echo "STEP 8: BFT Fault Tolerance (3/4 succeeds, 2/4 rejects quorum)"
 echo "=================================================================="
-kill "$(cat "$DEVNET_DIR/node4/node.pid")"
-sleep 1
+stop_verified_node 4
 
 VNETWORK_ENDPOINT=http://127.0.0.1:18081 VNETWORK_NETWORK_ID="$NETWORK_ID" \
   node - <<'JS'
@@ -185,10 +215,10 @@ if (sub.status !== "COMMITTED") throw new Error("3/4 quorum should have committe
 console.log("3/4 BFT quorum succeeded cleanly: program_id=", sub.program_id);
 JS
 
-kill "$(cat "$DEVNET_DIR/node3/node.pid")"
-sleep 1
+stop_verified_node 3
 
 PRE_FAULT_STATE="$(curl -fsS http://127.0.0.1:18081/v1/network/status)"
+PRE_FAULT_CONS="$(curl -fsS http://127.0.0.1:18081/v1/consensus/status)"
 VNETWORK_ENDPOINT=http://127.0.0.1:18081 VNETWORK_NETWORK_ID="$NETWORK_ID" \
   node - <<'JS'
 import { ClientIdentity, VectorNetworkClient } from "./sdks/javascript/index.js";
@@ -197,35 +227,46 @@ const client = new VectorNetworkClient(process.env.VNETWORK_ENDPOINT, id, proces
 await client.connect();
 let failed = false;
 try {
-  await client.join(["NETWORK"]);
+  await client.submitProgram("bft_2of4_must_reject.vx", `
+space create MinorityMustFail { visibility = "public" }
+`);
 } catch (err) {
   failed = true;
-  console.log("2/4 minority correctly rejected:", err.message);
+  console.log("2/4 minority correctly rejected state-changing op:", err.message);
 }
 if (!failed) throw new Error("2/4 minority should NOT reach finality!");
 JS
 
 POST_FAULT_STATE="$(curl -fsS http://127.0.0.1:18081/v1/network/status)"
-python3 - "$PRE_FAULT_STATE" "$POST_FAULT_STATE" <<'PY'
+POST_FAULT_CONS="$(curl -fsS http://127.0.0.1:18081/v1/consensus/status)"
+python3 - "$PRE_FAULT_STATE" "$POST_FAULT_STATE" "$PRE_FAULT_CONS" "$POST_FAULT_CONS" <<'PY'
 import json, sys
-pre = json.loads(sys.argv[1])
-post = json.loads(sys.argv[2])
+pre, post, pre_c, post_c = [json.loads(x) for x in sys.argv[1:5]]
 assert pre["height"] == post["height"], f"Height changed under minority fault: {pre['height']} vs {post['height']}"
 assert pre["state_root"] == post["state_root"], "State root mutated under minority fault!"
-print("Verified 2/4 minority preserved exact height & state_root:", post["height"], post["state_root"])
+assert pre_c["certificate_count"] == post_c["certificate_count"], "Certificate count changed under minority fault!"
+print("Verified 2/4 minority preserved exact height, state_root & 0 new certs:", post["height"], post["state_root"])
 PY
 
 echo "=================================================================="
 echo "STEP 9: Restart Node 3 & Node 4 -> WAL Recovery + P2P Sync Catch-up"
 echo "=================================================================="
 for i in 3 4; do
+  cfg_path="$DEVNET_DIR/node$i/node.toml"
   NETWORK_CONSENSUS_TIMEOUT_MS=3500 \
   NETWORK_KEY_PASSPHRASE="$NETWORK_KEY_PASSPHRASE" \
     "$NODE_BIN" \
-    --config "$DEVNET_DIR/node$i/node.toml" \
+    --config "$cfg_path" \
     --genesis-file "$DEVNET_DIR/genesis.json" \
     run >> "$DEVNET_DIR/node$i/node.log" 2>&1 &
-  echo $! > "$DEVNET_DIR/node$i/node.pid"
+  pid=$!
+  echo "$pid" > "$DEVNET_DIR/node$i/node.pid"
+  cat > "$DEVNET_DIR/node$i/node.meta" <<EOF
+pid=${pid}
+binary=${NODE_BIN}
+config=${cfg_path}
+devnet_dir=${DEVNET_DIR}
+EOF
 done
 
 for i in 3 4; do
@@ -257,7 +298,21 @@ else:
 for i in range(1, 5):
     proofs = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{18080+i}/v1/ledger/proofs").read().decode())
     assert proofs["chain_valid"] is True, f"node {i} invalid proof chain after recovery"
+    equivs = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{18080+i}/v1/consensus/equivocations").read().decode())
+    assert equivs.get("count", len(equivs.get("equivocations", []))) == 0, f"unexpected equivocations on node {i}"
 PY
+
+echo "Checking node logs for secret/passphrase leakage..."
+for i in 1 2 3 4; do
+  if grep -Fq "$NETWORK_KEY_PASSPHRASE" "$DEVNET_DIR/node$i/node.log" 2>/dev/null; then
+    echo "ERROR: Passphrase leaked in node $i log!" >&2
+    exit 1
+  fi
+  if grep -qE 'private_key_hex.*[0-9a-f]{64}' "$DEVNET_DIR/node$i/node.log" 2>/dev/null; then
+    echo "ERROR: Private key hex leaked in node $i log!" >&2
+    exit 1
+  fi
+done
 
 echo "=================================================================="
 echo "ALL ACCEPTANCE CHECKS PASSED CLEANLY!"

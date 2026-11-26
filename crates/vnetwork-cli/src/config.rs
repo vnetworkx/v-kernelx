@@ -31,7 +31,9 @@ impl Default for CliState {
     fn default() -> Self {
         Self {
             endpoint: std::env::var("VNETWORK_ENDPOINT")
-                .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string()),
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or_else(|| "http://127.0.0.1:8080".to_string()),
             network_id: None,
             identity_metadata: None,
             encrypted_identity: None,
@@ -193,4 +195,38 @@ pub fn save_cli_state(state: &CliState) -> Result<(), Box<dyn std::error::Error>
         let _ = dir.sync_all();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_identity_requires_passphrase_by_default_and_roundtrips_encrypted() {
+        let mut state = CliState::default();
+        let id = ClientIdentity::generate("cli-unit");
+        let err = store_cli_identity(&mut state, &id, None, false).unwrap_err();
+        assert!(err.to_string().contains("passphrase"));
+
+        store_cli_identity(&mut state, &id, Some("cli-strong-pass-!"), false).unwrap();
+        assert!(state.encrypted_identity.is_some());
+        assert!(state.legacy_plaintext_identity.is_none());
+
+        assert!(load_cli_identity(&state, None, false).is_err());
+        assert!(load_cli_identity(&state, Some("wrong-pass"), false).is_err());
+        let loaded = load_cli_identity(&state, Some("cli-strong-pass-!"), false).unwrap();
+        assert_eq!(loaded.participant_id, id.participant_id);
+        assert_eq!(loaded.node_id, id.node_id);
+    }
+
+    #[test]
+    fn cli_plaintext_fallback_requires_explicit_opt_in_to_load() {
+        let mut state = CliState::default();
+        let id = ClientIdentity::generate("cli-plain");
+        store_cli_identity(&mut state, &id, None, true).unwrap();
+        assert!(state.legacy_plaintext_identity.is_some());
+        assert!(load_cli_identity(&state, None, false).is_err());
+        let loaded = load_cli_identity(&state, None, true).unwrap();
+        assert_eq!(loaded.participant_id, id.participant_id);
+    }
 }

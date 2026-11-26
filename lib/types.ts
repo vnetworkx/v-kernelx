@@ -31,6 +31,7 @@ export interface StateRootDto {
 
 export interface NodeStatusDto {
   kernel_version: string;
+  protocol_version?: string;
   network_name: string;
   network_mode: string;
   node_id: string;
@@ -51,6 +52,7 @@ export interface NodeStatusDto {
   wallet_count: number;
   token_count: number;
   validator_count: number;
+  certificate_count?: number;
   finalized_event_count: number;
   total_drain_rewards_count: number;
   state_root: StateRootDto;
@@ -66,11 +68,11 @@ export interface RegionDto {
   region_prefix: string | null;
   suggested_title: string | null;
   visibility: "public" | "private";
-  section: number;
-  auth_ratio_bps: number;
+  section: number | null;
+  auth_ratio_bps: number | null;
   creator_public_key: string;
-  trigger_event_hash: string;
-  creation_proof_hash: string;
+  trigger_event_hash: string | null;
+  creation_proof_hash: string | null;
   access_key_hash: string | null;
   created_at_ms: number;
   updated_at_ms: number;
@@ -133,7 +135,7 @@ export interface WalletDto {
   creator_wallet_id: string | null;
   receive_policy?: WalletReceivePolicyDto;
   created_at_ms: number;
-  auth_ratio: number;
+  auth_ratio: number | null;
   balances: TokenBalanceDto[];
   rewards: DrainRewardDto[];
 }
@@ -141,10 +143,16 @@ export interface WalletDto {
 export interface SupplyConservationDto {
   conserved: boolean;
   verification_status: VerificationStatus;
+  verification_reason?: string | null;
   total_supply: string;
   sum_of_balances: string;
+  wallet_balances_total?: string;
   escrow_balances_total?: string;
+  locked_collateral_total?: string;
+  reserve_balances_total?: string;
   unknown_account_balances_total?: string;
+  burned_supply?: string | null;
+  drained_fees_total?: string | null;
   minted_minus_burned: string;
   transported_minus_burned?: string;
 }
@@ -159,8 +167,8 @@ export interface TokenDto {
   total_supply: string;
   minted_supply: string;
   transported_supply?: string;
-  burned_supply: string;
-  drained_fees_collected?: string;
+  burned_supply: string | null;
+  drained_fees_collected?: string | null;
   drain_bps?: number | null;
   drain_policy?: DrainPolicyDto | null;
   authority_pubkey: string;
@@ -243,20 +251,23 @@ export interface CanonicalEventDto {
     type_tag: string;
     metadata: Record<string, string>;
   };
-  auth_ratio: number;
+  auth_ratio: number | null;
   certified: boolean;
+  verification_status?: VerificationStatus;
   actor_public_key: string;
   logical_clock: number;
   timestamp: number;
   payload_hash: string;
   event_hash: string;
-  signature: string;
+  signature: string | null;
 }
 
 export interface SnapshotDto {
   snapshot_id: string;
   state_root: StateRootDto;
-  event_root: string;
+  event_root: string | null;
+  proposal_digest?: string;
+  verification_status?: VerificationStatus;
   replay_hash: string;
   event_count: number;
   logical_clock: number;

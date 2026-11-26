@@ -7,54 +7,55 @@ use vnetwork_types::*;
 pub fn verify_quorum_certificate(
     qc: &QuorumCertificate,
     validators: &[ConsensusValidator],
+    ctx: &ConsensusVerificationContext,
 ) -> VResult<()> {
-    verify_quorum_certificate_strict(qc, validators, None, None, None)
+    verify_quorum_certificate_strict(qc, validators, ctx)
 }
 
 pub fn verify_quorum_certificate_strict(
     qc: &QuorumCertificate,
     validators: &[ConsensusValidator],
-    expected_network_id: Option<&str>,
-    expected_genesis_commitment: Option<&str>,
-    expected_epoch: Option<u64>,
+    ctx: &ConsensusVerificationContext,
 ) -> VResult<()> {
+    // 0. Validate verification context & network consensus parameters
+    ctx.consensus_parameters.validate()?;
+    let expected_params_hash = ctx.consensus_parameters.parameters_hash()?;
+    if ctx.consensus_parameters_hash != expected_params_hash {
+        return Err(VNetworkError::Consensus(format!(
+            "verification context consensus_parameters_hash `{}` != computed `{expected_params_hash}`",
+            ctx.consensus_parameters_hash
+        )));
+    }
+
     // 1. Validate canonical pubkey uniqueness & active weights in validator set
     let expected_vset_hash = validate_validator_set(validators)?;
 
-    // 2. Mandatory QC metadata & domain fields (no empty bypasses!)
-    if qc.protocol_version != PROTOCOL_VERSION {
-        return Err(VNetworkError::Consensus(format!(
-            "QC protocol_version `{}` != expected `{PROTOCOL_VERSION}`",
-            qc.protocol_version
+    // 2. Mandatory QC metadata, domain fields & canonical certificate_id derivation
+    if qc.protocol_version != ctx.protocol_version || qc.protocol_version != PROTOCOL_VERSION {
+        return Err(VNetworkError::ProfileMismatch(format!(
+            "QC protocol_version `{}` != expected `{}`",
+            qc.protocol_version, ctx.protocol_version
         )));
     }
-    if qc.network_id.trim().is_empty() {
+    if qc.network_id.trim().is_empty() || qc.network_id != ctx.network_id {
+        return Err(VNetworkError::ProfileMismatch(format!(
+            "QC network_id `{}` != expected `{}`",
+            qc.network_id, ctx.network_id
+        )));
+    }
+    if qc.genesis_commitment.trim().is_empty() || qc.genesis_commitment != ctx.genesis_commitment
+    {
+        return Err(VNetworkError::ProfileMismatch(format!(
+            "QC genesis_commitment `{}` != expected `{}`",
+            qc.genesis_commitment, ctx.genesis_commitment
+        )));
+    }
+    if qc.epoch == 0 {
         return Err(VNetworkError::Consensus(
-            "QC missing required network_id".to_string(),
+            "QC epoch must be >= 1".to_string(),
         ));
     }
-    if let Some(exp_net) = expected_network_id {
-        if qc.network_id != exp_net {
-            return Err(VNetworkError::ProfileMismatch(format!(
-                "QC network_id `{}` != expected `{exp_net}`",
-                qc.network_id
-            )));
-        }
-    }
-    if qc.genesis_commitment.trim().is_empty() {
-        return Err(VNetworkError::Consensus(
-            "QC missing required genesis_commitment".to_string(),
-        ));
-    }
-    if let Some(exp_gen) = expected_genesis_commitment {
-        if qc.genesis_commitment != exp_gen {
-            return Err(VNetworkError::ProfileMismatch(format!(
-                "QC genesis_commitment `{}` != expected `{exp_gen}`",
-                qc.genesis_commitment
-            )));
-        }
-    }
-    if let Some(exp_ep) = expected_epoch {
+    if let Some(exp_ep) = ctx.expected_epoch {
         if qc.epoch != exp_ep {
             return Err(VNetworkError::Consensus(format!(
                 "QC epoch {} != expected {exp_ep}",
@@ -62,15 +63,22 @@ pub fn verify_quorum_certificate_strict(
             )));
         }
     }
-    if qc.validator_set_hash.trim().is_empty() {
-        return Err(VNetworkError::Consensus(
-            "QC missing required validator_set_hash".to_string(),
-        ));
-    }
-    if qc.validator_set_hash != expected_vset_hash {
+    if qc.validator_set_hash.trim().is_empty() || qc.validator_set_hash != expected_vset_hash {
         return Err(VNetworkError::Consensus(format!(
             "QC validator_set_hash mismatch: expected {expected_vset_hash}, got {}",
             qc.validator_set_hash
+        )));
+    }
+    if qc.consensus_parameters_hash != ctx.consensus_parameters_hash {
+        return Err(VNetworkError::Consensus(format!(
+            "QC consensus_parameters_hash `{}` != expected `{}`",
+            qc.consensus_parameters_hash, ctx.consensus_parameters_hash
+        )));
+    }
+    if qc.quorum_threshold_bps != ctx.consensus_parameters.quorum_threshold_bps {
+        return Err(VNetworkError::Consensus(format!(
+            "QC quorum_threshold_bps `{}` != network policy `{}`",
+            qc.quorum_threshold_bps, ctx.consensus_parameters.quorum_threshold_bps
         )));
     }
     if qc.proposal_digest.len() != 64 {
@@ -100,12 +108,7 @@ pub fn verify_quorum_certificate_strict(
             "QC ordered_event_ids length does not match event_hashes length".to_string(),
         ));
     }
-    if qc.quorum_threshold_bps < DEFAULT_BFT_QUORUM_BPS || qc.quorum_threshold_bps > 10_000 {
-        return Err(VNetworkError::Consensus(format!(
-            "QC quorum_threshold_bps `{}` out of allowed range [{}..=10000]",
-            qc.quorum_threshold_bps, DEFAULT_BFT_QUORUM_BPS
-        )));
-    }
+    qc.verify_certificate_id()?;
 
     let active_validators: Vec<&ConsensusValidator> =
         validators.iter().filter(|v| v.active).collect();
@@ -140,6 +143,7 @@ pub fn verify_quorum_certificate_strict(
             || vote.round != qc.round
             || vote.epoch != qc.epoch
             || vote.validator_set_hash != qc.validator_set_hash
+            || vote.consensus_parameters_hash != qc.consensus_parameters_hash
             || vote.parent_commitment != qc.parent_commitment
             || vote.pre_state_root != qc.pre_state_root
             || vote.post_state_root != qc.post_state_root
@@ -186,7 +190,7 @@ pub fn verify_quorum_certificate_strict(
         )));
     }
 
-    let threshold = qc.quorum_threshold_bps as u128;
+    let threshold = ctx.consensus_parameters.quorum_threshold_bps as u128;
     if (verified_weight as u128) * 10_000 < (expected_total_weight as u128) * threshold {
         return Err(VNetworkError::Consensus(format!(
             "insufficient quorum weight: {verified_weight}/{expected_total_weight} (need >= {} bps)",
@@ -198,21 +202,42 @@ pub fn verify_quorum_certificate_strict(
 
 pub fn verify_membership_chain_from_genesis(
     genesis_validators: &[ConsensusValidator],
+    genesis_epoch: u64,
+    ctx: &ConsensusVerificationContext,
     transitions: &[ValidatorEpochTransition],
     target_epoch: u64,
     target_vset_hash: &str,
     target_validators: &[ConsensusValidator],
 ) -> VResult<Vec<ConsensusValidator>> {
-    let mut current_epoch = 1u64;
+    if genesis_epoch == 0 {
+        return Err(VNetworkError::Consensus(
+            "genesis_epoch must be >= 1".to_string(),
+        ));
+    }
+    if target_epoch < genesis_epoch {
+        return Err(VNetworkError::Consensus(format!(
+            "target_epoch {target_epoch} < genesis_epoch {genesis_epoch}"
+        )));
+    }
+
+    let mut current_epoch = genesis_epoch;
     let mut current_validators = genesis_validators.to_vec();
     let mut current_hash = validate_validator_set(&current_validators)?;
     let mut last_height = 0u64;
 
     for tr in transitions {
-        if tr.epoch != current_epoch + 1 {
+        let next_epoch = current_epoch
+            .checked_add(1)
+            .ok_or_else(|| VNetworkError::Consensus("validator epoch overflow".to_string()))?;
+        if tr.prev_epoch != current_epoch {
             return Err(VNetworkError::Consensus(format!(
-                "validator epoch transition gap: expected epoch {}, got {}",
-                current_epoch + 1,
+                "validator transition prev_epoch {} != current epoch {current_epoch}",
+                tr.prev_epoch
+            )));
+        }
+        if tr.epoch != next_epoch {
+            return Err(VNetworkError::Consensus(format!(
+                "validator epoch transition gap: expected epoch {next_epoch}, got {}",
                 tr.epoch
             )));
         }
@@ -228,6 +253,12 @@ pub fn verify_membership_chain_from_genesis(
                 tr.epoch
             )));
         }
+        if tr.consensus_parameters_hash != ctx.consensus_parameters_hash {
+            return Err(VNetworkError::Consensus(format!(
+                "validator transition consensus_parameters_hash mismatch at epoch {}",
+                tr.epoch
+            )));
+        }
         let next_hash = validate_validator_set(&tr.new_validators)?;
         if tr.new_validator_set_hash != next_hash {
             return Err(VNetworkError::Consensus(format!(
@@ -235,13 +266,34 @@ pub fn verify_membership_chain_from_genesis(
                 tr.epoch
             )));
         }
-        verify_quorum_certificate_strict(
-            &tr.transition_certificate,
-            &current_validators,
-            None,
-            None,
-            Some(current_epoch),
-        )?;
+        let expected_tr_digest = tr.compute_transition_payload_digest()?;
+        if tr.transition_payload_digest.len() != 64
+            || tr.transition_payload_digest != expected_tr_digest
+        {
+            return Err(VNetworkError::Consensus(format!(
+                "validator transition payload digest mismatch at epoch {}",
+                tr.epoch
+            )));
+        }
+
+        let epoch_ctx = ctx.for_epoch(current_epoch)?;
+        verify_quorum_certificate_strict(&tr.transition_certificate, &current_validators, &epoch_ctx)?;
+
+        let qc = &tr.transition_certificate;
+        let bound_to_transition = qc.post_state_root == tr.transition_payload_digest
+            || qc.event_hashes.contains(&tr.transition_payload_digest);
+        if qc.height != tr.height
+            || qc.epoch != tr.prev_epoch
+            || qc.validator_set_hash != tr.prev_validator_set_hash
+            || qc.consensus_parameters_hash != tr.consensus_parameters_hash
+            || !bound_to_transition
+        {
+            return Err(VNetworkError::Consensus(format!(
+                "validator transition certificate at epoch {} does not certify transition payload digest",
+                tr.epoch
+            )));
+        }
+
         current_epoch = tr.epoch;
         current_validators = tr.new_validators.clone();
         current_hash = next_hash;
@@ -268,30 +320,37 @@ pub fn commit_verified_proposal(
     qc: &QuorumCertificate,
     validators: &[ConsensusValidator],
 ) -> VResult<String> {
-    if proposal.network_id != state.network_id {
+    let ctx = state.consensus_context()?;
+    if proposal.network_id != ctx.network_id {
         return Err(VNetworkError::ProfileMismatch(format!(
             "proposal network_id `{}` != local `{}`",
-            proposal.network_id, state.network_id
+            proposal.network_id, ctx.network_id
         )));
     }
-    if state.genesis_commitment.trim().is_empty()
-        || proposal.genesis_commitment != state.genesis_commitment
+    if ctx.genesis_commitment.trim().is_empty()
+        || proposal.genesis_commitment != ctx.genesis_commitment
     {
         return Err(VNetworkError::ProfileMismatch(format!(
             "proposal genesis_commitment `{}` != local `{}`",
-            proposal.genesis_commitment, state.genesis_commitment
+            proposal.genesis_commitment, ctx.genesis_commitment
         )));
     }
-    if proposal.protocol_version != state.protocol_version {
+    if proposal.protocol_version != ctx.protocol_version {
         return Err(VNetworkError::ProfileMismatch(format!(
             "proposal protocol_version `{}` != local `{}`",
-            proposal.protocol_version, state.protocol_version
+            proposal.protocol_version, ctx.protocol_version
         )));
     }
     if proposal.epoch != state.validator_epoch {
         return Err(VNetworkError::Consensus(format!(
             "proposal epoch {} != active validator_epoch {}",
             proposal.epoch, state.validator_epoch
+        )));
+    }
+    if proposal.consensus_parameters_hash != ctx.consensus_parameters_hash {
+        return Err(VNetworkError::Consensus(format!(
+            "proposal consensus_parameters_hash `{}` != local `{}`",
+            proposal.consensus_parameters_hash, ctx.consensus_parameters_hash
         )));
     }
 
@@ -329,21 +388,18 @@ pub fn commit_verified_proposal(
             proposal.pre_state_root
         )));
     }
-    if proposal.height != state.height + 1 {
+    let next_height = state
+        .height
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Consensus("ledger height overflow".to_string()))?;
+    if proposal.height != next_height {
         return Err(VNetworkError::Consensus(format!(
-            "proposal height {} != expected {}",
-            proposal.height,
-            state.height + 1
+            "proposal height {} != expected {next_height}",
+            proposal.height
         )));
     }
 
-    verify_quorum_certificate_strict(
-        qc,
-        validators,
-        Some(&state.network_id),
-        Some(&state.genesis_commitment),
-        Some(state.validator_epoch),
-    )?;
+    verify_quorum_certificate_strict(qc, validators, &ctx)?;
     if qc.proposal_id != proposal.proposal_id
         || qc.proposal_digest != proposal.proposal_digest
         || qc.network_id != proposal.network_id
@@ -353,6 +409,7 @@ pub fn commit_verified_proposal(
         || qc.round != proposal.round
         || qc.epoch != proposal.epoch
         || qc.validator_set_hash != proposal.validator_set_hash
+        || qc.consensus_parameters_hash != proposal.consensus_parameters_hash
         || qc.parent_commitment != proposal.parent_commitment
         || qc.pre_state_root != proposal.pre_state_root
         || qc.post_state_root != proposal.post_state_root
@@ -405,17 +462,26 @@ pub fn commit_verified_proposal(
 
 pub fn replay_validator_epoch_history(
     genesis_validators: &[ConsensusValidator],
+    genesis_epoch: u64,
+    ctx: &ConsensusVerificationContext,
     transitions: &[ValidatorEpochTransition],
 ) -> VResult<(u64, Vec<ConsensusValidator>, BTreeMap<u64, Vec<ConsensusValidator>>)> {
+    if genesis_epoch == 0 {
+        return Err(VNetworkError::Consensus(
+            "genesis_epoch must be >= 1".to_string(),
+        ));
+    }
     let mut epoch_map = BTreeMap::new();
     let mut current = genesis_validators.to_vec();
     validate_validator_set(&current)?;
-    epoch_map.insert(1, current.clone());
-    let mut current_epoch = 1u64;
-    for tr in transitions {
+    epoch_map.insert(genesis_epoch, current.clone());
+    let mut current_epoch = genesis_epoch;
+    for (idx, tr) in transitions.iter().enumerate() {
         verify_membership_chain_from_genesis(
             genesis_validators,
-            &transitions[..=(tr.epoch as usize - 2)],
+            genesis_epoch,
+            ctx,
+            &transitions[..=idx],
             tr.epoch,
             &tr.new_validator_set_hash,
             &tr.new_validators,

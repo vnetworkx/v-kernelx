@@ -375,9 +375,37 @@ impl VectorNetworkClient {
         let compiled = compile_source_with_imports(source_bytes, file_name, &resolver)
             .map_err(|e| VNetworkError::Language(e.to_string()))?;
 
+        let canonical_dir = std::fs::canonicalize(dir).map_err(|e| {
+            VNetworkError::Storage(format!("resolve module base dir failed: {e}"))
+        })?;
         let mut module_sources = BTreeMap::new();
         for m in &compiled.imported_modules {
-            let full = dir.join(&m.path);
+            let rel = Path::new(&m.path);
+            if rel.is_absolute()
+                || m.path.contains('\\')
+                || rel.components().any(|c| {
+                    matches!(
+                        c,
+                        std::path::Component::ParentDir
+                            | std::path::Component::RootDir
+                            | std::path::Component::Prefix(_)
+                    )
+                })
+            {
+                return Err(VNetworkError::Validation(format!(
+                    "unsafe imported module path `{}`",
+                    m.path
+                )));
+            }
+            let full = std::fs::canonicalize(canonical_dir.join(rel)).map_err(|e| {
+                VNetworkError::Storage(format!("resolve imported module `{}` failed: {e}", m.path))
+            })?;
+            if !full.starts_with(&canonical_dir) {
+                return Err(VNetworkError::Validation(format!(
+                    "imported module `{}` escapes base directory",
+                    m.path
+                )));
+            }
             let txt = std::fs::read_to_string(&full).map_err(|e| {
                 VNetworkError::Storage(format!("read imported module `{}` failed: {e}", m.path))
             })?;

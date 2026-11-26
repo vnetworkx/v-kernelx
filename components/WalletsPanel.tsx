@@ -229,12 +229,27 @@ export function WalletsPanel({
                       </td>
                       <td className="px-4 py-3 font-mono text-slate-700">{w.wallet_id}</td>
                       <td className="px-4 py-3 font-mono tabular-nums text-slate-800">
-                        <span className={w.auth_ratio >= 700 ? "text-emerald-700 font-semibold" : "text-amber-700"}>
-                          {w.auth_ratio} / 1000
-                        </span>
-                        <div className="text-[10px] text-slate-400">
-                          {w.auth_ratio >= 700 ? "Discount tier (>=700)" : "Standard tier (<700)"}
-                        </div>
+                        {w.auth_ratio !== null ? (
+                          <>
+                            <span
+                              className={
+                                w.auth_ratio >= 700
+                                  ? "font-semibold text-emerald-700"
+                                  : "text-amber-700"
+                              }
+                            >
+                              {w.auth_ratio} / 1000
+                            </span>
+                            <div className="text-[10px] text-slate-400">
+                              {w.auth_ratio >= 700 ? "Discount tier (>=700)" : "Standard tier (<700)"}
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-slate-500">Unknown</span>
+                            <div className="text-[10px] text-slate-400">Unverified / Unavailable</div>
+                          </>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right font-mono tabular-nums text-emerald-700 font-semibold">
                         {totalRewards.toString()} units

@@ -33,6 +33,10 @@ pub struct CertifiedCheckpoint {
     pub network_id: String,
     pub genesis_commitment: String,
     pub protocol_version: String,
+    #[serde(default)]
+    pub consensus_parameters: NetworkConsensusParameters,
+    #[serde(default)]
+    pub consensus_parameters_hash: String,
     pub height: u64,
     pub proposal_digest: String,
     pub parent_commitment: String,
@@ -48,6 +52,40 @@ pub struct CertifiedCheckpoint {
 }
 
 impl CertifiedCheckpoint {
+    fn compute_checkpoint_seed_id(
+        network_id: &str,
+        genesis_commitment: &str,
+        protocol_version: &str,
+        consensus_parameters_hash: &str,
+        height: u64,
+        proposal_digest: &str,
+        parent_commitment: &str,
+        state_root: &str,
+        event_history_root: &str,
+        validator_set_epoch: u64,
+        validator_set_hash: &str,
+        qc_id: &str,
+    ) -> VResult<String> {
+        let checkpoint_seed = serde_json::json!({
+            "checkpoint_version": CHECKPOINT_VERSION,
+            "consensus_parameters_hash": consensus_parameters_hash,
+            "domain": DOM_CHECKPOINT_V1,
+            "event_history_root": event_history_root,
+            "genesis_commitment": genesis_commitment,
+            "height": height,
+            "network_id": network_id,
+            "parent_commitment": parent_commitment,
+            "proposal_digest": proposal_digest,
+            "protocol_version": protocol_version,
+            "qc_id": qc_id,
+            "state_root": state_root,
+            "validator_set_epoch": validator_set_epoch,
+            "validator_set_hash": validator_set_hash,
+        });
+        let digest = blake3_hex(&canonical_json_bytes(&checkpoint_seed)?);
+        Ok(format!("ckpt_{}_{}", height, digest))
+    }
+
     pub fn build(
         state: &NetworkLedgerState,
         latest_qc: &QuorumCertificate,
@@ -61,32 +99,39 @@ impl CertifiedCheckpoint {
                     .to_string(),
             ));
         }
+        let consensus_parameters_hash = state.consensus_parameters.parameters_hash()?;
+        if !state.consensus_parameters_hash.is_empty()
+            && state.consensus_parameters_hash != consensus_parameters_hash
+        {
+            return Err(VNetworkError::Consensus(
+                "state consensus_parameters_hash diverges from consensus_parameters".to_string(),
+            ));
+        }
         let state_root = state.compute_state_root()?;
         let event_history_root = state.compute_event_history_root();
         let validator_set_hash = validate_validator_set(&state.validators)?;
-        let checkpoint_seed = serde_json::json!({
-            "checkpoint_version": CHECKPOINT_VERSION,
-            "domain": DOM_CHECKPOINT_V1,
-            "event_history_root": event_history_root,
-            "genesis_commitment": state.genesis_commitment,
-            "height": state.height,
-            "network_id": state.network_id,
-            "parent_commitment": parent_commitment,
-            "proposal_digest": proposal_digest,
-            "protocol_version": state.protocol_version,
-            "qc_id": latest_qc.certificate_id,
-            "state_root": state_root,
-            "validator_set_epoch": state.validator_epoch,
-            "validator_set_hash": validator_set_hash,
-        });
-        let digest = blake3_hex(&canonical_json_bytes(&checkpoint_seed)?);
-        let checkpoint_id = format!("ckpt_{}_{}", state.height, digest);
+        let checkpoint_id = Self::compute_checkpoint_seed_id(
+            &state.network_id,
+            &state.genesis_commitment,
+            &state.protocol_version,
+            &consensus_parameters_hash,
+            state.height,
+            proposal_digest,
+            parent_commitment,
+            &state_root,
+            &event_history_root,
+            state.validator_epoch,
+            &validator_set_hash,
+            &latest_qc.certificate_id,
+        )?;
         Ok(Self {
             checkpoint_version: CHECKPOINT_VERSION,
             checkpoint_id,
             network_id: state.network_id.clone(),
             genesis_commitment: state.genesis_commitment.clone(),
             protocol_version: state.protocol_version.clone(),
+            consensus_parameters: state.consensus_parameters.clone(),
+            consensus_parameters_hash,
             height: state.height,
             proposal_digest: proposal_digest.to_string(),
             parent_commitment: parent_commitment.to_string(),
@@ -110,6 +155,7 @@ impl CertifiedCheckpoint {
         }
         genesis.validate()?;
         let expected_genesis_commitment = genesis.commitment_hash()?;
+        let expected_params_hash = genesis.consensus_parameters.parameters_hash()?;
         if self.genesis_commitment != expected_genesis_commitment {
             return Err(VNetworkError::ProfileMismatch(format!(
                 "checkpoint genesis_commitment `{}` != expected `{expected_genesis_commitment}`",
@@ -121,10 +167,19 @@ impl CertifiedCheckpoint {
                 "checkpoint network_id or protocol_version does not match genesis".to_string(),
             ));
         }
+        if self.consensus_parameters != genesis.consensus_parameters
+            || self.consensus_parameters_hash != expected_params_hash
+        {
+            return Err(VNetworkError::Consensus(
+                "checkpoint consensus parameters do not match genesis policy".to_string(),
+            ));
+        }
         if self.state.network_id != genesis.network_id
             || self.state.profile != genesis.profile
             || self.state.protocol_version != genesis.protocol_version
             || self.state.genesis_commitment != expected_genesis_commitment
+            || self.state.consensus_parameters != genesis.consensus_parameters
+            || self.state.consensus_parameters_hash != expected_params_hash
         {
             return Err(VNetworkError::ProfileMismatch(
                 "checkpoint embedded ledger state metadata does not match genesis".to_string(),
@@ -142,9 +197,40 @@ impl CertifiedCheckpoint {
             ));
         }
 
+        let expected_ckpt_id = Self::compute_checkpoint_seed_id(
+            &self.network_id,
+            &self.genesis_commitment,
+            &self.protocol_version,
+            &self.consensus_parameters_hash,
+            self.height,
+            &self.proposal_digest,
+            &self.parent_commitment,
+            &self.state_root,
+            &self.event_history_root,
+            self.validator_set_epoch,
+            &self.validator_set_hash,
+            &self.quorum_certificate.certificate_id,
+        )?;
+        if self.checkpoint_id != expected_ckpt_id {
+            return Err(VNetworkError::Storage(format!(
+                "checkpoint_id `{}` != expected `{expected_ckpt_id}`",
+                self.checkpoint_id
+            )));
+        }
+
+        let ctx = genesis.consensus_context_for_epoch(self.validator_set_epoch)?;
+        if self.validator_epoch_chain != self.state.validator_membership_history {
+            return Err(VNetworkError::Consensus(
+                "checkpoint validator_epoch_chain diverges from embedded ledger membership history"
+                    .to_string(),
+            ));
+        }
+
         // Verify genesis-rooted validator membership chain up to checkpoint epoch
         let proven_validators = verify_membership_chain_from_genesis(
             &genesis.initial_validators,
+            genesis.genesis_epoch,
+            &ctx,
             &self.validator_epoch_chain,
             self.validator_set_epoch,
             &self.validator_set_hash,
@@ -155,9 +241,7 @@ impl CertifiedCheckpoint {
         verify_quorum_certificate_strict(
             &self.quorum_certificate,
             &proven_validators,
-            Some(&self.network_id),
-            Some(&expected_genesis_commitment),
-            Some(self.validator_set_epoch),
+            &ctx,
         )?;
 
         let qc = &self.quorum_certificate;
@@ -166,6 +250,7 @@ impl CertifiedCheckpoint {
             || qc.parent_commitment != self.parent_commitment
             || qc.post_state_root != self.state_root
             || qc.validator_set_hash != self.validator_set_hash
+            || qc.consensus_parameters_hash != self.consensus_parameters_hash
             || qc.epoch != self.validator_set_epoch
         {
             return Err(VNetworkError::Consensus(

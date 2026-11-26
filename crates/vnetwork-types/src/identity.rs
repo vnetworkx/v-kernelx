@@ -233,6 +233,11 @@ pub fn pubkey_fingerprint(public_key_hex: &str) -> VResult<String> {
     Ok(blake3_hex(&canonical))
 }
 
+pub const MIN_KDF_MEMORY_KIB: u32 = 4_096;
+pub const MAX_KDF_MEMORY_KIB: u32 = 1_048_576; // 1 GiB upper bound
+pub const MAX_KDF_ITERATIONS: u32 = 32;
+pub const MAX_KDF_PARALLELISM: u32 = 16;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyKdfParams {
     pub m_cost_kib: u32,
@@ -260,15 +265,20 @@ impl KeyKdfParams {
     }
 
     pub fn validate(&self) -> VResult<()> {
-        if self.m_cost_kib < 4_096 {
-            return Err(VNetworkError::Validation(
-                "Argon2id m_cost_kib must be at least 4096 KiB".to_string(),
-            ));
+        if self.m_cost_kib < MIN_KDF_MEMORY_KIB || self.m_cost_kib > MAX_KDF_MEMORY_KIB {
+            return Err(VNetworkError::Validation(format!(
+                "Argon2id m_cost_kib must be between {MIN_KDF_MEMORY_KIB} and {MAX_KDF_MEMORY_KIB} KiB"
+            )));
         }
-        if self.t_cost < 1 || self.p_cost < 1 {
-            return Err(VNetworkError::Validation(
-                "Argon2id t_cost and p_cost must be >= 1".to_string(),
-            ));
+        if self.t_cost < 1 || self.t_cost > MAX_KDF_ITERATIONS {
+            return Err(VNetworkError::Validation(format!(
+                "Argon2id t_cost must be between 1 and {MAX_KDF_ITERATIONS}"
+            )));
+        }
+        if self.p_cost < 1 || self.p_cost > MAX_KDF_PARALLELISM {
+            return Err(VNetworkError::Validation(format!(
+                "Argon2id p_cost must be between 1 and {MAX_KDF_PARALLELISM}"
+            )));
         }
         Ok(())
     }

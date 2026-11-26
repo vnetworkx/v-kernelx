@@ -183,7 +183,7 @@ export function RegionsPanel({
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-700">
-                        {region.section}
+                        {region.section ?? "—"}
                       </td>
                       <td className="px-5 py-3 text-right font-mono tabular-nums text-slate-500">
                         {formatTimestampMs(region.created_at_ms)}
@@ -218,6 +218,26 @@ export function RegionsPanel({
                 <span className="text-slate-500">Genesis Region Root</span>
                 <code className="break-all font-mono text-slate-700">
                   {selectedRegion.region_root}
+                </code>
+              </div>
+              <div className="flex flex-col justify-between gap-1 py-2.5 sm:flex-row">
+                <span className="text-slate-500">Creation Event</span>
+                <code className="break-all font-mono text-slate-700">
+                  {selectedRegion.trigger_event_hash ?? "Unknown"}
+                </code>
+              </div>
+              <div className="flex flex-col justify-between gap-1 py-2.5 sm:flex-row">
+                <span className="text-slate-500">Creation Proof Certificate</span>
+                <code className="break-all font-mono text-slate-700">
+                  {selectedRegion.creation_proof_hash ?? "Unverified / Unavailable"}
+                </code>
+              </div>
+              <div className="flex flex-col justify-between gap-1 py-2.5 sm:flex-row">
+                <span className="text-slate-500">Auth Ratio</span>
+                <code className="font-mono text-slate-700">
+                  {selectedRegion.auth_ratio_bps != null
+                    ? `${selectedRegion.auth_ratio_bps} bps`
+                    : "Unknown"}
                 </code>
               </div>
               <div className="flex flex-col justify-between gap-2 py-3 sm:flex-row sm:items-center">

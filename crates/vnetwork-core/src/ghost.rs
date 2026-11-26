@@ -17,6 +17,13 @@ pub fn list_ghost_entities(state: &NetworkLedgerState) -> serde_json::Value {
 pub fn validate_ghost_permissions(
     state: &NetworkLedgerState,
     actor_pubkey: &str,
+    timestamp_ms: u64,
 ) -> VResult<()> {
-    crate::identity::require_participant_scope(state, actor_pubkey, ParticipationLevel::Network)
+    crate::identity::require_participant_scope_at(
+        state,
+        actor_pubkey,
+        ParticipationLevel::Network,
+        None,
+        timestamp_ms,
+    )
 }

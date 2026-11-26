@@ -133,6 +133,15 @@ func (c *Client) JoinWithAuthorizations(scopes []string, scopeAuthorizations []m
 }
 
 func loadModules(source string, baseDir string) (map[string]string, error) {
+	realBase, err := filepath.EvalSymlinks(baseDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve module base dir: %w", err)
+	}
+	realBase, err = filepath.Abs(realBase)
+	if err != nil {
+		return nil, fmt.Errorf("abs module base dir: %w", err)
+	}
+	const maxModules = 64
 	modules := make(map[string]string)
 	queue := []string{source}
 	for len(queue) > 0 {
@@ -140,9 +149,29 @@ func loadModules(source string, baseDir string) (map[string]string, error) {
 		queue = queue[:len(queue)-1]
 		matches := importRe.FindAllStringSubmatch(cur, -1)
 		for _, m := range matches {
-			imp := m[1]
+			imp := strings.TrimSpace(m[1])
+			if imp == "" || strings.Contains(imp, "\\") || filepath.IsAbs(imp) {
+				return nil, fmt.Errorf("unsafe module import path: %s", imp)
+			}
+			for _, seg := range strings.Split(imp, "/") {
+				if seg == ".." {
+					return nil, fmt.Errorf("unsafe module import path: %s", imp)
+				}
+			}
 			if _, ok := modules[imp]; !ok {
-				raw, err := os.ReadFile(filepath.Join(baseDir, imp))
+				if len(modules) >= maxModules {
+					return nil, fmt.Errorf("imported module count exceeded limit (%d)", maxModules)
+				}
+				candidate := filepath.Join(realBase, filepath.FromSlash(imp))
+				realTarget, err := filepath.EvalSymlinks(candidate)
+				if err != nil {
+					return nil, fmt.Errorf("resolve imported module %s: %w", imp, err)
+				}
+				rel, err := filepath.Rel(realBase, realTarget)
+				if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+					return nil, fmt.Errorf("module import path escapes base directory: %s", imp)
+				}
+				raw, err := os.ReadFile(realTarget)
 				if err != nil {
 					return nil, fmt.Errorf("read imported module %s: %w", imp, err)
 				}

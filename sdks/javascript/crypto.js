@@ -73,9 +73,13 @@ const WEAK_PUBKEY_HEXES = new Set([
 ]);
 
 export function verifyEd25519(publicKeyHex, messageBytes, signatureHex) {
-  const pkClean = publicKeyHex.trim().toLowerCase();
-  const sigClean = signatureHex.trim();
-  if (pkClean.length !== 64 || WEAK_PUBKEY_HEXES.has(pkClean) || sigClean.length !== 128) {
+  const pkClean = String(publicKeyHex).trim().toLowerCase();
+  const sigClean = String(signatureHex).trim().toLowerCase();
+  if (
+    !/^[0-9a-f]{64}$/.test(pkClean) ||
+    WEAK_PUBKEY_HEXES.has(pkClean) ||
+    !/^[0-9a-f]{128}$/.test(sigClean)
+  ) {
     return false;
   }
   const pubRaw = Buffer.from(pkClean, "hex");
@@ -83,9 +87,13 @@ export function verifyEd25519(publicKeyHex, messageBytes, signatureHex) {
   if (pubRaw.length !== 32 || sigRaw.length !== 64) {
     return false;
   }
-  const spki = Buffer.concat([ED25519_SPKI_PREFIX, pubRaw]);
-  const key = crypto.createPublicKey({ key: spki, format: "der", type: "spki" });
-  return crypto.verify(null, Buffer.from(messageBytes), key, sigRaw);
+  try {
+    const spki = Buffer.concat([ED25519_SPKI_PREFIX, pubRaw]);
+    const key = crypto.createPublicKey({ key: spki, format: "der", type: "spki" });
+    return crypto.verify(null, Buffer.from(messageBytes), key, sigRaw);
+  } catch {
+    return false;
+  }
 }
 
 export class ClientIdentity {
@@ -172,6 +180,24 @@ export function canonicalWalletPopObject({
   };
 }
 
+export function formatDecimalAmount(amount) {
+  if (typeof amount === "bigint") {
+    if (amount < 0n) throw new Error("Amount must be non-negative");
+    return amount.toString(10);
+  }
+  if (typeof amount === "number") {
+    if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount < 0) {
+      throw new Error("Numeric amount must be a finite non-negative integer; use string/bigint for u128");
+    }
+    return String(amount);
+  }
+  const clean = String(amount).trim();
+  if (!/^\d+$/.test(clean)) {
+    throw new Error(`Invalid unsigned integer amount string: ${amount}`);
+  }
+  return BigInt(clean).toString(10);
+}
+
 export function canonicalTransferApprovalObject({
   networkId,
   tokenId,
@@ -180,7 +206,7 @@ export function canonicalTransferApprovalObject({
   amount,
 }) {
   return {
-    amount: String(amount),
+    amount: formatDecimalAmount(amount),
     domain: DOM_TRANSFER_APPROVAL_V1,
     from_wallet_id: fromWalletId,
     network_id: networkId,

@@ -65,6 +65,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -73,16 +77,18 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.22"
-      - name: Install Node dependencies
-        run: npm ci
+          cache: false
+      - name: Install Node dependencies from bun.lock
+        run: bun install --frozen-lockfile
       - name: Verify JS/TS/Python/Go parity & SDK unit tests
         run: |
           node tests/cross_language/verify_parity.mjs
-          npx tsx tests/cross_language/verify_parity.ts
+          bun tests/cross_language/verify_parity.ts
           python3 tests/cross_language/verify_parity.py
           go -C tests/cross_language run .
           go -C sdks/go build ./...
           go -C examples/go build ./...
+          ./node_modules/.bin/tsc -p sdks/typescript/tsconfig.json --noEmit
           node --test tests/cross_language/sdk_parity.test.mjs tests/explorer/integrity_and_crypto.test.mjs
           python3 -m unittest discover -s tests/cross_language -p "test_*.py"
       - name: Validate Next.js Explorer TypeScript, Lint, and Build

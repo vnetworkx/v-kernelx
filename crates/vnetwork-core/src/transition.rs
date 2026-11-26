@@ -72,6 +72,9 @@ pub fn apply_network_operation_with_policy(
             visibility,
             ghost,
         } => {
+            if *ghost {
+                crate::ghost::validate_ghost_permissions(state, actor_pubkey, timestamp_ms)?;
+            }
             let vis = Visibility::parse(visibility).ok_or_else(|| {
                 VNetworkError::Validation(format!("invalid visibility `{visibility}`"))
             })?;
@@ -101,6 +104,9 @@ pub fn apply_network_operation_with_policy(
             section,
             ghost,
         } => {
+            if *ghost {
+                crate::ghost::validate_ghost_permissions(state, actor_pubkey, timestamp_ms)?;
+            }
             let vis = Visibility::parse(visibility).ok_or_else(|| {
                 VNetworkError::Validation(format!("invalid visibility `{visibility}`"))
             })?;
@@ -131,6 +137,9 @@ pub fn apply_network_operation_with_policy(
             ghost,
             approval_threshold,
         } => {
+            if *ghost {
+                crate::ghost::validate_ghost_permissions(state, actor_pubkey, timestamp_ms)?;
+            }
             let (wallet, ev) = apply_create_wallet(
                 state,
                 region_id,
@@ -279,6 +288,9 @@ pub fn apply_network_operation_with_policy(
             external_monetary_value,
             ghost,
         } => {
+            if *ghost {
+                crate::ghost::validate_ghost_permissions(state, actor_pubkey, timestamp_ms)?;
+            }
             let vec3 = TokenVector::new(*initial_supply, *auth_ratio_au, *energy);
             let (token, ev) = apply_create_token(
                 state,

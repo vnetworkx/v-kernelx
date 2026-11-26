@@ -48,6 +48,16 @@ export async function GET() {
     equivocationStoreOk &&
     equivocationCount === 0;
 
+  const upstreamStatus = upstream.data.verification_status?.toUpperCase();
+  const verificationStatus =
+    !storageOk || !walOk || !equivocationStoreOk || equivocationCount > 0 || upstreamStatus === "INVALID"
+      ? "INVALID"
+      : healthy && upstreamStatus === "VERIFIED"
+        ? "VERIFIED"
+        : upstreamStatus === "UNVERIFIED" || upstreamStatus === "UNKNOWN" || upstreamStatus === "PENDING"
+          ? upstreamStatus
+          : "UNVERIFIED";
+
   return NextResponse.json(
     {
       status: healthy ? "ok" : "degraded",
@@ -61,7 +71,7 @@ export async function GET() {
       equivocation_store_ok: equivocationStoreOk,
       equivocation_count: equivocationCount,
       key_storage_mode: upstream.data.key_storage_mode ?? "unknown",
-      verification_status: healthy ? "VERIFIED" : "INVALID",
+      verification_status: verificationStatus,
       db_integrity_ok: storageOk && walOk && equivocationStoreOk,
     },
     { status: healthy ? 200 : 503 },

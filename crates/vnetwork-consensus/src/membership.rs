@@ -4,7 +4,7 @@ use vnetwork_types::*;
 #[derive(Debug, Clone)]
 pub struct ValidatorMembership {
     validators: BTreeMap<String, ConsensusValidator>,
-    quorum_threshold_bps: u16,
+    consensus_parameters: NetworkConsensusParameters,
 }
 
 impl ValidatorMembership {
@@ -12,29 +12,36 @@ impl ValidatorMembership {
         validators: Vec<ConsensusValidator>,
         quorum_threshold_bps: u16,
     ) -> VResult<Self> {
+        let params = NetworkConsensusParameters::with_quorum_threshold_bps(quorum_threshold_bps)?;
+        Self::try_new_with_parameters(validators, params)
+    }
+
+    pub fn try_new_with_parameters(
+        validators: Vec<ConsensusValidator>,
+        consensus_parameters: NetworkConsensusParameters,
+    ) -> VResult<Self> {
         validate_validator_set(&validators)?;
-        if quorum_threshold_bps < DEFAULT_BFT_QUORUM_BPS || quorum_threshold_bps > 10_000 {
-            return Err(VNetworkError::Consensus(format!(
-                "invalid quorum_threshold_bps `{quorum_threshold_bps}`; must be within [{DEFAULT_BFT_QUORUM_BPS}..=10000]"
-            )));
-        }
+        consensus_parameters.validate()?;
         let mut map = BTreeMap::new();
         for v in validators {
             map.insert(v.validator_id.clone(), v);
         }
         Ok(Self {
             validators: map,
-            quorum_threshold_bps,
+            consensus_parameters,
         })
-    }
-
-    pub fn new(validators: Vec<ConsensusValidator>, quorum_threshold_bps: u16) -> Self {
-        Self::try_new(validators, quorum_threshold_bps)
-            .expect("invalid validator membership configuration")
     }
 
     pub fn validator_set_hash(&self) -> VResult<String> {
         validate_validator_set(&self.all_validators())
+    }
+
+    pub fn consensus_parameters(&self) -> &NetworkConsensusParameters {
+        &self.consensus_parameters
+    }
+
+    pub fn consensus_parameters_hash(&self) -> VResult<String> {
+        self.consensus_parameters.parameters_hash()
     }
 
     pub fn active_validators(&self) -> Vec<ConsensusValidator> {
@@ -63,22 +70,28 @@ impl ValidatorMembership {
         })
     }
 
-    pub fn total_active_weight(&self) -> u64 {
+    pub fn total_active_weight(&self) -> VResult<u64> {
         self.validators
             .values()
             .filter(|v| v.active)
-            .map(|v| v.weight)
-            .sum()
+            .try_fold(0u64, |acc, v| acc.checked_add(v.weight))
+            .ok_or_else(|| VNetworkError::Consensus("active validator weight overflow".to_string()))
     }
 
     pub fn quorum_threshold_bps(&self) -> u16 {
-        self.quorum_threshold_bps
+        self.consensus_parameters.quorum_threshold_bps
     }
 
-    pub fn required_weight(&self) -> u64 {
-        let total = self.total_active_weight() as u128;
-        let bps = self.quorum_threshold_bps as u128;
-        ((total * bps + 9_999) / 10_000) as u64
+    pub fn required_weight(&self) -> VResult<u64> {
+        let total = self.total_active_weight()? as u128;
+        let bps = self.consensus_parameters.quorum_threshold_bps as u128;
+        let weighted = total
+            .checked_mul(bps)
+            .and_then(|v| v.checked_add(9_999))
+            .map(|v| v / 10_000)
+            .ok_or_else(|| VNetworkError::Consensus("required quorum weight overflow".to_string()))?;
+        u64::try_from(weighted)
+            .map_err(|_| VNetworkError::Consensus("required quorum weight exceeds u64".to_string()))
     }
 
     pub fn upsert_validator(&mut self, validator: ConsensusValidator) -> VResult<()> {

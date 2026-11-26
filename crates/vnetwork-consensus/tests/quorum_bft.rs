@@ -1,4 +1,6 @@
-use vnetwork_consensus::{sign_consensus_vote, QuorumTracker, ValidatorMembership};
+use vnetwork_consensus::{
+    sign_consensus_vote, verify_certificate_strict, QuorumTracker, ValidatorMembership,
+};
 use vnetwork_types::*;
 
 #[test]
@@ -17,13 +19,23 @@ fn test_bft_supermajority_quorum_and_equivocation() {
         })
         .collect();
 
-    let membership = ValidatorMembership::new(validators.clone(), 6667);
-    assert_eq!(membership.total_active_weight(), 400);
+    let membership = ValidatorMembership::try_new(validators.clone(), DEFAULT_BFT_QUORUM_BPS).unwrap();
+    assert_eq!(membership.total_active_weight().unwrap(), 400);
     // ceil(400 * 6667 / 10000) = 267 -> 3 validators (weight 300) required; 2 (200) insufficient!
-    assert_eq!(membership.required_weight(), 267);
+    assert_eq!(membership.required_weight().unwrap(), 267);
 
     let vset_hash = compute_validator_set_hash(&validators).unwrap();
     let genesis_commitment = blake3_hex(b"test-genesis");
+    let params_hash = membership.consensus_parameters_hash().unwrap();
+    let ctx = ConsensusVerificationContext::new(
+        "vector-devnet-1",
+        genesis_commitment.clone(),
+        PROTOCOL_VERSION,
+        Some(1),
+        membership.consensus_parameters().clone(),
+    )
+    .unwrap();
+
     let mut proposal = ConsensusProposal {
         proposal_id: String::new(),
         proposal_version: PROPOSAL_VERSION,
@@ -34,6 +46,7 @@ fn test_bft_supermajority_quorum_and_equivocation() {
         round: 1,
         epoch: 1,
         validator_set_hash: vset_hash,
+        consensus_parameters_hash: params_hash.clone(),
         proposer_validator_id: "val_1".to_string(),
         parent_commitment: genesis_commitment,
         pre_state_root: "pre".to_string(),
@@ -73,6 +86,9 @@ fn test_bft_supermajority_quorum_and_equivocation() {
     assert_eq!(qc.votes.len(), 3);
     assert!(!qc.validator_set_hash.is_empty());
     assert_eq!(qc.proposal_digest, proposal.proposal_digest);
+    assert_eq!(qc.consensus_parameters_hash, params_hash);
+    qc.verify_certificate_id().unwrap();
+    verify_certificate_strict(&membership, &qc, &ctx).unwrap();
 
     // Equivocation test: validator 1 voting on a different proposal at same slot triggers equivocation
     let mut conflicting_prop = proposal.clone();

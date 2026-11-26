@@ -8,7 +8,7 @@ use vnetwork_types::*;
 fn single_val_qc(
     prop: &ConsensusProposal,
     val_kp: &KeypairMaterial,
-    qc_id: &str,
+    _qc_id: &str,
     ts: u64,
 ) -> QuorumCertificate {
     let mut vote = ConsensusVote {
@@ -21,6 +21,7 @@ fn single_val_qc(
         round: prop.round,
         epoch: prop.epoch,
         validator_set_hash: prop.validator_set_hash.clone(),
+        consensus_parameters_hash: prop.consensus_parameters_hash.clone(),
         parent_commitment: prop.parent_commitment.clone(),
         pre_state_root: prop.pre_state_root.clone(),
         post_state_root: prop.post_state_root.clone(),
@@ -33,8 +34,8 @@ fn single_val_qc(
         signature: String::new(),
     };
     vote.signature = val_kp.sign(&vote.canonical_signing_bytes().unwrap()).unwrap();
-    QuorumCertificate {
-        certificate_id: qc_id.to_string(),
+    let mut qc = QuorumCertificate {
+        certificate_id: String::new(),
         proposal_id: prop.proposal_id.clone(),
         proposal_digest: prop.proposal_digest.clone(),
         network_id: prop.network_id.clone(),
@@ -44,6 +45,7 @@ fn single_val_qc(
         round: prop.round,
         epoch: prop.epoch,
         validator_set_hash: prop.validator_set_hash.clone(),
+        consensus_parameters_hash: prop.consensus_parameters_hash.clone(),
         parent_commitment: prop.parent_commitment.clone(),
         pre_state_root: prop.pre_state_root.clone(),
         post_state_root: prop.post_state_root.clone(),
@@ -56,7 +58,9 @@ fn single_val_qc(
         quorum_threshold_bps: DEFAULT_BFT_QUORUM_BPS,
         votes: vec![vote],
         finalized_at_ms: ts,
-    }
+    };
+    qc.finalize_certificate_id().unwrap();
+    qc
 }
 
 #[test]
@@ -154,6 +158,40 @@ fn test_rejects_legacy_uncertified_snapshot_and_wal_divergence() {
     assert!(
         StorageDatabase::open_and_recover(&dir, &genesis).is_err(),
         "legacy uncertified state.snapshot.json without certified.checkpoint.json must be rejected"
+    );
+
+    // 3. Remove legacy snapshot and save valid checkpoint, then corrupt historical QC in consensus_commits.wal
+    fs::remove_file(dir.join(LEGACY_UNCERTIFIED_SNAPSHOT_FILE)).unwrap();
+    let ckpt = vnetwork_core::snapshot::CertifiedCheckpoint::build(
+        &engine.state,
+        &qc,
+        &prop.proposal_digest,
+        &prop.parent_commitment,
+        102,
+    )
+    .unwrap();
+    vnetwork_storage::save_certified_checkpoint(&dir, &ckpt).unwrap();
+    let mut commits = vnetwork_storage::ConsensusWal::new(&dir).read_all().unwrap();
+    commits[0].certificate.votes[0].signature = "00".repeat(64);
+    vnetwork_storage::ConsensusWal::new(&dir)
+        .rewrite_all(&commits)
+        .unwrap();
+    assert!(
+        StorageDatabase::open_and_recover(&dir, &genesis).is_err(),
+        "forged historical QC below checkpoint must fail recovery"
+    );
+
+    // 4. Restore valid WAL, then tamper checkpoint consensus_parameters -> must fail closed
+    commits[0].certificate = qc.clone();
+    vnetwork_storage::ConsensusWal::new(&dir)
+        .rewrite_all(&commits)
+        .unwrap();
+    let mut bad_ckpt = ckpt.clone();
+    bad_ckpt.consensus_parameters.quorum_threshold_bps = 5000;
+    vnetwork_storage::save_certified_checkpoint(&dir, &bad_ckpt).unwrap();
+    assert!(
+        StorageDatabase::open_and_recover(&dir, &genesis).is_err(),
+        "tampered consensus_parameters in certified checkpoint must fail recovery"
     );
 
     let _ = fs::remove_dir_all(&dir);

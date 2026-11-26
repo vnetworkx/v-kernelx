@@ -122,7 +122,9 @@ pub fn apply_create_loan(
         ));
     }
 
-    let nonce = (state.loans.len() as u64) + 1;
+    let nonce = (state.loans.len() as u64)
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("loan nonce overflow".to_string()))?;
     let loan_id = derive_loan_id(name, actor_pubkey, nonce);
 
     if collateral > 0 {
@@ -164,8 +166,13 @@ pub fn apply_create_loan(
     };
 
     state.loans.insert(loan_id.clone(), loan.clone());
-    state.logical_clock += 1;
-    let sequence = (state.events.len() as u64) + 1;
+    state.logical_clock = state
+        .logical_clock
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
+    let sequence = (state.events.len() as u64)
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
     let parents = state.latest_event_hash().into_iter().collect();
     let after_hash = blake3_hex(&canonical_json_bytes(&loan)?);
     let event = LedgerEvent::build(
@@ -178,7 +185,7 @@ pub fn apply_create_loan(
         actor_pubkey,
         state.logical_clock,
         timestamp_ms,
-        serde_json::to_value(&loan).unwrap_or_default(),
+        serde_json::to_value(&loan).map_err(|e| VNetworkError::Serialization(e.to_string()))?,
         "",
         after_hash,
     )?;
@@ -370,8 +377,13 @@ pub fn apply_execute_loan(
         .checked_add(1)
         .ok_or_else(|| VNetworkError::Validation("loan version overflow".to_string()))?;
     state.loans.insert(loan.loan_id.clone(), loan.clone());
-    state.logical_clock += 1;
-    let sequence = (state.events.len() as u64) + 1;
+    state.logical_clock = state
+        .logical_clock
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
+    let sequence = (state.events.len() as u64)
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
     let parents = state.latest_event_hash().into_iter().collect();
     let after_hash = blake3_hex(&canonical_json_bytes(&loan)?);
     let loan_ev = LedgerEvent::build(
@@ -384,7 +396,7 @@ pub fn apply_execute_loan(
         actor_pubkey,
         state.logical_clock,
         timestamp_ms,
-        serde_json::to_value(&loan).unwrap_or_default(),
+        serde_json::to_value(&loan).map_err(|e| VNetworkError::Serialization(e.to_string()))?,
         before_hash,
         after_hash,
     )?;

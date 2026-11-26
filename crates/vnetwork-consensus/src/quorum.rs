@@ -33,6 +33,7 @@ fn vote_matches_proposal(vote: &ConsensusVote, prop: &ConsensusProposal) -> bool
         && vote.round == prop.round
         && vote.epoch == prop.epoch
         && vote.validator_set_hash == prop.validator_set_hash
+        && vote.consensus_parameters_hash == prop.consensus_parameters_hash
         && vote.parent_commitment == prop.parent_commitment
         && vote.pre_state_root == prop.pre_state_root
         && vote.post_state_root == prop.post_state_root
@@ -86,15 +87,18 @@ impl QuorumTracker {
         timestamp_ms: u64,
     ) -> VResult<Option<QuorumCertificate>> {
         let _validator = verify_consensus_vote(membership, &vote)?;
-        if let Some(store) = durable_store {
-            store.record_observed_vote(&vote, timestamp_ms)?;
-        }
-        if let Err(ev) = self.equivocation.check_and_record(&vote, timestamp_ms) {
+        let expected_params_hash = membership.consensus_parameters_hash()?;
+        if vote.consensus_parameters_hash != expected_params_hash {
             return Err(VNetworkError::Consensus(format!(
-                "equivocation detected from validator `{}` at height {}",
-                ev.validator_id, ev.height
+                "vote consensus_parameters_hash `{}` != local `{expected_params_hash}`",
+                vote.consensus_parameters_hash
             )));
         }
+        if let Some(store) = durable_store {
+            let expected_prop = self.proposals.get(&vote.proposal_id).map(|c| &c.proposal);
+            store.record_verified_observed_vote(membership, expected_prop, &vote, timestamp_ms)?;
+        }
+        self.equivocation.check_and_record(&vote, timestamp_ms)?;
 
         let Some(collector) = self.proposals.get_mut(&vote.proposal_id) else {
             self.orphan_votes
@@ -137,8 +141,15 @@ impl QuorumTracker {
                 collector.proposal.validator_set_hash
             )));
         }
+        let consensus_parameters_hash = membership.consensus_parameters_hash()?;
+        if collector.proposal.consensus_parameters_hash != consensus_parameters_hash {
+            return Err(VNetworkError::Consensus(format!(
+                "proposal consensus_parameters_hash `{}` != membership `{consensus_parameters_hash}`",
+                collector.proposal.consensus_parameters_hash
+            )));
+        }
 
-        let total_weight = membership.total_active_weight();
+        let total_weight = membership.total_active_weight()?;
         if total_weight == 0 {
             return Ok(None);
         }
@@ -199,6 +210,7 @@ impl QuorumTracker {
             round: collector.proposal.round,
             epoch: collector.proposal.epoch,
             validator_set_hash,
+            consensus_parameters_hash,
             parent_commitment: collector.proposal.parent_commitment.clone(),
             pre_state_root: collector.proposal.pre_state_root.clone(),
             post_state_root: collector.proposal.post_state_root.clone(),
@@ -212,8 +224,7 @@ impl QuorumTracker {
             votes: approving_votes,
             finalized_at_ms: timestamp_ms,
         };
-        let qc_digest = qc.certificate_digest()?;
-        qc.certificate_id = format!("qc_{}_{}", qc.height, &qc_digest[..32]);
+        qc.finalize_certificate_id()?;
         Ok(Some(qc))
     }
 

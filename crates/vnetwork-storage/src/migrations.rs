@@ -1,3 +1,4 @@
+use crate::transactions::atomic_write_json;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -32,11 +33,7 @@ pub fn run_migrations(data_dir: &Path, now_ms: u64) -> VResult<Vec<MigrationReco
             checksum,
             applied_at_ms: now_ms,
         });
-        let tmp = data_dir.join("migrations.json.tmp");
-        let bytes = serde_json::to_vec_pretty(&records)
-            .map_err(|e| VNetworkError::Storage(e.to_string()))?;
-        fs::write(&tmp, &bytes).map_err(|e| VNetworkError::Storage(e.to_string()))?;
-        fs::rename(&tmp, &migrations_path).map_err(|e| VNetworkError::Storage(e.to_string()))?;
+        atomic_write_json(&migrations_path, &records)?;
     }
 
     Ok(records)

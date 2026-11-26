@@ -11,8 +11,14 @@ pub async fn explorer_network(State(app): State<ApiAppState>) -> Json<serde_json
     let status = app.backend.network_status().await;
     let consensus = app.backend.consensus_status().await;
     let peers = app.backend.list_peers_and_nodes().await;
-    let proofs = app.backend.verify_ledger_proofs().await.ok();
-    let replay = app.backend.verify_replay().await.ok();
+    let (proofs, proofs_error) = match app.backend.verify_ledger_proofs().await {
+        Ok(p) => (Some(p), None),
+        Err(e) => (None, Some(e.message)),
+    };
+    let (replay, replay_error) = match app.backend.verify_replay().await {
+        Ok(r) => (Some(r), None),
+        Err(e) => (None, Some(e.message)),
+    };
     let equivocations = app.backend.list_equivocations().await;
 
     let spaces: Vec<_> = state.spaces.values().collect();
@@ -32,7 +38,14 @@ pub async fn explorer_network(State(app): State<ApiAppState>) -> Json<serde_json
         }
     }
 
+    let (state_root, state_root_error) = match state.compute_state_root() {
+        Ok(root) => (Some(root), None),
+        Err(e) => (None, Some(e.to_string())),
+    };
+
     Json(serde_json::json!({
+        "kernel_version": format!("vnetwork-node/{}", env!("CARGO_PKG_VERSION")),
+        "protocol_version": state.protocol_version,
         "health": health,
         "network_info": info,
         "status": status,
@@ -40,7 +53,9 @@ pub async fn explorer_network(State(app): State<ApiAppState>) -> Json<serde_json
         "equivocations": equivocations,
         "peers": peers,
         "proofs": proofs,
+        "proofs_error": proofs_error,
         "replay": replay,
+        "replay_error": replay_error,
         "storage_engine": "vnetwork-wal-json",
         "drain_policy": state.drain_policy,
         "spaces": spaces,
@@ -55,7 +70,8 @@ pub async fn explorer_network(State(app): State<ApiAppState>) -> Json<serde_json
         "events": state.events,
         "event_history_root": state.event_history_root,
         "certificates": certificates,
-        "state_root": state.compute_state_root().unwrap_or_default(),
+        "state_root": state_root,
+        "state_root_error": state_root_error,
         "replay_hash": state.compute_replay_hash(),
     }))
 }

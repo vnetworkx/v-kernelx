@@ -16,9 +16,19 @@ pub fn apply_verified_sync_batch(
             "local engine genesis_commitment does not match genesis config".to_string(),
         ));
     }
+    let ctx = engine
+        .genesis
+        .consensus_context_for_epoch(engine.state.validator_epoch)?;
+    if membership.consensus_parameters() != &ctx.consensus_parameters {
+        return Err(VNetworkError::Consensus(
+            "validator membership consensus parameters diverge from genesis".to_string(),
+        ));
+    }
     let expected_vhash = membership.validator_set_hash()?;
     verify_membership_chain_from_genesis(
         &engine.genesis.initial_validators,
+        engine.genesis.genesis_epoch,
+        &ctx,
         &engine.state.validator_membership_history,
         engine.state.validator_epoch,
         &expected_vhash,
@@ -42,9 +52,10 @@ pub fn apply_verified_sync_batch(
         if proposal.network_id != engine.state.network_id
             || proposal.genesis_commitment != expected_genesis_commitment
             || proposal.protocol_version != engine.state.protocol_version
+            || proposal.consensus_parameters_hash != ctx.consensus_parameters_hash
         {
             return Err(VNetworkError::ProfileMismatch(
-                "synced proposal network, genesis commitment, or protocol version mismatch"
+                "synced proposal network, genesis commitment, consensus parameters, or protocol version mismatch"
                     .to_string(),
             ));
         }

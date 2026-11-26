@@ -13,6 +13,8 @@ from .crypto import (
     canonical_wallet_pop_object,
     derive_node_id,
     derive_participant_id,
+    format_decimal_amount,
+    verify_ed25519,
 )
 
 __all__ = [
@@ -34,4 +36,6 @@ __all__ = [
     "sort_json_value",
     "derive_node_id",
     "derive_participant_id",
+    "format_decimal_amount",
+    "verify_ed25519",
 ]

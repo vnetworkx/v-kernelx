@@ -1,6 +1,7 @@
-use crate::errors::ApiResult;
+use crate::errors::{ApiError, ApiResult};
 use crate::state::ApiAppState;
 use axum::extract::State;
+use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 
@@ -18,5 +19,11 @@ pub async fn verify_reconstruction(
         .backend
         .verify_reconstruction(&req.entity_kind, &req.entity_id)
         .await?;
-    Ok(Json(serde_json::to_value(report).unwrap_or_default()))
+    serde_json::to_value(report).map(Json).map_err(|e| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SERIALIZATION_ERROR",
+            e.to_string(),
+        )
+    })
 }

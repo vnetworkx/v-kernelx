@@ -14,8 +14,11 @@ pub const DOM_QC_V1: &str = "vnetwork/quorum-certificate/v1";
 pub const DOM_CHECKPOINT_V1: &str = "vnetwork/certified-checkpoint/v1";
 pub const DOM_EVENT_HISTORY_V1: &str = "vnetwork/event-history/v1";
 pub const DOM_VALIDATOR_EPOCH_V1: &str = "vnetwork/validator-epoch/v1";
+pub const DOM_EPOCH_TRANSITION_V1: &str = "vnetwork/epoch-transition/v1";
+pub const DOM_CONSENSUS_PARAMS_V1: &str = "vnetwork/consensus-params/v1";
 pub const DOM_KEY_ENVELOPE_V1: &str = "vnetwork/key-envelope/v1";
 pub const DOM_EQUIVOCATION_RECORD_V1: &str = "vnetwork/equivocation-record/v1";
+pub const DOM_EQUIVOCATION_INCIDENT_V1: &str = "vnetwork/equivocation-incident/v1";
 pub const DOM_TRANSFER_APPROVAL_V1: &str = "vnetwork/transfer-approval/v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

@@ -111,12 +111,14 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
                 .and_then(|v| v.as_str())
                 .and_then(|s| s.parse().ok())
                 .ok_or_else(|| VNetworkError::Serialization("missing amount".to_string()))?;
-            let drain_fee: u128 = ev
-                .payload
-                .get("drain_fee")
-                .and_then(|v| v.as_str())
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
+            let drain_fee: u128 = match ev.payload.get("drain_fee") {
+                None | Some(serde_json::Value::Null) => 0,
+                Some(v) => v
+                    .as_str()
+                    .ok_or_else(|| VNetworkError::Serialization("invalid drain_fee type".to_string()))?
+                    .parse()
+                    .map_err(|_| VNetworkError::Serialization("invalid drain_fee u128".to_string()))?,
+            };
             let net_received = amount.checked_sub(drain_fee).ok_or_else(|| {
                 VNetworkError::Validation("drain_fee exceeds transfer amount in event".to_string())
             })?;
@@ -168,15 +170,16 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
                 state.balances.insert(to_key, to_bal);
             }
             if drain_fee > 0 {
-                if let Some(t) = state.tokens.get_mut(token_id) {
-                    t.total_supply = t.total_supply.checked_sub(drain_fee).ok_or_else(|| {
-                        VNetworkError::Validation("total_supply underflow on replay".to_string())
-                    })?;
-                    t.version = t
-                        .version
-                        .checked_add(1)
-                        .ok_or_else(|| VNetworkError::Validation("token version overflow".to_string()))?;
-                }
+                let t = state.tokens.get_mut(token_id).ok_or_else(|| {
+                    VNetworkError::NotFound(format!("token `{token_id}` missing during transfer replay"))
+                })?;
+                t.total_supply = t.total_supply.checked_sub(drain_fee).ok_or_else(|| {
+                    VNetworkError::Validation("total_supply underflow on replay".to_string())
+                })?;
+                t.version = t
+                    .version
+                    .checked_add(1)
+                    .ok_or_else(|| VNetworkError::Validation("token version overflow".to_string()))?;
             }
         }
         "TOKEN_DRAIN" => {
@@ -207,15 +210,16 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
                 .version
                 .checked_add(1)
                 .ok_or_else(|| VNetworkError::Validation("balance version overflow".to_string()))?;
-            if let Some(t) = state.tokens.get_mut(token_id) {
-                t.total_supply = t.total_supply.checked_sub(amount).ok_or_else(|| {
-                    VNetworkError::Validation("total_supply underflow on drain replay".to_string())
-                })?;
-                t.version = t
-                    .version
-                    .checked_add(1)
-                    .ok_or_else(|| VNetworkError::Validation("token version overflow".to_string()))?;
-            }
+            let t = state.tokens.get_mut(token_id).ok_or_else(|| {
+                VNetworkError::NotFound(format!("token `{token_id}` missing during drain replay"))
+            })?;
+            t.total_supply = t.total_supply.checked_sub(amount).ok_or_else(|| {
+                VNetworkError::Validation("total_supply underflow on drain replay".to_string())
+            })?;
+            t.version = t
+                .version
+                .checked_add(1)
+                .ok_or_else(|| VNetworkError::Validation("token version overflow".to_string()))?;
         }
         "TOKEN_DIMENSIONS_ADJUST" => {
             let bal_val = ev.payload.get("balance").ok_or_else(|| {
@@ -237,12 +241,19 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
                     .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
                 state.contracts.insert(contract.contract_id.clone(), contract);
             } else if let Some(c) = state.contracts.get_mut(&ev.entity_id) {
-                c.execution_count = ev
-                    .payload
-                    .get("execution_count")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(c.execution_count + 1);
-                c.version += 1;
+                c.execution_count = match ev.payload.get("execution_count") {
+                    None | Some(serde_json::Value::Null) => c
+                        .execution_count
+                        .checked_add(1)
+                        .ok_or_else(|| VNetworkError::Validation("contract execution_count overflow".to_string()))?,
+                    Some(v) => v.as_u64().ok_or_else(|| {
+                        VNetworkError::Serialization("invalid contract execution_count".to_string())
+                    })?,
+                };
+                c.version = c
+                    .version
+                    .checked_add(1)
+                    .ok_or_else(|| VNetworkError::Validation("contract version overflow".to_string()))?;
             }
         }
         "LOAN_CREATE" | "LOAN_FUND" | "LOAN_DRAW" | "LOAN_REPAY" | "LOAN_LIQUIDATE" => {
@@ -319,9 +330,14 @@ pub fn verify_replay_equivalence(
     replayed.actor_nonces = live_state.actor_nonces.clone();
     replayed.seen_request_ids = live_state.seen_request_ids.clone();
     replayed.used_wallet_pop_nonces = live_state.used_wallet_pop_nonces.clone();
-    if !live_state.validator_membership_history.is_empty() {
+    if !live_state.validator_membership_history.is_empty()
+        || live_state.validator_epoch != genesis.genesis_epoch
+    {
+        let ctx = genesis.consensus_context_for_epoch(live_state.validator_epoch)?;
         let proven = crate::consensus_gate::verify_membership_chain_from_genesis(
             &genesis.initial_validators,
+            genesis.genesis_epoch,
+            &ctx,
             &live_state.validator_membership_history,
             live_state.validator_epoch,
             &validate_validator_set(&live_state.validators)?,

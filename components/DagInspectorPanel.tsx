@@ -324,7 +324,7 @@ export function DagInspectorPanel({
                       {shortenHash(snap.snapshot_id, 14, 10)}
                     </div>
                     <div className="font-mono text-[11px] text-slate-500">
-                      events={snap.event_count} · clock={snap.logical_clock} ·{" "}
+                      {snap.verification_status ?? "UNVERIFIED"} · events={snap.event_count} · clock={snap.logical_clock} ·{" "}
                       {formatTimestampMs(snap.created_at)}
                     </div>
                   </div>

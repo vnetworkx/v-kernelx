@@ -3,39 +3,95 @@ set -euo pipefail
 
 export PATH="/root/.cargo/bin:/usr/local/go/bin:$PATH"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEVNET_DIR="${DEVNET_DIR:-$ROOT/.devnet}"
+RAW_DEVNET_DIR="${DEVNET_DIR:-$ROOT/.devnet}"
 NETWORK_ID="${NETWORK_ID:-vector-devnet-1}"
 CONSENSUS_TIMEOUT_MS="${NETWORK_CONSENSUS_TIMEOUT_MS:-5000}"
 
+resolve_safe_devnet_dir() {
+  local raw="$1"
+  if [[ -z "$raw" || "$raw" == *".."* ]]; then
+    echo "Refusing unsafe devnet directory path: '$raw'" >&2
+    exit 1
+  fi
+  if [[ -L "$raw" ]]; then
+    echo "Refusing symlinked devnet directory: '$raw'" >&2
+    exit 1
+  fi
+  python3 - "$raw" "$ROOT" "${HOME:-}" <<'PY'
+import os, pathlib, sys
+raw, root, home = sys.argv[1:4]
+p = pathlib.Path(raw)
+if ".." in p.parts:
+    raise SystemExit(f"Refusing '..' path segment in devnet dir: {raw}")
+parent = p.parent.resolve() if not p.exists() else p.resolve()
+resolved = (parent / p.name) if not p.exists() else parent
+root_res = pathlib.Path(root).resolve()
+forbidden = {pathlib.Path("/"), root_res, root_res / ".git"}
+if home:
+    forbidden.add(pathlib.Path(home).resolve())
+if resolved in forbidden or resolved in root_res.parents:
+    raise SystemExit(f"Refusing dangerous devnet directory target: {resolved}")
+print(str(resolved))
+PY
+}
+
+DEVNET_DIR="$(resolve_safe_devnet_dir "$RAW_DEVNET_DIR")"
+
+has_valid_owner_marker() {
+  local dir="$1"
+  [[ -f "$dir/.vnetwork-devnet-owner" ]] && grep -q '^owner=vnetwork-devnet$' "$dir/.vnetwork-devnet-owner"
+}
+
 safe_clean_devnet_dir() {
   local target="$1"
-  if [[ -z "$target" || "$target" == "/" || "$target" == "$HOME" || "$target" == "$ROOT" ]]; then
-    echo "Refusing unsafe reset of directory: '$target'" >&2
+  if [[ -L "$target" ]]; then
+    echo "Refusing to delete symlinked directory: '$target'" >&2
     exit 1
   fi
   if [[ ! -d "$target" ]]; then
     return 0
   fi
-  if [[ ! -f "$target/.vnetwork-devnet-marker" ]]; then
-    echo "Refusing to delete '$target' because .vnetwork-devnet-marker is missing (user data preserved)." >&2
+  if ! has_valid_owner_marker "$target" && [[ ! -f "$target/.vnetwork-devnet-marker" ]]; then
+    echo "Refusing to delete '$target' because .vnetwork-devnet-owner marker is missing (user data preserved)." >&2
     exit 1
   fi
   rm -rf -- "$target"
 }
+
+if [[ -d "$DEVNET_DIR" ]]; then
+  if ! has_valid_owner_marker "$DEVNET_DIR" && [[ ! -f "$DEVNET_DIR/.vnetwork-devnet-marker" ]]; then
+    if [[ -n "$(ls -A "$DEVNET_DIR" 2>/dev/null || true)" ]]; then
+      echo "Refusing to use non-empty unmanaged directory '$DEVNET_DIR' without .vnetwork-devnet-owner marker." >&2
+      exit 1
+    fi
+  fi
+fi
 
 if [[ "${DEVNET_CLEAN:-0}" == "1" ]]; then
   safe_clean_devnet_dir "$DEVNET_DIR"
 fi
 
 mkdir -p "$DEVNET_DIR"
-if [[ ! -f "$DEVNET_DIR/.vnetwork-devnet-marker" ]]; then
-  echo "vnetwork-devnet" > "$DEVNET_DIR/.vnetwork-devnet-marker"
-fi
+cat > "$DEVNET_DIR/.vnetwork-devnet-owner" <<EOF
+owner=vnetwork-devnet
+network_id=${NETWORK_ID}
+canonical_dir=${DEVNET_DIR}
+EOF
+chmod 0600 "$DEVNET_DIR/.vnetwork-devnet-owner"
+echo "vnetwork-devnet" > "$DEVNET_DIR/.vnetwork-devnet-marker"
 
 PASSPHRASE_FILE="$DEVNET_DIR/.devnet_passphrase"
 if [[ -z "${NETWORK_KEY_PASSPHRASE:-}" ]]; then
   if [[ ! -f "$PASSPHRASE_FILE" ]]; then
-    python3 -c 'import secrets, pathlib; p=pathlib.Path("'"$PASSPHRASE_FILE"'"); p.write_text(secrets.token_urlsafe(24)); p.chmod(0o600)'
+    (
+      umask 077
+      python3 - "$PASSPHRASE_FILE" <<'PY'
+import pathlib, secrets, sys
+p = pathlib.Path(sys.argv[1])
+p.write_text(secrets.token_urlsafe(24))
+p.chmod(0o600)
+PY
+    )
   fi
   NETWORK_KEY_PASSPHRASE="$(cat "$PASSPHRASE_FILE")"
 fi
@@ -94,7 +150,18 @@ genesis = {
         "different_spaces": {"status": "CONFIGURED_BPS", "bps": 150},
     },
 }
-(devnet_dir / "genesis.json").write_text(json.dumps(genesis, indent=2))
+
+genesis_path = devnet_dir / "genesis.json"
+if genesis_path.exists():
+    existing = json.loads(genesis_path.read_text())
+    if existing.get("network_id") != network_id or existing.get("initial_validators") != validators:
+        raise SystemExit(
+            f"Incompatible existing genesis.json in {devnet_dir} "
+            f"(existing network_id={existing.get('network_id')}, expected={network_id}). "
+            "Pass DEVNET_CLEAN=1 to perform a verified clean reset."
+        )
+else:
+    genesis_path.write_text(json.dumps(genesis, indent=2))
 
 for i in range(1, 5):
     p2p_port = 17100 + i
@@ -130,13 +197,21 @@ for i in 1 2 3 4; do
   if [[ -f "$DEVNET_DIR/node$i/node.pid" ]] && kill -0 "$(cat "$DEVNET_DIR/node$i/node.pid")" 2>/dev/null; then
     echo "Node $i already running (pid $(cat "$DEVNET_DIR/node$i/node.pid"))"
   else
+    cfg_path="$DEVNET_DIR/node$i/node.toml"
     NETWORK_CONSENSUS_TIMEOUT_MS="$CONSENSUS_TIMEOUT_MS" \
     NETWORK_KEY_PASSPHRASE="$NETWORK_KEY_PASSPHRASE" \
       "$NODE_BIN" \
-      --config "$DEVNET_DIR/node$i/node.toml" \
+      --config "$cfg_path" \
       --genesis-file "$DEVNET_DIR/genesis.json" \
       run > "$DEVNET_DIR/node$i/node.log" 2>&1 &
-    echo $! > "$DEVNET_DIR/node$i/node.pid"
+    pid=$!
+    echo "$pid" > "$DEVNET_DIR/node$i/node.pid"
+    cat > "$DEVNET_DIR/node$i/node.meta" <<EOF
+pid=${pid}
+binary=${NODE_BIN}
+config=${cfg_path}
+devnet_dir=${DEVNET_DIR}
+EOF
   fi
 done
 

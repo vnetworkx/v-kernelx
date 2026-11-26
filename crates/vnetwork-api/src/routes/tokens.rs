@@ -31,7 +31,7 @@ pub async fn get_token(
         .filter(|b| b.token_id == t.token_id)
         .cloned()
         .collect();
-    let supply_breakdown = app.backend.verify_token_supply(&t.token_id).await.ok();
+    let supply_breakdown = app.backend.verify_token_supply(&t.token_id).await?;
     Ok(Json(serde_json::json!({
         "token": t,
         "balances": balances,
@@ -44,5 +44,11 @@ pub async fn token_supply(
     Path(token_id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let breakdown = app.backend.verify_token_supply(&token_id).await?;
-    Ok(Json(serde_json::to_value(breakdown).unwrap_or_default()))
+    serde_json::to_value(breakdown).map(Json).map_err(|e| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SERIALIZATION_ERROR",
+            e.to_string(),
+        )
+    })
 }

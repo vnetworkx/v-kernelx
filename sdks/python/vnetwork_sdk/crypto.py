@@ -1,9 +1,10 @@
 """Identity derivation and Ed25519 key management matching Vector Network Rust ids.rs."""
 
 from dataclasses import dataclass
+import re
 import secrets
 from .blake3 import blake3_hex
-from .ed25519 import public_key_from_seed, sign as ed25519_sign
+from .ed25519 import public_key_from_seed, sign as ed25519_sign, verify as ed25519_verify
 
 
 def derive_prefixed_id(prefix: str, domain: str, material: bytes) -> str:
@@ -59,6 +60,27 @@ LANGUAGE_VERSION = "v-langx/1.2.0"
 COMPILER_VERSION = "vectorspace-compiler/1.2.0"
 DOM_TRANSFER_APPROVAL_V1 = "vnetwork/transfer-approval/v1"
 
+_HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+_HEX128_RE = re.compile(r"^[0-9a-f]{128}$")
+_WEAK_PUBKEYS = {"0" * 64, "01" + ("0" * 62)}
+
+
+def verify_ed25519(public_key_hex: str, message: bytes, signature_hex: str) -> bool:
+    pk_clean = str(public_key_hex).strip().lower()
+    sig_clean = str(signature_hex).strip().lower()
+    if not _HEX64_RE.match(pk_clean) or pk_clean in _WEAK_PUBKEYS or not _HEX128_RE.match(sig_clean):
+        return False
+    try:
+        return bool(
+            ed25519_verify(
+                bytes.fromhex(pk_clean),
+                message,
+                bytes.fromhex(sig_clean),
+            )
+        )
+    except Exception:
+        return False
+
 
 def canonical_program_submit_object(
     actor_pubkey: str,
@@ -110,6 +132,19 @@ def canonical_wallet_pop_object(
     }
 
 
+def format_decimal_amount(amount: int | str) -> str:
+    if isinstance(amount, bool):
+        raise ValueError("Boolean is not a valid amount")
+    if isinstance(amount, int):
+        if amount < 0:
+            raise ValueError("Amount must be non-negative")
+        return str(amount)
+    clean = str(amount).strip()
+    if not clean.isdigit():
+        raise ValueError(f"Invalid unsigned integer amount string: {amount}")
+    return str(int(clean))
+
+
 def canonical_transfer_approval_object(
     network_id: str,
     token_id: str,
@@ -118,7 +153,7 @@ def canonical_transfer_approval_object(
     amount: int | str,
 ) -> dict:
     return {
-        "amount": str(amount),
+        "amount": format_decimal_amount(amount),
         "domain": DOM_TRANSFER_APPROVAL_V1,
         "from_wallet_id": from_wallet_id,
         "network_id": network_id,

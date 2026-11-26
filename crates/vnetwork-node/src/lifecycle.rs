@@ -115,7 +115,15 @@ impl NetworkNodeBackend for NodeHandle {
         let wal_ok = self.storage.check_health().is_ok();
         let storage_ok = self.storage_healthy.load(Ordering::Relaxed) && wal_ok;
         let eq_ok = self.equivocation_store_healthy.load(Ordering::Relaxed);
-        let healthy = storage_ok && eq_ok;
+        let state_root_res = state.compute_state_root();
+        let healthy = storage_ok && eq_ok && state_root_res.is_ok();
+        let state_root = match state_root_res {
+            Ok(root) => root,
+            Err(e) => {
+                tracing::error!(error = %e, "compute_state_root failed in health_report");
+                String::new()
+            }
+        };
         let ready = healthy
             && (state.height > 0
                 || peers.connected_count() > 0
@@ -130,7 +138,7 @@ impl NetworkNodeBackend for NodeHandle {
             profile: self.config.profile,
             node_kind: self.config.node_kind,
             height: state.height,
-            state_root: state.compute_state_root().unwrap_or_default(),
+            state_root,
             connected_peers: peers.connected_count(),
             validator_active: self.config.enable_validator,
             storage_ok,
@@ -146,8 +154,16 @@ impl NetworkNodeBackend for NodeHandle {
             api_enabled: self.config.enable_public_api,
             p2p_enabled: self.config.enable_p2p,
             protocol_version: self.config.protocol_version.clone(),
+            kernel_version: format!("vnetwork-node/{}", env!("CARGO_PKG_VERSION")),
         };
-        serde_json::to_value(report).unwrap_or_default()
+        serde_json::to_value(report).unwrap_or_else(|e| {
+            serde_json::json!({
+                "healthy": false,
+                "ready": false,
+                "verification_status": "INVALID",
+                "error": format!("serialize health report failed: {e}")
+            })
+        })
     }
 
     async fn ready_report(&self) -> (bool, serde_json::Value) {
@@ -195,11 +211,13 @@ impl NetworkNodeBackend for NodeHandle {
         let state = self.shared_state.read().await;
         let addrs = self.listen_addrs.read().await;
         let membership = self.shared_membership.read().await;
+        let state_root = state.compute_state_root().ok();
         serde_json::json!({
             "network_id": self.config.network_id,
             "network_name": self.config.network_name,
             "profile": self.config.profile,
             "protocol_version": self.config.protocol_version,
+            "kernel_version": format!("vnetwork-node/{}", env!("CARGO_PKG_VERSION")),
             "genesis_commitment": state.genesis_commitment,
             "node_id": self.identity.node_id,
             "peer_id": self.identity.libp2p_peer_id.to_string(),
@@ -211,7 +229,7 @@ impl NetworkNodeBackend for NodeHandle {
             "bootstrap_peers": self.config.bootstrap_peers,
             "height": state.height,
             "epoch": state.validator_epoch,
-            "state_root": state.compute_state_root().unwrap_or_default(),
+            "state_root": state_root,
             "event_history_root": state.event_history_root,
             "drain_policy": state.drain_policy,
             "quorum_threshold_bps": membership.quorum_threshold_bps(),
@@ -230,6 +248,8 @@ impl NetworkNodeBackend for NodeHandle {
         serde_json::json!({
             "network_id": self.config.network_id,
             "profile": self.config.profile,
+            "protocol_version": self.config.protocol_version,
+            "kernel_version": format!("vnetwork-node/{}", env!("CARGO_PKG_VERSION")),
             "node_id": self.identity.node_id,
             "peer_id": self.identity.libp2p_peer_id.to_string(),
             "genesis_commitment": state.genesis_commitment,
@@ -248,9 +268,9 @@ impl NetworkNodeBackend for NodeHandle {
             "loans": state.loans.len(),
             "programs": state.programs.len(),
             "active_validators": membership.active_validators().len(),
-            "required_quorum_weight": membership.required_weight(),
-            "total_validator_weight": membership.total_active_weight(),
-            "state_root": state.compute_state_root().unwrap_or_default(),
+            "required_quorum_weight": membership.required_weight().unwrap_or(0),
+            "total_validator_weight": membership.total_active_weight().unwrap_or(0),
+            "state_root": state.compute_state_root().ok(),
             "event_history_root": state.event_history_root,
             "replay_hash": state.compute_replay_hash(),
             "storage_engine": "vnetwork-wal-json",
@@ -289,7 +309,13 @@ impl NetworkNodeBackend for NodeHandle {
         }
         let state = self.shared_state.read().await;
         if let Some(n) = state.nodes.get(node_id) {
-            return Ok(serde_json::to_value(n).unwrap_or_default());
+            return serde_json::to_value(n).map_err(|e| {
+                ApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "SERIALIZATION_ERROR",
+                    format!("failed to serialize node record: {e}"),
+                )
+            });
         }
         let peers = self.shared_peers.read().await;
         if let Some(p) = peers
@@ -297,7 +323,13 @@ impl NetworkNodeBackend for NodeHandle {
             .values()
             .find(|p| p.node_id.as_deref() == Some(node_id) || p.peer_id == node_id)
         {
-            return Ok(serde_json::to_value(p).unwrap_or_default());
+            return serde_json::to_value(p).map_err(|e| {
+                ApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "SERIALIZATION_ERROR",
+                    format!("failed to serialize peer record: {e}"),
+                )
+            });
         }
         Err(ApiError::new(
             StatusCode::NOT_FOUND,
@@ -377,10 +409,10 @@ impl NetworkNodeBackend for NodeHandle {
             "genesis_commitment": state.genesis_commitment,
             "height": state.height,
             "epoch": state.validator_epoch,
-            "validator_set_hash": compute_validator_set_hash(&state.validators).unwrap_or_default(),
+            "validator_set_hash": compute_validator_set_hash(&state.validators).ok(),
             "quorum_threshold_bps": membership.quorum_threshold_bps(),
-            "required_weight": membership.required_weight(),
-            "total_active_weight": membership.total_active_weight(),
+            "required_weight": membership.required_weight().unwrap_or(0),
+            "total_active_weight": membership.total_active_weight().unwrap_or(0),
             "validators": membership.all_validators(),
             "certificate_count": state.certificates.len(),
             "equivocation_count": equivocations.len(),
@@ -394,7 +426,8 @@ impl NetworkNodeBackend for NodeHandle {
 
     async fn verify_ledger_proofs(&self) -> Result<LedgerProofReport, ApiError> {
         let state = self.shared_state.read().await;
-        vnetwork_core::ledger::build_ledger_proof_report(&state).map_err(ApiError::from)
+        vnetwork_core::ledger::build_verified_ledger_proof_report(&state, Some(&self.genesis))
+            .map_err(ApiError::from)
     }
 
     async fn verify_replay(&self) -> Result<ReplayVerificationReport, ApiError> {
@@ -434,7 +467,7 @@ impl NetworkNodeBackend for NodeHandle {
     }
 }
 
-pub fn build_genesis_from_config(cfg: &NodeConfig, identity: &NodeIdentity) -> GenesisConfig {
+pub fn build_genesis_from_config(cfg: &NodeConfig, identity: &NodeIdentity) -> VResult<GenesisConfig> {
     let mut validators = cfg.genesis_validators.clone();
     if validators.is_empty() && cfg.enable_validator {
         if let (Some(vid), Some(vmeta)) = (&identity.validator_id, &identity.validator_metadata) {
@@ -448,19 +481,25 @@ pub fn build_genesis_from_config(cfg: &NodeConfig, identity: &NodeIdentity) -> G
             });
         }
     }
+    let params = NetworkConsensusParameters::with_quorum_threshold_bps(cfg.quorum_threshold_bps)?;
     let mut g = GenesisConfig::for_profile(
         cfg.profile,
         &cfg.network_id,
         &cfg.network_name,
         validators,
     )
-    .with_drain_policy(cfg.drain_policy.clone());
+    .with_drain_policy(cfg.drain_policy.clone())
+    .with_consensus_parameters(params)?;
     if let Some(allow) = cfg.allow_bootstrap_atlas {
-        if cfg.profile != NetworkProfile::Production || allow {
-            g.allow_bootstrap_atlas = allow;
+        if cfg.profile == NetworkProfile::Production && allow {
+            return Err(VNetworkError::Authorization(
+                "allow_bootstrap_atlas cannot be enabled in PRODUCTION".to_string(),
+            ));
         }
+        g.allow_bootstrap_atlas = allow;
     }
-    g
+    g.validate()?;
+    Ok(g)
 }
 
 pub async fn start_node_runtime(
@@ -469,14 +508,24 @@ pub async fn start_node_runtime(
     shutdown: ShutdownSignal,
 ) -> Result<(NodeHandle, tokio::task::JoinHandle<()>), Box<dyn std::error::Error + Send + Sync>> {
     cfg.validate()?;
+    if cfg.profile == NetworkProfile::Production
+        && explicit_genesis.is_none()
+        && cfg.genesis_validators.is_empty()
+    {
+        return Err(Box::new(VNetworkError::Validation(
+            "PRODUCTION profile requires an explicit genesis_file or configured genesis_validators"
+                .to_string(),
+        )));
+    }
     let passphrase = cfg.resolve_key_passphrase()?;
     let id_opts = crate::identity::NodeIdentityLoadOptions {
         profile: cfg.profile,
         passphrase,
         kdf_params: None,
-        allow_plaintext_key_fallback: cfg.allow_plaintext_key_fallback,
+        allow_plaintext_key_fallback: false,
         external_node_signer: None,
         external_validator_signer: None,
+        transport_key_path: None,
     };
     let identity = NodeIdentity::load_or_create_secure(
         &cfg.node_identity_path,
@@ -486,8 +535,11 @@ pub async fn start_node_runtime(
         &id_opts,
     )?;
 
-    let genesis = explicit_genesis.unwrap_or_else(|| build_genesis_from_config(&cfg, &identity));
-    genesis.validate()?;
+    let genesis = match explicit_genesis {
+        Some(g) => g,
+        None => build_genesis_from_config(&cfg, &identity)?,
+    };
+    cfg.validate_against_genesis(&genesis)?;
     let (storage, recovered_state, recovery_report) =
         StorageDatabase::open_and_recover(&cfg.storage_path, &genesis)?;
     let equivocation_store = EquivocationStore::open(&cfg.storage_path)?;
@@ -507,7 +559,10 @@ pub async fn start_node_runtime(
     } else {
         recovered_state.validators.clone()
     };
-    let membership = ValidatorMembership::try_new(active_validators, cfg.quorum_threshold_bps)?;
+    let membership = ValidatorMembership::try_new(
+        active_validators,
+        genesis.consensus_parameters.quorum_threshold_bps,
+    )?;
     let engine = ProtocolEngine::from_restored(genesis.clone(), recovered_state.clone());
 
     let shared_state = Arc::new(RwLock::new(recovered_state));
@@ -722,14 +777,21 @@ async fn run_node_loop(
 
                 // Request sync from connected peers periodically if behind or on tick
                 if cfg.enable_p2p && !connected_peer_ids.is_empty() {
-                    let msg = P2pGossipMessage::Heartbeat {
-                        node_id: identity.node_id.clone(),
-                        height: engine.state.height,
-                        state_root: engine.state.compute_state_root().unwrap_or_default(),
-                        timestamp_ms: now,
-                    };
-                    if let Ok(bytes) = serde_json::to_vec(&msg) {
-                        let _ = swarm.behaviour_mut().gossipsub.publish(consensus_topic.clone(), bytes);
+                    match engine.state.compute_state_root() {
+                        Ok(root) => {
+                            let msg = P2pGossipMessage::Heartbeat {
+                                node_id: identity.node_id.clone(),
+                                height: engine.state.height,
+                                state_root: root,
+                                timestamp_ms: now,
+                            };
+                            if let Ok(bytes) = serde_json::to_vec(&msg) {
+                                let _ = swarm.behaviour_mut().gossipsub.publish(consensus_topic.clone(), bytes);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!(error = %e, "failed to compute state root for P2P heartbeat");
+                        }
                     }
                 }
             }
@@ -1074,12 +1136,17 @@ async fn run_node_loop(
                                 match request {
                                     P2pSyncRequest::GetMissingCommits { network_id, from_height } => {
                                         let commits = if network_id == cfg.network_id {
-                                            storage
-                                                .load_committed_proposals()
-                                                .unwrap_or_default()
-                                                .into_iter()
-                                                .filter(|c| c.proposal.height >= from_height)
-                                                .collect()
+                                            match storage.load_committed_proposals() {
+                                                Ok(all) => all
+                                                    .into_iter()
+                                                    .filter(|c| c.proposal.height >= from_height)
+                                                    .collect(),
+                                                Err(e) => {
+                                                    storage_healthy.store(false, Ordering::Relaxed);
+                                                    tracing::error!(error = %e, "failed to load committed proposals for sync response");
+                                                    Vec::new()
+                                                }
+                                            }
                                         } else {
                                             Vec::new()
                                         };

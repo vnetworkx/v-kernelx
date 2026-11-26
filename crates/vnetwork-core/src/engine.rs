@@ -5,7 +5,7 @@ use crate::language::{
     build_program_submission, compile_vx_source, execute_compiled_program_staged,
     SubmitProgramRequest,
 };
-use crate::ledger::{build_ledger_proof_report, LedgerProofReport};
+use crate::ledger::{build_verified_ledger_proof_report, LedgerProofReport};
 use crate::reconstruction::{reconstruct_entity, ReconstructionReport};
 use crate::replay::{verify_replay_equivalence, ReplayVerificationReport};
 use crate::snapshot::create_snapshot;
@@ -76,7 +76,11 @@ impl ProtocolEngine {
         let mut staged = self.state.clone();
         let pre_root = staged.compute_state_root()?;
         let parent_commitment = self.state.expected_parent_commitment();
-        let next_height = self.state.height + 1;
+        let next_height = self
+            .state
+            .height
+            .checked_add(1)
+            .ok_or_else(|| VNetworkError::Validation("height overflow".to_string()))?;
         let vset_hash = self.validator_set_hash()?;
         let (participant, node, event) =
             verify_and_register_participant(&mut staged, req, timestamp_ms)?;
@@ -97,6 +101,7 @@ impl ProtocolEngine {
             round: 1,
             epoch: self.state.validator_epoch,
             validator_set_hash: vset_hash,
+            consensus_parameters_hash: self.state.consensus_parameters_hash.clone(),
             proposer_validator_id: proposer_validator_id.to_string(),
             parent_commitment,
             pre_state_root: pre_root,
@@ -210,7 +215,11 @@ impl ProtocolEngine {
         sub.outputs = exec.outputs.clone();
         sub.final_state_root = Some(exec.post_state_root.clone());
 
-        let next_height = self.state.height + 1;
+        let next_height = self
+            .state
+            .height
+            .checked_add(1)
+            .ok_or_else(|| VNetworkError::Validation("height overflow".to_string()))?;
         let parent_commitment = self.state.expected_parent_commitment();
         let tx_id = sub.program_id.clone();
         let vset_hash = self.validator_set_hash()?;
@@ -236,6 +245,7 @@ impl ProtocolEngine {
             round: 1,
             epoch: self.state.validator_epoch,
             validator_set_hash: vset_hash,
+            consensus_parameters_hash: self.state.consensus_parameters_hash.clone(),
             proposer_validator_id: proposer_validator_id.to_string(),
             parent_commitment,
             pre_state_root: exec.pre_state_root,
@@ -304,7 +314,11 @@ impl ProtocolEngine {
         let mut staged = self.state.clone();
         let pre_root = staged.compute_state_root()?;
         let parent_commitment = self.state.expected_parent_commitment();
-        let next_height = self.state.height + 1;
+        let next_height = self
+            .state
+            .height
+            .checked_add(1)
+            .ok_or_else(|| VNetworkError::Validation("height overflow".to_string()))?;
         let vset_hash = self.validator_set_hash()?;
         let outcome = apply_network_operation_with_genesis(
             &mut staged,
@@ -342,6 +356,7 @@ impl ProtocolEngine {
             round: 1,
             epoch: self.state.validator_epoch,
             validator_set_hash: vset_hash,
+            consensus_parameters_hash: self.state.consensus_parameters_hash.clone(),
             proposer_validator_id: proposer_validator_id.to_string(),
             parent_commitment,
             pre_state_root: pre_root,
@@ -369,10 +384,7 @@ impl ProtocolEngine {
             tx_id: tx_id.clone(),
             request_id: envelope.request_id.clone(),
             actor_pubkey: envelope.actor_pubkey.clone(),
-            operation: serde_json::to_value(op)
-                .ok()
-                .and_then(|v| v.get("op").and_then(|s| s.as_str()).map(|s| s.to_string()))
-                .unwrap_or_else(|| "OPERATION".to_string()),
+            operation: op_scope,
             status: ProgramLifecycleStatus::AwaitingConsensus,
             event_ids: outcome.events.iter().map(|e| e.event_id.clone()).collect(),
             certificate_id: None,
@@ -411,7 +423,7 @@ impl ProtocolEngine {
                 let (actor_pubkey, request_id, nonce) = proposal
                     .nonce_binding
                     .clone()
-                    .unwrap_or_default();
+                    .ok_or_else(|| VNetworkError::Consensus("committed program proposal missing nonce_binding".to_string()))?;
                 let imported_modules: Vec<ModuleCommitment> = bundle
                     .resolved_module_sources
                     .iter()
@@ -466,7 +478,14 @@ impl ProtocolEngine {
                 let (actor_pubkey, request_id, _) = proposal
                     .nonce_binding
                     .clone()
-                    .unwrap_or_default();
+                    .unwrap_or_else(|| {
+                        let ev_actor = proposal
+                            .events
+                            .first()
+                            .map(|e| e.actor.clone())
+                            .unwrap_or_default();
+                        (ev_actor, proposal.proposal_id.clone(), 0)
+                    });
                 let op_label = proposal
                     .program_source_bundle
                     .as_ref()
@@ -506,7 +525,7 @@ impl ProtocolEngine {
     }
 
     pub fn proof_report(&self) -> VResult<LedgerProofReport> {
-        build_ledger_proof_report(&self.state)
+        build_verified_ledger_proof_report(&self.state, Some(&self.genesis))
     }
 
     pub fn snapshot(&mut self, timestamp_ms: u64) -> VResult<StateSnapshot> {

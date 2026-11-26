@@ -1,6 +1,7 @@
-use crate::errors::ApiResult;
+use crate::errors::{ApiError, ApiResult};
 use crate::state::ApiAppState;
 use axum::extract::State;
+use axum::http::StatusCode;
 use axum::Json;
 
 pub async fn list_events(State(app): State<ApiAppState>) -> Json<serde_json::Value> {
@@ -16,10 +17,22 @@ pub async fn list_events(State(app): State<ApiAppState>) -> Json<serde_json::Val
 
 pub async fn ledger_proofs(State(app): State<ApiAppState>) -> ApiResult<Json<serde_json::Value>> {
     let report = app.backend.verify_ledger_proofs().await?;
-    Ok(Json(serde_json::to_value(report).unwrap_or_default()))
+    serde_json::to_value(report).map(Json).map_err(|e| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SERIALIZATION_ERROR",
+            e.to_string(),
+        )
+    })
 }
 
 pub async fn verify_replay(State(app): State<ApiAppState>) -> ApiResult<Json<serde_json::Value>> {
     let report = app.backend.verify_replay().await?;
-    Ok(Json(serde_json::to_value(report).unwrap_or_default()))
+    serde_json::to_value(report).map(Json).map_err(|e| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SERIALIZATION_ERROR",
+            e.to_string(),
+        )
+    })
 }

@@ -34,6 +34,7 @@ pub fn sign_consensus_vote_with_provider(
         round: proposal.round,
         epoch: proposal.epoch,
         validator_set_hash: proposal.validator_set_hash.clone(),
+        consensus_parameters_hash: proposal.consensus_parameters_hash.clone(),
         parent_commitment: proposal.parent_commitment.clone(),
         pre_state_root: proposal.pre_state_root.clone(),
         post_state_root: proposal.post_state_root.clone(),

@@ -111,14 +111,33 @@ class VectorNetworkClient:
         return self.get_json(f"/v1/participants/{pid}/scope")
 
     def load_modules_for_source(self, source_bytes: str, base_dir: Path) -> Dict[str, str]:
+        real_base = Path(base_dir).resolve(strict=True)
         modules: Dict[str, str] = {}
         queue = [source_bytes]
+        max_modules = 64
         while queue:
             current = queue.pop()
             for match in _IMPORT_RE.finditer(current):
-                imp = match.group(1)
+                imp = match.group(1).strip()
+                imp_path = Path(imp)
+                if (
+                    not imp
+                    or "\\" in imp
+                    or imp_path.is_absolute()
+                    or ".." in imp_path.parts
+                ):
+                    raise VectorNetworkError(f"Unsafe module import path: {imp}")
                 if imp not in modules:
-                    content = (base_dir / imp).read_text(encoding="utf-8")
+                    if len(modules) >= max_modules:
+                        raise VectorNetworkError(
+                            f"Imported module count exceeded limit ({max_modules})"
+                        )
+                    real_target = (real_base / imp_path).resolve(strict=True)
+                    if not real_target.is_relative_to(real_base):
+                        raise VectorNetworkError(
+                            f"Module import path escapes base directory: {imp}"
+                        )
+                    content = real_target.read_text(encoding="utf-8")
                     modules[imp] = content
                     queue.append(content)
         return modules

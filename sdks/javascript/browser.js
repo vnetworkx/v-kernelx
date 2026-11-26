@@ -9,6 +9,16 @@ const ED25519_PKCS8_PREFIX = new Uint8Array([
   0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
 ]);
 
+const ED25519_SPKI_PREFIX = new Uint8Array([
+  0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65,
+  0x70, 0x03, 0x21, 0x00,
+]);
+
+const WEAK_PUBKEY_HEXES = new Set([
+  "0".repeat(64),
+  "01" + "0".repeat(62),
+]);
+
 function bytesToHex(bytes) {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
@@ -22,26 +32,175 @@ function hexToBytes(hex) {
   return out;
 }
 
+export function derivePrefixedId(prefix, domain, materialBytes) {
+  const domainBytes = new TextEncoder().encode(`${domain}:`);
+  const combined = new Uint8Array(domainBytes.length + materialBytes.length);
+  combined.set(domainBytes, 0);
+  combined.set(materialBytes, domainBytes.length);
+  return `${prefix}_${blake3Hex(combined).slice(0, 24)}`;
+}
+
+export function deriveParticipantId(pubkeyHex) {
+  return derivePrefixedId("prt", "vnetwork/participant-id-v1", new TextEncoder().encode(pubkeyHex));
+}
+
+export function deriveNodeId(pubkeyHex) {
+  return derivePrefixedId("nod", "vnetwork/node-id-v1", new TextEncoder().encode(pubkeyHex));
+}
+
+export function formatDecimalAmount(amount) {
+  if (typeof amount === "bigint") {
+    if (amount < 0n) throw new Error("Amount must be non-negative");
+    return amount.toString(10);
+  }
+  if (typeof amount === "number") {
+    if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount < 0) {
+      throw new Error("Numeric amount must be a finite non-negative integer; use string/bigint for u128");
+    }
+    return String(amount);
+  }
+  const clean = String(amount).trim();
+  if (!/^\d+$/.test(clean)) {
+    throw new Error(`Invalid unsigned integer amount string: ${amount}`);
+  }
+  return BigInt(clean).toString(10);
+}
+
+export function canonicalProgramSubmitObject({
+  actorPubkey,
+  fileName,
+  sourceBytes,
+  modules = {},
+  networkId,
+  requestId,
+  nonce,
+  executionParams = {},
+}) {
+  const sourceHash = blake3Hex(sourceBytes);
+  const fileKind = fileName.endsWith(".vdx") ? "vdx" : "vx";
+  const moduleHashes = {};
+  for (const k of Object.keys(modules).sort()) {
+    moduleHashes[k] = blake3Hex(modules[k]);
+  }
+  return {
+    actor_pubkey: actorPubkey,
+    compiler_version: COMPILER_VERSION,
+    execution_params: executionParams,
+    file_kind: fileKind,
+    file_name: fileName,
+    language_version: LANGUAGE_VERSION,
+    module_hashes: moduleHashes,
+    network_id: networkId,
+    nonce,
+    protocol_version: PROTOCOL_VERSION,
+    request_id: requestId,
+    source_hash: sourceHash,
+  };
+}
+
+export function canonicalWalletPopObject({
+  networkId,
+  walletId,
+  participantIdentity,
+  authorizedPubkey,
+  purpose,
+  nonce,
+  expiresAtMs = null,
+}) {
+  return {
+    authorized_pubkey: authorizedPubkey,
+    expires_at_ms: expiresAtMs,
+    network_id: networkId,
+    nonce,
+    participant_identity: participantIdentity,
+    protocol_version: PROTOCOL_VERSION,
+    purpose,
+    wallet_id: walletId,
+  };
+}
+
+export function canonicalTransferApprovalObject({
+  networkId,
+  tokenId,
+  fromWalletId,
+  toWalletId,
+  amount,
+}) {
+  return {
+    amount: formatDecimalAmount(amount),
+    domain: DOM_TRANSFER_APPROVAL_V1,
+    from_wallet_id: fromWalletId,
+    network_id: networkId,
+    protocol_version: PROTOCOL_VERSION,
+    to_wallet_id: toWalletId,
+    token_id: tokenId,
+  };
+}
+
 export async function generateBrowserKeypair(role = "participant") {
   const kp = await globalThis.crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
   const spki = new Uint8Array(await globalThis.crypto.subtle.exportKey("spki", kp.publicKey));
   const pkcs8 = new Uint8Array(await globalThis.crypto.subtle.exportKey("pkcs8", kp.privateKey));
   const publicKeyHex = bytesToHex(spki.slice(spki.length - 32));
   const privateKeyHex = bytesToHex(pkcs8.slice(pkcs8.length - 32));
-  const prefix = role === "node" ? "nod" : "prt";
-  const domain = role === "node" ? "vnetwork/node-id-v1" : "vnetwork/participant-id-v1";
-  const derivedId = `${prefix}_${blake3Hex(new TextEncoder().encode(`${domain}:${publicKeyHex}`)).slice(0, 24)}`;
+  const derivedId = role === "node" ? deriveNodeId(publicKeyHex) : deriveParticipantId(publicKeyHex);
   return { key_role: role, derived_id: derivedId, public_key_hex: publicKeyHex, private_key_hex: privateKeyHex };
 }
 
+export async function browserKeypairFromPrivateHex(role, privateKeyHex) {
+  const clean = String(privateKeyHex).trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(clean)) {
+    throw new Error("Ed25519 private key must be 32 bytes hex");
+  }
+  const raw = hexToBytes(clean);
+  const pkcs8 = new Uint8Array(ED25519_PKCS8_PREFIX.length + raw.length);
+  pkcs8.set(ED25519_PKCS8_PREFIX, 0);
+  pkcs8.set(raw, ED25519_PKCS8_PREFIX.length);
+  const privKey = await globalThis.crypto.subtle.importKey("pkcs8", pkcs8, { name: "Ed25519" }, true, ["sign"]);
+  const jwk = await globalThis.crypto.subtle.exportKey("jwk", privKey);
+  if (!jwk.x) throw new Error("Failed to derive Ed25519 public key in browser WebCrypto");
+  const base64 = jwk.x.replace(/-/g, "+").replace(/_/g, "/") + "==".slice(0, (4 - (jwk.x.length % 4)) % 4);
+  const pubRaw = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  const publicKeyHex = bytesToHex(pubRaw);
+  const derivedId = role === "node" ? deriveNodeId(publicKeyHex) : deriveParticipantId(publicKeyHex);
+  return { key_role: role, derived_id: derivedId, public_key_hex: publicKeyHex, private_key_hex: clean };
+}
+
 export async function signBrowserEd25519(privateKeyHex, messageBytes) {
-  const raw = hexToBytes(privateKeyHex);
+  const clean = String(privateKeyHex).trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(clean)) {
+    throw new Error("Ed25519 private key must be 32 bytes hex");
+  }
+  const raw = hexToBytes(clean);
   const pkcs8 = new Uint8Array(ED25519_PKCS8_PREFIX.length + raw.length);
   pkcs8.set(ED25519_PKCS8_PREFIX, 0);
   pkcs8.set(raw, ED25519_PKCS8_PREFIX.length);
   const key = await globalThis.crypto.subtle.importKey("pkcs8", pkcs8, { name: "Ed25519" }, false, ["sign"]);
   const sig = await globalThis.crypto.subtle.sign("Ed25519", key, messageBytes);
   return bytesToHex(new Uint8Array(sig));
+}
+
+export async function verifyBrowserEd25519(publicKeyHex, messageBytes, signatureHex) {
+  const pkClean = String(publicKeyHex).trim().toLowerCase();
+  const sigClean = String(signatureHex).trim().toLowerCase();
+  if (
+    !/^[0-9a-f]{64}$/.test(pkClean) ||
+    WEAK_PUBKEY_HEXES.has(pkClean) ||
+    !/^[0-9a-f]{128}$/.test(sigClean)
+  ) {
+    return false;
+  }
+  try {
+    const pubRaw = hexToBytes(pkClean);
+    const sigRaw = hexToBytes(sigClean);
+    const spki = new Uint8Array(ED25519_SPKI_PREFIX.length + pubRaw.length);
+    spki.set(ED25519_SPKI_PREFIX, 0);
+    spki.set(pubRaw, ED25519_SPKI_PREFIX.length);
+    const key = await globalThis.crypto.subtle.importKey("spki", spki, { name: "Ed25519" }, false, ["verify"]);
+    return await globalThis.crypto.subtle.verify("Ed25519", key, sigRaw, messageBytes);
+  } catch {
+    return false;
+  }
 }
 
 export const PROTOCOL_VERSION = "vector-network/1.0.0";
@@ -68,6 +227,14 @@ export class BrowserVectorNetworkClient {
     }
     this.connectedNetworkId = info.network_id;
     return info;
+  }
+
+  resolvedNetworkId() {
+    const net = this.connectedNetworkId || this.expectedNetworkId;
+    if (!net) {
+      throw new Error("Client must call connect() before write operations");
+    }
+    return net;
   }
 
   async join(scopes = ["NETWORK", "SPACE", "REGION", "WALLET", "TOKEN"], scopeAuthorizations = []) {
@@ -99,29 +266,21 @@ export class BrowserVectorNetworkClient {
 
   async submitProgram(fileName, sourceBytes, modules = {}, executionParams = {}) {
     if (!this.connectedNetworkId) await this.connect();
-    const networkId = this.connectedNetworkId;
+    const networkId = this.resolvedNetworkId();
     const requestId = `req_${globalThis.crypto.randomUUID().replace(/-/g, "")}`;
     const nonce = this.nonce++;
-    const sourceHash = blake3Hex(sourceBytes);
-    const fileKind = fileName.endsWith(".vdx") ? "vdx" : "vx";
-    const moduleHashes = {};
-    for (const k of Object.keys(modules).sort()) {
-      moduleHashes[k] = blake3Hex(modules[k]);
-    }
-    const msg = canonicalJsonBytes({
-      actor_pubkey: this.identity.participant_key.public_key_hex,
-      compiler_version: COMPILER_VERSION,
-      execution_params: executionParams,
-      file_kind: fileKind,
-      file_name: fileName,
-      language_version: LANGUAGE_VERSION,
-      module_hashes: moduleHashes,
-      network_id: networkId,
-      nonce,
-      protocol_version: PROTOCOL_VERSION,
-      request_id: requestId,
-      source_hash: sourceHash,
-    });
+    const msg = canonicalJsonBytes(
+      canonicalProgramSubmitObject({
+        actorPubkey: this.identity.participant_key.public_key_hex,
+        fileName,
+        sourceBytes,
+        modules,
+        networkId,
+        requestId,
+        nonce,
+        executionParams,
+      }),
+    );
     const signature = await signBrowserEd25519(this.identity.participant_key.private_key_hex, msg);
     return this.postJson("/v1/programs/submit", {
       file_name: fileName,
@@ -137,37 +296,38 @@ export class BrowserVectorNetworkClient {
   }
 
   async signWalletPop(walletId, participantIdentity, purpose, popNonce, authorizedKey, expiresAtMs = null) {
-    if (!this.connectedNetworkId) await this.connect();
-    const msg = canonicalJsonBytes({
-      authorized_pubkey: authorizedKey.public_key_hex,
-      expires_at_ms: expiresAtMs,
-      network_id: this.connectedNetworkId,
-      nonce: popNonce,
-      participant_identity: participantIdentity,
-      protocol_version: PROTOCOL_VERSION,
-      purpose,
-      wallet_id: walletId,
-    });
+    if (!this.connectedNetworkId && !this.expectedNetworkId) await this.connect();
+    const msg = canonicalJsonBytes(
+      canonicalWalletPopObject({
+        networkId: this.resolvedNetworkId(),
+        walletId,
+        participantIdentity,
+        authorizedPubkey: authorizedKey.public_key_hex,
+        purpose,
+        nonce: popNonce,
+        expiresAtMs,
+      }),
+    );
     return signBrowserEd25519(authorizedKey.private_key_hex, msg);
   }
 
   async signTransferApproval(tokenId, fromWalletId, toWalletId, amount, cosignerKey) {
-    if (!this.connectedNetworkId) await this.connect();
-    const msg = canonicalJsonBytes({
-      amount: String(amount),
-      domain: DOM_TRANSFER_APPROVAL_V1,
-      from_wallet_id: fromWalletId,
-      network_id: this.connectedNetworkId,
-      protocol_version: PROTOCOL_VERSION,
-      to_wallet_id: toWalletId,
-      token_id: tokenId,
-    });
+    if (!this.connectedNetworkId && !this.expectedNetworkId) await this.connect();
+    const msg = canonicalJsonBytes(
+      canonicalTransferApprovalObject({
+        networkId: this.resolvedNetworkId(),
+        tokenId,
+        fromWalletId,
+        toWalletId,
+        amount,
+      }),
+    );
     return signBrowserEd25519(cosignerKey.private_key_hex, msg);
   }
 
   async submitOperation(operation) {
     if (!this.connectedNetworkId) await this.connect();
-    const networkId = this.connectedNetworkId;
+    const networkId = this.resolvedNetworkId();
     const requestId = `req_${globalThis.crypto.randomUUID().replace(/-/g, "")}`;
     const nonce = this.nonce++;
     const timestampMs = Date.now();

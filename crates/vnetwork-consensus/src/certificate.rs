@@ -5,24 +5,22 @@ use vnetwork_types::*;
 pub fn verify_certificate(
     membership: &ValidatorMembership,
     qc: &QuorumCertificate,
+    ctx: &ConsensusVerificationContext,
 ) -> VResult<()> {
-    let all = membership.all_validators();
-    verify_quorum_certificate_strict(qc, &all, None, None, None)
+    verify_certificate_strict(membership, qc, ctx)
 }
 
 pub fn verify_certificate_strict(
     membership: &ValidatorMembership,
     qc: &QuorumCertificate,
-    expected_network_id: Option<&str>,
-    expected_genesis_commitment: Option<&str>,
-    expected_epoch: Option<u64>,
+    ctx: &ConsensusVerificationContext,
 ) -> VResult<()> {
+    if membership.consensus_parameters() != &ctx.consensus_parameters {
+        return Err(VNetworkError::Consensus(
+            "validator membership consensus parameters diverge from verification context"
+                .to_string(),
+        ));
+    }
     let all = membership.all_validators();
-    verify_quorum_certificate_strict(
-        qc,
-        &all,
-        expected_network_id,
-        expected_genesis_commitment,
-        expected_epoch,
-    )
+    verify_quorum_certificate_strict(qc, &all, ctx)
 }

@@ -122,8 +122,13 @@ pub fn apply_create_wallet(
     };
 
     state.wallets.insert(wallet_id.clone(), wallet.clone());
-    state.logical_clock += 1;
-    let sequence = (state.events.len() as u64) + 1;
+    state.logical_clock = state
+        .logical_clock
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
+    let sequence = (state.events.len() as u64)
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
     let parents = state.latest_event_hash().into_iter().collect();
     let after_hash = blake3_hex(&canonical_json_bytes(&wallet)?);
     let event = LedgerEvent::build(
@@ -136,7 +141,7 @@ pub fn apply_create_wallet(
         actor_pubkey,
         state.logical_clock,
         timestamp_ms,
-        serde_json::to_value(&wallet).unwrap_or_default(),
+        serde_json::to_value(&wallet).map_err(|e| VNetworkError::Serialization(e.to_string()))?,
         "",
         after_hash,
     )?;
@@ -273,11 +278,19 @@ pub fn apply_authorize_wallet_key(
             added_at_ms: timestamp_ms,
         },
     );
-    wallet.version += 1;
+    wallet.version = wallet
+        .version
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("wallet version overflow".to_string()))?;
     state.wallets.insert(wallet.wallet_id.clone(), wallet.clone());
 
-    state.logical_clock += 1;
-    let sequence = (state.events.len() as u64) + 1;
+    state.logical_clock = state
+        .logical_clock
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
+    let sequence = (state.events.len() as u64)
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
     let parents = state.latest_event_hash().into_iter().collect();
     let after_hash = blake3_hex(&canonical_json_bytes(&wallet)?);
     let event = LedgerEvent::build(
@@ -290,7 +303,7 @@ pub fn apply_authorize_wallet_key(
         actor_pubkey,
         state.logical_clock,
         timestamp_ms,
-        serde_json::to_value(&wallet).unwrap_or_default(),
+        serde_json::to_value(&wallet).map_err(|e| VNetworkError::Serialization(e.to_string()))?,
         before_hash,
         after_hash,
     )?;
@@ -337,11 +350,19 @@ pub fn apply_revoke_wallet_key(
         b.revoked = true;
         b.revoked_at_ms = Some(timestamp_ms);
     }
-    wallet.version += 1;
+    wallet.version = wallet
+        .version
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("wallet version overflow".to_string()))?;
     state.wallets.insert(wallet.wallet_id.clone(), wallet.clone());
 
-    state.logical_clock += 1;
-    let sequence = (state.events.len() as u64) + 1;
+    state.logical_clock = state
+        .logical_clock
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
+    let sequence = (state.events.len() as u64)
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
     let parents = state.latest_event_hash().into_iter().collect();
     let after_hash = blake3_hex(&canonical_json_bytes(&wallet)?);
     let event = LedgerEvent::build(
@@ -354,7 +375,7 @@ pub fn apply_revoke_wallet_key(
         actor_pubkey,
         state.logical_clock,
         timestamp_ms,
-        serde_json::to_value(&wallet).unwrap_or_default(),
+        serde_json::to_value(&wallet).map_err(|e| VNetworkError::Serialization(e.to_string()))?,
         before_hash,
         after_hash,
     )?;
@@ -500,11 +521,19 @@ pub fn apply_rotate_wallet_key(
             added_at_ms: timestamp_ms,
         },
     );
-    wallet.version += 1;
+    wallet.version = wallet
+        .version
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("wallet version overflow".to_string()))?;
     state.wallets.insert(wallet.wallet_id.clone(), wallet.clone());
 
-    state.logical_clock += 1;
-    let sequence = (state.events.len() as u64) + 1;
+    state.logical_clock = state
+        .logical_clock
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
+    let sequence = (state.events.len() as u64)
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
     let parents = state.latest_event_hash().into_iter().collect();
     let after_hash = blake3_hex(&canonical_json_bytes(&wallet)?);
     let event = LedgerEvent::build(
@@ -517,7 +546,7 @@ pub fn apply_rotate_wallet_key(
         actor_pubkey,
         state.logical_clock,
         timestamp_ms,
-        serde_json::to_value(&wallet).unwrap_or_default(),
+        serde_json::to_value(&wallet).map_err(|e| VNetworkError::Serialization(e.to_string()))?,
         before_hash,
         after_hash,
     )?;
@@ -579,8 +608,13 @@ pub fn apply_update_wallet_receive_policy(
         .ok_or_else(|| VNetworkError::Validation("wallet version overflow".to_string()))?;
     state.wallets.insert(wallet.wallet_id.clone(), wallet.clone());
 
-    state.logical_clock += 1;
-    let sequence = (state.events.len() as u64) + 1;
+    state.logical_clock = state
+        .logical_clock
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
+    let sequence = (state.events.len() as u64)
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
     let parents = state.latest_event_hash().into_iter().collect();
     let after_hash = blake3_hex(&canonical_json_bytes(&wallet)?);
     let event = LedgerEvent::build(

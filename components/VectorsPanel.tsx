@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Check, Copy, Network, Plus, ShieldCheck } from "lucide-react";
 import { formatTimestampMs, shortenHash } from "@/lib/format";
 import {
@@ -65,24 +65,25 @@ export function VectorsPanel({
   const activeSigner = activeSignerId ? signerKeys[activeSignerId] : null;
   const activeVector = vectors.find((v) => v.vectorId === selectedVectorId) ?? vectors[0] ?? null;
 
-  async function loadVectors() {
+  const loadVectors = useCallback(async () => {
     try {
       const res = await fetch("/api/vectors");
       if (res.ok) {
         const data = (await res.json()) as { vectors?: VectorStateDto[] };
-        setVectors(data.vectors ?? []);
-        if (!selectedVectorId && data.vectors?.[0]) {
-          setSelectedVectorId(data.vectors[0].vectorId);
+        const nextVectors = data.vectors ?? [];
+        setVectors(nextVectors);
+        if (nextVectors[0]) {
+          setSelectedVectorId((prev) => prev || nextVectors[0].vectorId);
         }
       }
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
     void loadVectors();
-  }, []);
+  }, [loadVectors]);
 
   async function handleVectorOp(e: FormEvent) {
     e.preventDefault();

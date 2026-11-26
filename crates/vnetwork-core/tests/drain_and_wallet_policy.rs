@@ -11,7 +11,7 @@ use vnetwork_types::*;
 fn single_val_qc(
     prop: &ConsensusProposal,
     val_kp: &KeypairMaterial,
-    qc_id: &str,
+    _qc_id: &str,
     ts: u64,
 ) -> QuorumCertificate {
     let mut vote = ConsensusVote {
@@ -24,6 +24,7 @@ fn single_val_qc(
         round: prop.round,
         epoch: prop.epoch,
         validator_set_hash: prop.validator_set_hash.clone(),
+        consensus_parameters_hash: prop.consensus_parameters_hash.clone(),
         parent_commitment: prop.parent_commitment.clone(),
         pre_state_root: prop.pre_state_root.clone(),
         post_state_root: prop.post_state_root.clone(),
@@ -36,8 +37,8 @@ fn single_val_qc(
         signature: String::new(),
     };
     vote.signature = val_kp.sign(&vote.canonical_signing_bytes().unwrap()).unwrap();
-    QuorumCertificate {
-        certificate_id: qc_id.to_string(),
+    let mut qc = QuorumCertificate {
+        certificate_id: String::new(),
         proposal_id: prop.proposal_id.clone(),
         proposal_digest: prop.proposal_digest.clone(),
         network_id: prop.network_id.clone(),
@@ -47,6 +48,7 @@ fn single_val_qc(
         round: prop.round,
         epoch: prop.epoch,
         validator_set_hash: prop.validator_set_hash.clone(),
+        consensus_parameters_hash: prop.consensus_parameters_hash.clone(),
         parent_commitment: prop.parent_commitment.clone(),
         pre_state_root: prop.pre_state_root.clone(),
         post_state_root: prop.post_state_root.clone(),
@@ -59,7 +61,9 @@ fn single_val_qc(
         quorum_threshold_bps: DEFAULT_BFT_QUORUM_BPS,
         votes: vec![vote],
         finalized_at_ms: ts,
-    }
+    };
+    qc.finalize_certificate_id().unwrap();
+    qc
 }
 
 fn sign_operation(

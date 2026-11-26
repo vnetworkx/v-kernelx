@@ -157,8 +157,13 @@ pub fn apply_create_token(
     state.tokens.insert(token_id.clone(), token.clone());
     state.balances.insert(bal_key, balance);
 
-    state.logical_clock += 1;
-    let sequence = (state.events.len() as u64) + 1;
+    state.logical_clock = state
+        .logical_clock
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
+    let sequence = (state.events.len() as u64)
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
     let parents = state.latest_event_hash().into_iter().collect();
     let after_hash = blake3_hex(&canonical_json_bytes(&token)?);
     let event = LedgerEvent::build(
@@ -431,8 +436,13 @@ fn execute_transfer_internal(
         ));
     }
 
-    state.logical_clock += 1;
-    let sequence = (state.events.len() as u64) + 1;
+    state.logical_clock = state
+        .logical_clock
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
+    let sequence = (state.events.len() as u64)
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
     let parents = state.latest_event_hash().into_iter().collect();
     let event = LedgerEvent::build(
         sequence,
@@ -520,8 +530,13 @@ pub fn apply_drain_token(
         ));
     }
 
-    state.logical_clock += 1;
-    let sequence = (state.events.len() as u64) + 1;
+    state.logical_clock = state
+        .logical_clock
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
+    let sequence = (state.events.len() as u64)
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
     let parents = state.latest_event_hash().into_iter().collect();
     let after_hash = blake3_hex(&canonical_json_bytes(&after)?);
     let event = LedgerEvent::build(
@@ -607,8 +622,13 @@ pub fn apply_adjust_non_transferable_dimensions(
         .ok_or_else(|| VNetworkError::Validation("balance version overflow".to_string()))?;
     state.balances.insert(key, after.clone());
 
-    state.logical_clock += 1;
-    let sequence = (state.events.len() as u64) + 1;
+    state.logical_clock = state
+        .logical_clock
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
+    let sequence = (state.events.len() as u64)
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
     let parents = state.latest_event_hash().into_iter().collect();
     let after_hash = blake3_hex(&canonical_json_bytes(&after)?);
     let event = LedgerEvent::build(

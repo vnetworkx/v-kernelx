@@ -1,6 +1,7 @@
-use crate::errors::ApiResult;
+use crate::errors::{ApiError, ApiResult};
 use crate::state::ApiAppState;
 use axum::extract::State;
+use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -28,7 +29,13 @@ pub async fn compile_source(
     Json(req): Json<LanguageSourceRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let compiled = compile_vx_source(&req.source_bytes, &req.file_name, &req.modules, None)?;
-    Ok(Json(serde_json::to_value(compiled).unwrap_or_default()))
+    serde_json::to_value(compiled).map(Json).map_err(|e| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SERIALIZATION_ERROR",
+            e.to_string(),
+        )
+    })
 }
 
 pub async fn validate_source(

@@ -4,7 +4,7 @@ set -euo pipefail
 export PATH="/root/.cargo/bin:/usr/local/go/bin:$PATH"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-echo "[1/5] Checking Cargo workspace formatting & tests..."
+echo "[1/6] Checking Cargo workspace formatting & tests..."
 cargo fmt --all --check --manifest-path "$ROOT/Cargo.toml"
 cargo test --workspace --all-features --manifest-path "$ROOT/Cargo.toml"
 
@@ -12,6 +12,7 @@ echo "[2/6] Verifying cross-language parity & SDK unit tests..."
 bash "$ROOT/tests/cross_language/run_parity.sh"
 node --test "$ROOT/tests/cross_language/sdk_parity.test.mjs" "$ROOT/tests/explorer/integrity_and_crypto.test.mjs"
 python3 -m unittest discover -s "$ROOT/tests/cross_language" -p "test_*.py"
+bash "$ROOT/tests/e2e/script_safety.test.sh"
 
 echo "[3/6] Checking Go SDK and Go workflow example builds..."
 go -C "$ROOT/sdks/go" build ./...

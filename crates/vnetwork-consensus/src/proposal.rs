@@ -48,6 +48,21 @@ pub fn validate_proposal_against_state(
             proposal.epoch, state.validator_epoch
         )));
     }
+    let expected_params_hash = genesis.consensus_parameters.parameters_hash()?;
+    if *membership.consensus_parameters() != genesis.consensus_parameters {
+        return Err(VNetworkError::Consensus(
+            "validator membership consensus parameters diverge from genesis policy".to_string(),
+        ));
+    }
+    if proposal.consensus_parameters_hash != expected_params_hash
+        || (!state.consensus_parameters_hash.is_empty()
+            && proposal.consensus_parameters_hash != state.consensus_parameters_hash)
+    {
+        return Err(VNetworkError::Consensus(format!(
+            "proposal consensus_parameters_hash `{}` != expected `{expected_params_hash}`",
+            proposal.consensus_parameters_hash
+        )));
+    }
 
     let expected_vhash = membership.validator_set_hash()?;
     if proposal.validator_set_hash != expected_vhash {

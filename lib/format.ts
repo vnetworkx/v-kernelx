@@ -1,8 +1,12 @@
 import type { DrainPolicyDto, ScopeDrainRateDto, TransferScopeDto } from "@/lib/types";
 
-export function formatTokenUnitsClient(rawAmount: string | bigint, decimals: number): string {
+export function formatTokenUnitsClient(
+  rawAmount: string | bigint | null | undefined,
+  decimals: number,
+): string {
+  if (rawAmount === null || rawAmount === undefined || rawAmount === "") return "—";
   try {
-    const val = typeof rawAmount === "bigint" ? rawAmount : BigInt(rawAmount || "0");
+    const val = typeof rawAmount === "bigint" ? rawAmount : BigInt(rawAmount);
     if (decimals <= 0) return val.toLocaleString("en-US");
     const base = 10n ** BigInt(decimals);
     const whole = val / base;
@@ -104,7 +108,7 @@ export function resolveScopeDrainBps(
 export function previewDrainClient(
   atomicAmountStr: string,
   baseBps: number | null | undefined,
-  authRatio = 1000,
+  authRatio: number | null | undefined,
   threshold = 700,
 ): {
   effectiveBps: number;
@@ -116,7 +120,14 @@ export function previewDrainClient(
   tokenReward: bigint;
   networkReward: bigint;
 } | null {
-  if (baseBps == null || !Number.isFinite(baseBps) || baseBps < 0 || baseBps > 10_000) {
+  if (
+    baseBps == null ||
+    !Number.isFinite(baseBps) ||
+    baseBps < 0 ||
+    baseBps > 10_000 ||
+    authRatio == null ||
+    !Number.isFinite(authRatio)
+  ) {
     return null;
   }
   const amount = BigInt(atomicAmountStr || "0");

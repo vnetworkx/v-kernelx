@@ -1,21 +1,55 @@
 use libp2p::identity as p2p_id;
 use serde::Deserialize;
 use std::fmt;
-use std::fs::{self, File};
+use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use vnetwork_types::*;
 use zeroize::Zeroizing;
 
-#[derive(Debug, Clone)]
+static TMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// Options controlling identity key loading.
+/// Does NOT derive `Debug` or `Clone` so secret passphrases are never accidentally printed or duplicated.
 pub struct NodeIdentityLoadOptions {
     pub profile: NetworkProfile,
-    pub passphrase: Option<String>,
+    pub passphrase: Option<Zeroizing<String>>,
     pub kdf_params: Option<KeyKdfParams>,
     pub allow_plaintext_key_fallback: bool,
     pub external_node_signer: Option<ExternalSignerProvider>,
     pub external_validator_signer: Option<ExternalSignerProvider>,
+    pub transport_key_path: Option<PathBuf>,
+}
+
+impl fmt::Debug for NodeIdentityLoadOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NodeIdentityLoadOptions")
+            .field("profile", &self.profile)
+            .field(
+                "passphrase",
+                &self.passphrase.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("kdf_params", &self.kdf_params)
+            .field(
+                "allow_plaintext_key_fallback",
+                &self.allow_plaintext_key_fallback,
+            )
+            .field(
+                "external_node_signer",
+                &self.external_node_signer.as_ref().map(|s| &s.backend_name),
+            )
+            .field(
+                "external_validator_signer",
+                &self
+                    .external_validator_signer
+                    .as_ref()
+                    .map(|s| &s.backend_name),
+            )
+            .field("transport_key_path", &self.transport_key_path)
+            .finish()
+    }
 }
 
 impl Default for NodeIdentityLoadOptions {
@@ -27,6 +61,7 @@ impl Default for NodeIdentityLoadOptions {
             allow_plaintext_key_fallback: false,
             external_node_signer: None,
             external_validator_signer: None,
+            transport_key_path: None,
         }
     }
 }
@@ -65,6 +100,11 @@ struct LegacyPlaintextKeyFile {
 }
 
 impl NodeIdentity {
+    /// Loads or creates encrypted node/validator identities.
+    /// Supported signing providers:
+    /// - Local Argon2id + AES-256-GCM encrypted key envelopes (default for both node and validator)
+    /// - `external_validator_signer`: HSM/remote consensus validator signer
+    /// - `external_node_signer`: requires an explicit `transport_key_path` for the local libp2p Noise transport keypair
     pub fn load_or_create_secure(
         node_key_path: &Path,
         validator_key_path: Option<&Path>,
@@ -72,23 +112,29 @@ impl NodeIdentity {
         enable_validator: bool,
         options: &NodeIdentityLoadOptions,
     ) -> VResult<Self> {
-        let (node_signer, node_metadata, node_protected) = if let Some(ext) = &options.external_node_signer {
-            let meta = ext.metadata.clone();
-            let err_msg = "external_node_signer cannot construct libp2p ed25519 transport without protected seed; provide protected or pass seed";
-            let _ = err_msg;
-            // For libp2p Swarm transport, external node signers still keep local encrypted libp2p transport OR fail cleanly
-            return Err(VNetworkError::Authorization(
-                "external_node_signer requires load_or_create_with_libp2p_keypair; use external_validator_signer for consensus HSM signing".to_string(),
-            ));
-        } else {
-            let (sk, meta) = load_or_generate_encrypted_key(node_key_path, "node", options)?;
-            let provider: Arc<dyn SigningProvider> =
-                Arc::new(LocalEncryptedSigningProvider::new(sk.clone(), &meta.storage_mode));
-            (provider, meta, sk)
-        };
+        let (node_signer, node_metadata, transport_protected) =
+            if let Some(ext) = &options.external_node_signer {
+                let transport_path = options.transport_key_path.as_deref().ok_or_else(|| {
+                    VNetworkError::Authorization(
+                        "external_node_signer requires `transport_key_path` for libp2p Noise session transport authentication"
+                            .to_string(),
+                    )
+                })?;
+                let (transport_sk, _transport_meta) =
+                    load_or_generate_encrypted_key(transport_path, "node-transport", options)?;
+                let mut meta = ext.metadata.clone();
+                meta.storage_mode = format!("external:{}+encrypted-transport", ext.backend_name);
+                let provider: Arc<dyn SigningProvider> = Arc::new(ext.clone());
+                (provider, meta, transport_sk)
+            } else {
+                let (sk, meta) = load_or_generate_encrypted_key(node_key_path, "node", options)?;
+                let provider: Arc<dyn SigningProvider> =
+                    Arc::new(LocalEncryptedSigningProvider::new(sk.clone(), &meta.storage_mode));
+                (provider, meta, sk)
+            };
 
         let node_id = derive_node_id(&node_metadata.public_key_hex);
-        let libp2p_keypair = to_libp2p_ed25519(&node_protected)?;
+        let libp2p_keypair = to_libp2p_ed25519(&transport_protected)?;
         let libp2p_peer_id = libp2p::PeerId::from(libp2p_keypair.public());
 
         let (validator_signer, validator_metadata, validator_id, storage_security_mode) =
@@ -147,17 +193,16 @@ impl NodeIdentity {
     ) -> VResult<Self> {
         let passphrase = std::env::var("NETWORK_KEY_PASSPHRASE")
             .ok()
-            .filter(|s| !s.is_empty());
-        let allow_plaintext_key_fallback = std::env::var("NETWORK_ALLOW_PLAINTEXT_KEY_FALLBACK")
-            .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
-            .unwrap_or(false);
+            .filter(|s| !s.is_empty())
+            .map(Zeroizing::new);
         let opts = NodeIdentityLoadOptions {
             profile: NetworkProfile::Production,
             passphrase,
             kdf_params: None,
-            allow_plaintext_key_fallback,
+            allow_plaintext_key_fallback: false,
             external_node_signer: None,
             external_validator_signer: None,
+            transport_key_path: None,
         };
         Self::load_or_create_secure(
             node_key_path,
@@ -174,6 +219,12 @@ pub fn load_or_generate_encrypted_key(
     role: &str,
     options: &NodeIdentityLoadOptions,
 ) -> VResult<(ProtectedSigningKey, NodeIdentityMetadata)> {
+    if options.profile == NetworkProfile::Production && options.allow_plaintext_key_fallback {
+        return Err(VNetworkError::Authorization(
+            "plaintext private key fallback is forbidden in PRODUCTION profile; use offline key migration"
+                .to_string(),
+        ));
+    }
     if path.exists() {
         enforce_strict_key_file_permissions(path)?;
         let raw = fs::read_to_string(path)
@@ -185,7 +236,7 @@ pub fn load_or_generate_encrypted_key(
             let env: EncryptedKeyEnvelope = serde_json::from_value(val).map_err(|e| {
                 VNetworkError::Serialization(format!("parse encrypted key envelope {:?} failed: {e}", path))
             })?;
-            let passphrase = options.passphrase.as_deref().ok_or_else(|| {
+            let passphrase = options.passphrase.as_deref().map(|s| s.as_str()).ok_or_else(|| {
                 VNetworkError::Authorization(format!(
                     "passphrase required to unlock encrypted key `{:?}`",
                     path
@@ -197,9 +248,9 @@ pub fn load_or_generate_encrypted_key(
         }
 
         if val.get("private_key_hex").is_some() {
-            if !options.allow_plaintext_key_fallback {
+            if options.profile == NetworkProfile::Production || !options.allow_plaintext_key_fallback {
                 return Err(VNetworkError::Authorization(format!(
-                    "plaintext private key file `{:?}` refused (profile={}): migrate to encrypted envelope or pass explicit allow_plaintext_key_fallback override",
+                    "plaintext private key file `{:?}` refused (profile={}): run offline `migrate-key` to convert to an encrypted envelope",
                     path,
                     options.profile.as_str()
                 )));
@@ -226,7 +277,7 @@ pub fn load_or_generate_encrypted_key(
         )));
     }
 
-    let passphrase = options.passphrase.as_deref().ok_or_else(|| {
+    let passphrase = options.passphrase.as_deref().map(|s| s.as_str()).ok_or_else(|| {
         VNetworkError::Authorization(format!(
             "cannot generate encrypted key `{:?}` without keystore passphrase",
             path
@@ -257,6 +308,148 @@ pub fn load_or_generate_encrypted_key(
     Ok((sk, meta))
 }
 
+/// Offline migration command helper converting a legacy plaintext key file into an
+/// Argon2id + AES-256-GCM encrypted key envelope.
+///
+/// Follows fail-closed ordering:
+/// 1. Verify legacy file exists, enforce strict file permissions (`0600` on Unix), and validate key material.
+/// 2. Refuse to overwrite a pre-existing encrypted file at a separate destination path.
+/// 3. Optionally write a protected backup copy (`0600`) with fsync.
+/// 4. Encrypt & atomically write the encrypted envelope to `encrypted_dest_path`.
+/// 5. Reload and decrypt the persisted encrypted file, confirming identical public identity.
+/// 6. Only after verified persistence, optionally remove the original legacy file.
+#[allow(clippy::too_many_arguments)]
+pub fn migrate_plaintext_key_to_encrypted(
+    legacy_path: &Path,
+    encrypted_dest_path: &Path,
+    expected_role: Option<&str>,
+    passphrase: &Zeroizing<String>,
+    kdf_params: Option<KeyKdfParams>,
+    backup_path: Option<&Path>,
+    remove_legacy_source: bool,
+    timestamp_ms: u64,
+) -> VResult<NodeIdentityMetadata> {
+    if passphrase.is_empty() {
+        return Err(VNetworkError::Authorization(
+            "migration requires a non-empty passphrase".to_string(),
+        ));
+    }
+    if !legacy_path.exists() {
+        return Err(VNetworkError::NotFound(format!(
+            "legacy plaintext key `{:?}` does not exist",
+            legacy_path
+        )));
+    }
+    enforce_strict_key_file_permissions(legacy_path)?;
+
+    let raw = Zeroizing::new(
+        fs::read_to_string(legacy_path)
+            .map_err(|e| VNetworkError::Storage(format!("read legacy key {:?} failed: {e}", legacy_path)))?,
+    );
+    let val: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
+        VNetworkError::Serialization(format!("parse legacy key {:?} failed: {e}", legacy_path))
+    })?;
+    if val.get("ciphertext_hex").is_some() {
+        return Err(VNetworkError::Validation(format!(
+            "source `{:?}` is already an encrypted key envelope",
+            legacy_path
+        )));
+    }
+    if val.get("private_key_hex").is_none() {
+        return Err(VNetworkError::Validation(format!(
+            "source `{:?}` is not a legacy plaintext private_key_hex file",
+            legacy_path
+        )));
+    }
+    let legacy: LegacyPlaintextKeyFile = serde_json::from_value(val).map_err(|e| {
+        VNetworkError::Serialization(format!("parse legacy key {:?} failed: {e}", legacy_path))
+    })?;
+    let role = expected_role
+        .or(legacy.key_role.as_deref())
+        .unwrap_or("node");
+    if let (Some(exp), Some(actual)) = (expected_role, legacy.key_role.as_deref()) {
+        if exp != actual {
+            return Err(VNetworkError::Authorization(format!(
+                "legacy key role `{actual}` does not match expected role `{exp}`"
+            )));
+        }
+    }
+    let sk = ProtectedSigningKey::from_private_hex(role, &legacy.private_key_hex)?;
+    if let Some(expected_pk) = &legacy.public_key_hex {
+        if expected_pk != &sk.public_key_hex {
+            return Err(VNetworkError::Signature(
+                "legacy plaintext key public_key_hex does not match private seed".to_string(),
+            ));
+        }
+    }
+
+    if encrypted_dest_path != legacy_path && encrypted_dest_path.exists() {
+        return Err(VNetworkError::Storage(format!(
+            "refusing to overwrite existing destination key file `{:?}`",
+            encrypted_dest_path
+        )));
+    }
+
+    if let Some(bak) = backup_path {
+        write_protected_file_atomic(bak, raw.as_bytes())?;
+    }
+
+    let history = vec![KeyRotationRecord {
+        version: 1,
+        previous_public_key_hex: None,
+        new_public_key_hex: sk.public_key_hex.clone(),
+        previous_derived_id: None,
+        new_derived_id: sk.derived_id.clone(),
+        rotated_at_ms: timestamp_ms,
+        reason: "migrated_from_legacy_plaintext".to_string(),
+    }];
+    let env = sk.encrypt_to_envelope(
+        passphrase.as_str(),
+        kdf_params,
+        1,
+        timestamp_ms,
+        None,
+        history,
+    )?;
+    write_encrypted_envelope_atomic(encrypted_dest_path, &env)?;
+
+    // Reload persisted file and verify decryption recovers identical public identity
+    enforce_strict_key_file_permissions(encrypted_dest_path)?;
+    let reloaded_raw = fs::read_to_string(encrypted_dest_path).map_err(|e| {
+        VNetworkError::Storage(format!(
+            "reload migrated envelope {:?} failed: {e}",
+            encrypted_dest_path
+        ))
+    })?;
+    let reloaded_env: EncryptedKeyEnvelope = serde_json::from_str(&reloaded_raw).map_err(|e| {
+        VNetworkError::Serialization(format!(
+            "parse reloaded migrated envelope {:?} failed: {e}",
+            encrypted_dest_path
+        ))
+    })?;
+    let verified_sk = ProtectedSigningKey::from_envelope(&reloaded_env, passphrase.as_str())?;
+    if verified_sk.public_key_hex != sk.public_key_hex
+        || verified_sk.derived_id != sk.derived_id
+        || verified_sk.pubkey_fingerprint != sk.pubkey_fingerprint
+    {
+        return Err(VNetworkError::Storage(
+            "migrated key verification failed: reloaded public identity diverges from source"
+                .to_string(),
+        ));
+    }
+
+    if remove_legacy_source && legacy_path != encrypted_dest_path {
+        fs::remove_file(legacy_path).map_err(|e| {
+            VNetworkError::Storage(format!(
+                "migrated encrypted copy verified, but removing legacy source {:?} failed: {e}",
+                legacy_path
+            ))
+        })?;
+    }
+
+    Ok(reloaded_env.metadata("encrypted-envelope-v1"))
+}
+
 pub fn rotate_encrypted_key(
     path: &Path,
     current_passphrase: &str,
@@ -265,6 +458,12 @@ pub fn rotate_encrypted_key(
     reason: &str,
     timestamp_ms: u64,
 ) -> VResult<(ProtectedSigningKey, NodeIdentityMetadata)> {
+    if new_passphrase.is_empty() {
+        return Err(VNetworkError::Authorization(
+            "new key rotation passphrase cannot be empty".to_string(),
+        ));
+    }
+    enforce_strict_key_file_permissions(path)?;
     let raw = fs::read_to_string(path)
         .map_err(|e| VNetworkError::Storage(format!("read key {:?} failed: {e}", path)))?;
     let prev_env: EncryptedKeyEnvelope = serde_json::from_str(&raw).map_err(|e| {
@@ -273,7 +472,9 @@ pub fn rotate_encrypted_key(
     let old_sk = ProtectedSigningKey::from_envelope(&prev_env, current_passphrase)?;
 
     let new_sk = ProtectedSigningKey::generate(&prev_env.key_role);
-    let next_version = prev_env.key_version.saturating_add(1);
+    let next_version = prev_env.key_version.checked_add(1).ok_or_else(|| {
+        VNetworkError::Validation("key_version u32 overflow during key rotation".to_string())
+    })?;
     let mut history = prev_env.rotation_history.clone();
     history.push(KeyRotationRecord {
         version: next_version,
@@ -292,65 +493,139 @@ pub fn rotate_encrypted_key(
         Some(timestamp_ms),
         history,
     )?;
+
+    // Verify new encrypted envelope decrypts cleanly BEFORE replacing existing file
+    let preflight_sk = ProtectedSigningKey::from_envelope(&next_env, new_passphrase)?;
+    if preflight_sk.public_key_hex != new_sk.public_key_hex {
+        return Err(VNetworkError::Storage(
+            "pre-write verification of rotated key envelope failed".to_string(),
+        ));
+    }
+
     write_encrypted_envelope_atomic(path, &next_env)?;
-    let meta = next_env.metadata("encrypted-envelope-v1");
-    Ok((new_sk, meta))
+
+    // Reload & decrypt from disk to verify durable replacement
+    enforce_strict_key_file_permissions(path)?;
+    let reloaded_raw = fs::read_to_string(path)
+        .map_err(|e| VNetworkError::Storage(format!("reload rotated key {:?} failed: {e}", path)))?;
+    let reloaded_env: EncryptedKeyEnvelope = serde_json::from_str(&reloaded_raw).map_err(|e| {
+        VNetworkError::Serialization(format!(
+            "parse reloaded rotated envelope {:?} failed: {e}",
+            path
+        ))
+    })?;
+    let verified_sk = ProtectedSigningKey::from_envelope(&reloaded_env, new_passphrase)?;
+    if verified_sk.public_key_hex != new_sk.public_key_hex
+        || reloaded_env.key_version != next_version
+    {
+        return Err(VNetworkError::Storage(
+            "rotated key verification failed after atomic write".to_string(),
+        ));
+    }
+
+    let meta = reloaded_env.metadata("encrypted-envelope-v1");
+    Ok((verified_sk, meta))
 }
 
-pub fn write_encrypted_envelope_atomic(path: &Path, envelope: &EncryptedKeyEnvelope) -> VResult<()> {
+fn write_protected_file_atomic(path: &Path, payload: &[u8]) -> VResult<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| VNetworkError::Storage(format!("create key dir failed: {e}")))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .map_err(|e| VNetworkError::Storage(format!("create key dir failed: {e}")))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(parent, fs::Permissions::from_mode(0o700)).map_err(|e| {
+                    VNetworkError::Storage(format!(
+                        "set mode 0700 on key dir {:?} failed: {e}",
+                        parent
+                    ))
+                })?;
+            }
         }
     }
-    let json = Zeroizing::new(
-        serde_json::to_vec_pretty(envelope)
-            .map_err(|e| VNetworkError::Serialization(e.to_string()))?,
-    );
-    let tmp = path.with_extension("json.enc.tmp");
-    {
+
+    let seq = TMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let fname = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("key.json");
+    let tmp = path.with_file_name(format!("{fname}.tmp.{}.{seq}", std::process::id()));
+
+    let write_res: VResult<()> = (|| {
         #[cfg(unix)]
         let mut f = {
             use std::os::unix::fs::OpenOptionsExt;
             fs::OpenOptions::new()
-                .create(true)
-                .truncate(true)
+                .create_new(true)
                 .write(true)
                 .mode(0o600)
                 .open(&tmp)
-                .map_err(|e| VNetworkError::Storage(format!("create encrypted tmp key {:?} failed: {e}", tmp)))?
+                .map_err(|e| {
+                    VNetworkError::Storage(format!(
+                        "create exclusive tmp key {:?} failed: {e}",
+                        tmp
+                    ))
+                })?
         };
         #[cfg(not(unix))]
+        // Windows does not use POSIX 0600 mode bits; operators must rely on user/service ACLs on the directory.
         let mut f = fs::OpenOptions::new()
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .write(true)
             .open(&tmp)
-            .map_err(|e| VNetworkError::Storage(format!("create encrypted tmp key {:?} failed: {e}", tmp)))?;
+            .map_err(|e| {
+                VNetworkError::Storage(format!("create exclusive tmp key {:?} failed: {e}", tmp))
+            })?;
 
-        f.write_all(&json)
-            .map_err(|e| VNetworkError::Storage(format!("write encrypted tmp key failed: {e}")))?;
+        f.write_all(payload)
+            .map_err(|e| VNetworkError::Storage(format!("write tmp key {:?} failed: {e}", tmp)))?;
         f.sync_all()
-            .map_err(|e| VNetworkError::Storage(format!("fsync encrypted tmp key failed: {e}")))?;
+            .map_err(|e| VNetworkError::Storage(format!("fsync tmp key {:?} failed: {e}", tmp)))?;
+        drop(f);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))
+                .map_err(|e| VNetworkError::Storage(format!("chmod 0600 {:?} failed: {e}", tmp)))?;
+        }
+        fs::rename(&tmp, path)
+            .map_err(|e| VNetworkError::Storage(format!("atomic rename {:?} failed: {e}", path)))?;
+        Ok(())
+    })();
+
+    if let Err(err) = write_res {
+        let _ = fs::remove_file(&tmp);
+        return Err(err);
     }
+
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))
-            .map_err(|e| VNetworkError::Storage(format!("chmod 0600 {:?} failed: {e}", tmp)))?;
+        let parent_dir = match path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p,
+            _ => Path::new("."),
+        };
+        let d = fs::File::open(parent_dir).map_err(|e| {
+            VNetworkError::Storage(format!(
+                "open key parent dir {:?} for fsync failed: {e}",
+                parent_dir
+            ))
+        })?;
+        d.sync_all().map_err(|e| {
+            VNetworkError::Storage(format!("fsync key parent dir {:?} failed: {e}", parent_dir))
+        })?;
     }
-    fs::rename(&tmp, path)
-        .map_err(|e| VNetworkError::Storage(format!("atomic rename {:?} failed: {e}", path)))?;
-    if let Some(parent) = path.parent() {
-        if let Ok(d) = File::open(parent) {
-            let _ = d.sync_all();
-        }
-    }
+
     Ok(())
+}
+
+pub fn write_encrypted_envelope_atomic(path: &Path, envelope: &EncryptedKeyEnvelope) -> VResult<()> {
+    let json = Zeroizing::new(
+        serde_json::to_vec_pretty(envelope)
+            .map_err(|e| VNetworkError::Serialization(e.to_string()))?,
+    );
+    write_protected_file_atomic(path, &json)
 }
 
 pub fn enforce_strict_key_file_permissions(path: &Path) -> VResult<()> {
@@ -363,6 +638,16 @@ pub fn enforce_strict_key_file_permissions(path: &Path) -> VResult<()> {
         if mode & 0o077 != 0 {
             return Err(VNetworkError::Authorization(format!(
                 "insecure permissions {mode:04o} on key file `{:?}`; expected 0600",
+                path
+            )));
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        // On non-Unix targets (e.g. Windows), POSIX mode bits do not exist; callers should ensure ACL isolation.
+        if !path.exists() {
+            return Err(VNetworkError::NotFound(format!(
+                "key file `{:?}` does not exist",
                 path
             )));
         }

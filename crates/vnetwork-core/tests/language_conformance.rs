@@ -13,7 +13,7 @@ use vnetwork_types::*;
 fn single_val_qc(
     prop: &ConsensusProposal,
     val_kp: &KeypairMaterial,
-    qc_id: &str,
+    _qc_id: &str,
     ts: u64,
 ) -> QuorumCertificate {
     let mut vote = ConsensusVote {
@@ -26,6 +26,7 @@ fn single_val_qc(
         round: prop.round,
         epoch: prop.epoch,
         validator_set_hash: prop.validator_set_hash.clone(),
+        consensus_parameters_hash: prop.consensus_parameters_hash.clone(),
         parent_commitment: prop.parent_commitment.clone(),
         pre_state_root: prop.pre_state_root.clone(),
         post_state_root: prop.post_state_root.clone(),
@@ -39,8 +40,8 @@ fn single_val_qc(
     };
     let bytes = vote.canonical_signing_bytes().unwrap();
     vote.signature = val_kp.sign(&bytes).unwrap();
-    QuorumCertificate {
-        certificate_id: qc_id.to_string(),
+    let mut qc = QuorumCertificate {
+        certificate_id: String::new(),
         proposal_id: prop.proposal_id.clone(),
         proposal_digest: prop.proposal_digest.clone(),
         network_id: prop.network_id.clone(),
@@ -50,6 +51,7 @@ fn single_val_qc(
         round: prop.round,
         epoch: prop.epoch,
         validator_set_hash: prop.validator_set_hash.clone(),
+        consensus_parameters_hash: prop.consensus_parameters_hash.clone(),
         parent_commitment: prop.parent_commitment.clone(),
         pre_state_root: prop.pre_state_root.clone(),
         post_state_root: prop.post_state_root.clone(),
@@ -59,10 +61,12 @@ fn single_val_qc(
         event_hashes: prop.ordered_event_hashes(),
         total_weight: 100,
         approving_weight: 100,
-        quorum_threshold_bps: 6667,
+        quorum_threshold_bps: DEFAULT_BFT_QUORUM_BPS,
         votes: vec![vote],
         finalized_at_ms: ts,
-    }
+    };
+    qc.finalize_certificate_id().unwrap();
+    qc
 }
 
 fn signed_scope_auth(
@@ -246,6 +250,37 @@ query network;
     let runtime_in_vdx = r#"transfer "X" from "A" to "B" amount 10;"#;
     let vdx_err = compile_vx_source(runtime_in_vdx, "bad.vdx", &BTreeMap::new(), None).unwrap_err();
     assert!(vdx_err.to_string().contains(".vdx"));
+}
+
+#[test]
+fn test_rejects_module_path_traversal_and_absolute_imports() {
+    let base = std::env::temp_dir().join(format!("vx_trav_{}", uuid::Uuid::new_v4().simple()));
+    std::fs::create_dir_all(&base).unwrap();
+    let outside = base.parent().unwrap().join(format!("outside_{}.vdx", uuid::Uuid::new_v4().simple()));
+    std::fs::write(&outside, "space create Outside { visibility = \"public\" }").unwrap();
+
+    let traversal_src = format!(
+        "import \"../{}\";\nquery network;\n",
+        outside.file_name().unwrap().to_str().unwrap()
+    );
+    let err = compile_vx_source(&traversal_src, "trav.vx", &BTreeMap::new(), Some(&base)).unwrap_err();
+    assert!(err.to_string().contains("unsafe") || err.to_string().contains("escape"));
+
+    let abs_src = format!("import \"{}\";\nquery network;\n", outside.to_string_lossy());
+    let abs_err = compile_vx_source(&abs_src, "abs.vx", &BTreeMap::new(), Some(&base)).unwrap_err();
+    assert!(abs_err.to_string().contains("unsafe") || abs_err.to_string().contains("absolute"));
+
+    #[cfg(unix)]
+    {
+        let link_path = base.join("escape.vdx");
+        std::os::unix::fs::symlink(&outside, &link_path).unwrap();
+        let sym_src = "import \"escape.vdx\";\nquery network;\n";
+        let sym_err = compile_vx_source(sym_src, "sym.vx", &BTreeMap::new(), Some(&base)).unwrap_err();
+        assert!(sym_err.to_string().contains("escape"));
+    }
+
+    let _ = std::fs::remove_file(&outside);
+    let _ = std::fs::remove_dir_all(&base);
 }
 
 #[test]

@@ -59,6 +59,7 @@ impl StorageDatabase {
             .map_err(|e| VNetworkError::Storage(format!("read genesis.json failed: {e}")))?;
         let genesis: GenesisConfig = serde_json::from_str(&raw_genesis)
             .map_err(|e| VNetworkError::Storage(format!("parse genesis.json failed: {e}")))?;
+        genesis.validate()?;
 
         let probe = self.data_dir.join(".health_probe");
         {
@@ -106,7 +107,16 @@ impl StorageDatabase {
 
         let p_path = pending_tx_path(&self.data_dir, proposal.height);
         let c_path = committed_tx_path(&self.data_dir, proposal.height);
-        let prior_events = state.events.len().saturating_sub(proposal.events.len());
+        let prior_events = state
+            .events
+            .len()
+            .checked_sub(proposal.events.len())
+            .ok_or_else(|| {
+                VNetworkError::Storage(
+                    "persist_commit invariant violated: state event count < proposal event count"
+                        .to_string(),
+                )
+            })?;
         let pending = PendingCommitRecord {
             height: proposal.height,
             proposal_id: proposal.proposal_id.clone(),

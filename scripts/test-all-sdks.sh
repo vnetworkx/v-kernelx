@@ -17,13 +17,16 @@ VNETWORK_ENDPOINT="$EP2" VNETWORK_NETWORK_ID="$NETWORK_ID" \
   node "$ROOT/examples/javascript/workflow.mjs"
 
 echo "[3/5] Running TypeScript SDK workflow against $EP3..."
+"$ROOT/node_modules/.bin/tsc" -p "$ROOT/sdks/typescript/tsconfig.json" --noEmit
 if command -v tsx >/dev/null 2>&1; then
   VNETWORK_ENDPOINT="$EP3" VNETWORK_NETWORK_ID="$NETWORK_ID" \
     tsx "$ROOT/examples/typescript/workflow.ts"
-else
-  npm --prefix "$ROOT/sdks/typescript" run build >/dev/null 2>&1 || true
+elif command -v bun >/dev/null 2>&1; then
   VNETWORK_ENDPOINT="$EP3" VNETWORK_NETWORK_ID="$NETWORK_ID" \
-    node --experimental-strip-types "$ROOT/examples/typescript/workflow.ts"
+    bun "$ROOT/examples/typescript/workflow.ts"
+else
+  echo "ERROR: neither tsx nor bun available to execute TypeScript SDK workflow" >&2
+  exit 1
 fi
 
 echo "[4/5] Running Python SDK workflow against $EP1..."

@@ -22,6 +22,49 @@ import type {
 } from "./types.js";
 
 const IMPORT_RE = /^\s*import\s+"([^"]+)"(?:\s+(?:blake3|sha256)\s+"([^"]+)")?(?:\s+as\s+[A-Za-z0-9_]+)?\s*;/gm;
+const MAX_IMPORT_MODULES = 64;
+
+export async function loadModulesForSource(
+  sourceBytes: string,
+  baseDir: string,
+): Promise<Record<string, string>> {
+  const realBase = await fs.realpath(baseDir);
+  const modules: Record<string, string> = {};
+  const queue = [sourceBytes];
+  while (queue.length > 0) {
+    const current = queue.pop()!;
+    IMPORT_RE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = IMPORT_RE.exec(current)) !== null) {
+      const importPath = match[1].trim();
+      if (
+        !importPath ||
+        importPath.includes("\\") ||
+        path.isAbsolute(importPath) ||
+        importPath.split("/").some((seg) => seg === "..")
+      ) {
+        throw new Error(`Unsafe module import path: ${importPath}`);
+      }
+      if (!(importPath in modules)) {
+        if (Object.keys(modules).length >= MAX_IMPORT_MODULES) {
+          throw new Error(`Imported module count exceeded limit (${MAX_IMPORT_MODULES})`);
+        }
+        const candidate = path.resolve(realBase, importPath);
+        if (candidate !== realBase && !candidate.startsWith(realBase + path.sep)) {
+          throw new Error(`Module import path escapes base directory: ${importPath}`);
+        }
+        const realTarget = await fs.realpath(candidate);
+        if (realTarget !== realBase && !realTarget.startsWith(realBase + path.sep)) {
+          throw new Error(`Module import symlink escapes base directory: ${importPath}`);
+        }
+        const content = await fs.readFile(realTarget, "utf8");
+        modules[importPath] = content;
+        queue.push(content);
+      }
+    }
+  }
+  return modules;
+}
 
 export class VectorNetworkClient {
   readonly baseUrl: string;
@@ -96,23 +139,7 @@ export class VectorNetworkClient {
   }
 
   async loadModulesForSource(sourceBytes: string, baseDir: string): Promise<Record<string, string>> {
-    const modules: Record<string, string> = {};
-    const queue = [sourceBytes];
-    while (queue.length > 0) {
-      const current = queue.pop()!;
-      IMPORT_RE.lastIndex = 0;
-      let match: RegExpExecArray | null;
-      while ((match = IMPORT_RE.exec(current)) !== null) {
-        const importPath = match[1];
-        if (!modules[importPath]) {
-          const full = path.resolve(baseDir, importPath);
-          const content = await fs.readFile(full, "utf8");
-          modules[importPath] = content;
-          queue.push(content);
-        }
-      }
-    }
-    return modules;
+    return loadModulesForSource(sourceBytes, baseDir);
   }
 
   async compileSource(

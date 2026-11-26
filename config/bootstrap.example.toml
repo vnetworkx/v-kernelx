@@ -20,3 +20,11 @@ public_api_url = "https://rpc.vectornetwork.example"
 storage_path = "/var/lib/vnetwork/bootstrap-seed"
 node_identity_path = "/var/lib/vnetwork/bootstrap-seed/node.key.json"
 discovery_mode = "hybrid"
+
+# Direct TLS termination or explicit audited reverse-proxy TLS termination is required in PRODUCTION
+[tls]
+enabled = false
+cert_path = ""
+key_path = ""
+terminated_by_reverse_proxy = true
+

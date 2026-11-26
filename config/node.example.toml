@@ -33,3 +33,5 @@ quorum_threshold_bps = 6667
 enabled = false
 cert_path = ""
 key_path = ""
+terminated_by_reverse_proxy = false
+

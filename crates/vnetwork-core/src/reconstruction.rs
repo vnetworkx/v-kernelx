@@ -43,8 +43,10 @@ pub fn reconstruct_entity(
                 .ok_or_else(|| VNetworkError::NotFound("reconstructed space missing".to_string()))?;
             (
                 live.space_id.clone(),
-                serde_json::to_value(live).unwrap_or_default(),
-                serde_json::to_value(rec).unwrap_or_default(),
+                serde_json::to_value(live)
+                    .map_err(|e| VNetworkError::Serialization(e.to_string()))?,
+                serde_json::to_value(rec)
+                    .map_err(|e| VNetworkError::Serialization(e.to_string()))?,
             )
         }
         "region" => {
@@ -64,8 +66,10 @@ pub fn reconstruct_entity(
                 .ok_or_else(|| VNetworkError::NotFound("reconstructed region missing".to_string()))?;
             (
                 live.region_id.clone(),
-                serde_json::to_value(live).unwrap_or_default(),
-                serde_json::to_value(rec).unwrap_or_default(),
+                serde_json::to_value(live)
+                    .map_err(|e| VNetworkError::Serialization(e.to_string()))?,
+                serde_json::to_value(rec)
+                    .map_err(|e| VNetworkError::Serialization(e.to_string()))?,
             )
         }
         "wallet" => {
@@ -85,8 +89,10 @@ pub fn reconstruct_entity(
                 .ok_or_else(|| VNetworkError::NotFound("reconstructed wallet missing".to_string()))?;
             (
                 live.wallet_id.clone(),
-                serde_json::to_value(live).unwrap_or_default(),
-                serde_json::to_value(rec).unwrap_or_default(),
+                serde_json::to_value(live)
+                    .map_err(|e| VNetworkError::Serialization(e.to_string()))?,
+                serde_json::to_value(rec)
+                    .map_err(|e| VNetworkError::Serialization(e.to_string()))?,
             )
         }
         "token" => {
@@ -139,8 +145,10 @@ pub fn reconstruct_entity(
                 })?;
             (
                 live.contract_id.clone(),
-                serde_json::to_value(live).unwrap_or_default(),
-                serde_json::to_value(rec).unwrap_or_default(),
+                serde_json::to_value(live)
+                    .map_err(|e| VNetworkError::Serialization(e.to_string()))?,
+                serde_json::to_value(rec)
+                    .map_err(|e| VNetworkError::Serialization(e.to_string()))?,
             )
         }
         "loan" => {
@@ -160,8 +168,10 @@ pub fn reconstruct_entity(
                 .ok_or_else(|| VNetworkError::NotFound("reconstructed loan missing".to_string()))?;
             (
                 live.loan_id.clone(),
-                serde_json::to_value(live).unwrap_or_default(),
-                serde_json::to_value(rec).unwrap_or_default(),
+                serde_json::to_value(live)
+                    .map_err(|e| VNetworkError::Serialization(e.to_string()))?,
+                serde_json::to_value(rec)
+                    .map_err(|e| VNetworkError::Serialization(e.to_string()))?,
             )
         }
         other => {

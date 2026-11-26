@@ -9,7 +9,7 @@ use vnetwork_types::*;
 fn single_val_qc(
     prop: &ConsensusProposal,
     val_kp: &KeypairMaterial,
-    qc_id: &str,
+    _qc_id: &str,
     ts: u64,
 ) -> QuorumCertificate {
     let mut vote = ConsensusVote {
@@ -22,6 +22,7 @@ fn single_val_qc(
         round: prop.round,
         epoch: prop.epoch,
         validator_set_hash: prop.validator_set_hash.clone(),
+        consensus_parameters_hash: prop.consensus_parameters_hash.clone(),
         parent_commitment: prop.parent_commitment.clone(),
         pre_state_root: prop.pre_state_root.clone(),
         post_state_root: prop.post_state_root.clone(),
@@ -34,8 +35,8 @@ fn single_val_qc(
         signature: String::new(),
     };
     vote.signature = val_kp.sign(&vote.canonical_signing_bytes().unwrap()).unwrap();
-    QuorumCertificate {
-        certificate_id: qc_id.to_string(),
+    let mut qc = QuorumCertificate {
+        certificate_id: String::new(),
         proposal_id: prop.proposal_id.clone(),
         proposal_digest: prop.proposal_digest.clone(),
         network_id: prop.network_id.clone(),
@@ -45,6 +46,7 @@ fn single_val_qc(
         round: prop.round,
         epoch: prop.epoch,
         validator_set_hash: prop.validator_set_hash.clone(),
+        consensus_parameters_hash: prop.consensus_parameters_hash.clone(),
         parent_commitment: prop.parent_commitment.clone(),
         pre_state_root: prop.pre_state_root.clone(),
         post_state_root: prop.post_state_root.clone(),
@@ -54,10 +56,12 @@ fn single_val_qc(
         event_hashes: prop.ordered_event_hashes(),
         total_weight: 100,
         approving_weight: 100,
-        quorum_threshold_bps: 6667,
+        quorum_threshold_bps: DEFAULT_BFT_QUORUM_BPS,
         votes: vec![vote],
         finalized_at_ms: ts,
-    }
+    };
+    qc.finalize_certificate_id().unwrap();
+    qc
 }
 
 #[test]
@@ -179,6 +183,45 @@ fn test_wal_persistence_crash_recovery_and_profile_guard() {
     )
     .unwrap();
     save_certified_checkpoint(&dir, &ckpt).unwrap();
+    assert!(StorageDatabase::open_and_recover(&dir, &genesis).is_err());
+
+    // Restore valid checkpoint so we can test trailing partial WAL recovery & fail-closed corruption
+    let valid_ckpt = CertifiedCheckpoint::build(
+        &state4,
+        &qc,
+        &prop.proposal_digest,
+        &prop.parent_commitment,
+        102,
+    )
+    .unwrap();
+    save_certified_checkpoint(&dir, &valid_ckpt).unwrap();
+
+    // Appending an unterminated partial trailing line to events.wal (simulating mid-write crash)
+    // quarantines the fragment and recovers cleanly to height 1.
+    {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(dir.join("events.wal"))
+            .unwrap();
+        f.write_all(b"{\"partial_corrupt_tail_without_newline").unwrap();
+    }
+    let (db5, state5, rep5) = StorageDatabase::open_and_recover(&dir, &genesis).unwrap();
+    assert_eq!(state5.height, 1);
+    assert_eq!(rep5.quarantined_artifacts.len(), 1);
+    assert!(std::path::Path::new(&rep5.quarantined_artifacts[0]).exists());
+    db5.check_health().unwrap();
+    drop(db5);
+
+    // Complete newline-terminated corrupt line in consensus_commits.wal MUST fail closed
+    {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(dir.join("consensus_commits.wal"))
+            .unwrap();
+        writeln!(f, "{{\"corrupt_complete_line\":true}}").unwrap();
+    }
     assert!(StorageDatabase::open_and_recover(&dir, &genesis).is_err());
 
     let _ = fs::remove_dir_all(&dir);

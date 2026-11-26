@@ -3,13 +3,27 @@ use crate::error::{VNetworkError, VResult};
 use crate::event::LedgerEvent;
 use crate::identity::{canonical_ed25519_pubkey_bytes, pubkey_fingerprint, verify_ed25519};
 use crate::protocol_version::{
-    COMPILER_VERSION, DOM_PROPOSAL_DIGEST_V1, DOM_PROPOSAL_SIGN_V1, DOM_QC_V1, DOM_VOTE_SIGN_V1,
-    LANGUAGE_VERSION, PROPOSAL_VERSION, PROTOCOL_VERSION,
+    COMPILER_VERSION, DOM_CONSENSUS_PARAMS_V1, DOM_PROPOSAL_DIGEST_V1, DOM_PROPOSAL_SIGN_V1,
+    DOM_QC_V1, DOM_VOTE_SIGN_V1, LANGUAGE_VERSION, PROPOSAL_VERSION, PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const DEFAULT_BFT_QUORUM_BPS: u16 = 6667; // 2/3+ supermajority (e.g. 3 of 4 validators)
+pub const DEFAULT_CONSENSUS_ALGORITHM_VERSION: u16 = 1;
+pub const DEFAULT_VALIDATOR_FAULT_ASSUMPTION: &str = "BFT_ONE_THIRD_F";
+
+fn default_quorum_threshold_bps() -> u16 {
+    DEFAULT_BFT_QUORUM_BPS
+}
+
+fn default_consensus_algorithm_version() -> u16 {
+    DEFAULT_CONSENSUS_ALGORITHM_VERSION
+}
+
+fn default_fault_assumption() -> String {
+    DEFAULT_VALIDATOR_FAULT_ASSUMPTION.to_string()
+}
 
 fn default_proposal_version() -> u16 {
     PROPOSAL_VERSION
@@ -25,6 +39,136 @@ fn default_language_version() -> String {
 
 fn default_compiler_version() -> String {
     COMPILER_VERSION.to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetworkConsensusParameters {
+    #[serde(default = "default_quorum_threshold_bps")]
+    pub quorum_threshold_bps: u16,
+    #[serde(default = "default_consensus_algorithm_version")]
+    pub consensus_algorithm_version: u16,
+    #[serde(default = "default_fault_assumption")]
+    pub validator_fault_assumption: String,
+}
+
+impl Default for NetworkConsensusParameters {
+    fn default() -> Self {
+        Self {
+            quorum_threshold_bps: DEFAULT_BFT_QUORUM_BPS,
+            consensus_algorithm_version: DEFAULT_CONSENSUS_ALGORITHM_VERSION,
+            validator_fault_assumption: DEFAULT_VALIDATOR_FAULT_ASSUMPTION.to_string(),
+        }
+    }
+}
+
+impl NetworkConsensusParameters {
+    pub fn with_quorum_threshold_bps(quorum_threshold_bps: u16) -> VResult<Self> {
+        let params = Self {
+            quorum_threshold_bps,
+            ..Self::default()
+        };
+        params.validate()?;
+        Ok(params)
+    }
+
+    pub fn validate(&self) -> VResult<()> {
+        if self.quorum_threshold_bps < DEFAULT_BFT_QUORUM_BPS || self.quorum_threshold_bps > 10_000 {
+            return Err(VNetworkError::Consensus(format!(
+                "invalid quorum_threshold_bps `{}`; must be within [{DEFAULT_BFT_QUORUM_BPS}..=10000]",
+                self.quorum_threshold_bps
+            )));
+        }
+        if self.consensus_algorithm_version != DEFAULT_CONSENSUS_ALGORITHM_VERSION {
+            return Err(VNetworkError::Consensus(format!(
+                "unsupported consensus_algorithm_version `{}`; expected {DEFAULT_CONSENSUS_ALGORITHM_VERSION}",
+                self.consensus_algorithm_version
+            )));
+        }
+        if self.validator_fault_assumption != DEFAULT_VALIDATOR_FAULT_ASSUMPTION {
+            return Err(VNetworkError::Consensus(format!(
+                "unsupported validator_fault_assumption `{}`; expected `{DEFAULT_VALIDATOR_FAULT_ASSUMPTION}`",
+                self.validator_fault_assumption
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn parameters_hash(&self) -> VResult<String> {
+        self.validate()?;
+        let obj = serde_json::json!({
+            "consensus_algorithm_version": self.consensus_algorithm_version,
+            "domain": DOM_CONSENSUS_PARAMS_V1,
+            "quorum_threshold_bps": self.quorum_threshold_bps,
+            "validator_fault_assumption": self.validator_fault_assumption,
+        });
+        Ok(blake3_hex(&canonical_json_bytes(&obj)?))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsensusVerificationContext {
+    pub network_id: String,
+    pub genesis_commitment: String,
+    pub protocol_version: String,
+    pub expected_epoch: Option<u64>,
+    pub consensus_parameters: NetworkConsensusParameters,
+    pub consensus_parameters_hash: String,
+}
+
+impl ConsensusVerificationContext {
+    pub fn new(
+        network_id: impl Into<String>,
+        genesis_commitment: impl Into<String>,
+        protocol_version: impl Into<String>,
+        expected_epoch: Option<u64>,
+        consensus_parameters: NetworkConsensusParameters,
+    ) -> VResult<Self> {
+        let network_id = network_id.into();
+        let genesis_commitment = genesis_commitment.into();
+        let protocol_version = protocol_version.into();
+        if network_id.trim().is_empty() {
+            return Err(VNetworkError::Consensus(
+                "consensus verification context requires non-empty network_id".to_string(),
+            ));
+        }
+        if genesis_commitment.len() != 64 || !genesis_commitment.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(VNetworkError::Consensus(
+                "consensus verification context requires valid 64-hex genesis_commitment".to_string(),
+            ));
+        }
+        if protocol_version != PROTOCOL_VERSION {
+            return Err(VNetworkError::ProfileMismatch(format!(
+                "consensus verification context protocol_version `{protocol_version}` != `{PROTOCOL_VERSION}`"
+            )));
+        }
+        if let Some(epoch) = expected_epoch {
+            if epoch == 0 {
+                return Err(VNetworkError::Consensus(
+                    "expected validator epoch must be >= 1".to_string(),
+                ));
+            }
+        }
+        let consensus_parameters_hash = consensus_parameters.parameters_hash()?;
+        Ok(Self {
+            network_id,
+            genesis_commitment,
+            protocol_version,
+            expected_epoch,
+            consensus_parameters,
+            consensus_parameters_hash,
+        })
+    }
+
+    pub fn for_epoch(&self, epoch: u64) -> VResult<Self> {
+        if epoch == 0 {
+            return Err(VNetworkError::Consensus(
+                "validator epoch must be >= 1".to_string(),
+            ));
+        }
+        let mut cloned = self.clone();
+        cloned.expected_epoch = Some(epoch);
+        Ok(cloned)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -86,6 +230,18 @@ pub fn validate_validator_set(validators: &[ConsensusValidator]) -> VResult<Stri
             return Err(VNetworkError::Consensus(
                 "validator_id cannot be empty".to_string(),
             ));
+        }
+        if v.node_id.trim().is_empty() {
+            return Err(VNetworkError::Consensus(format!(
+                "validator `{}` has empty node_id",
+                v.validator_id
+            )));
+        }
+        if v.joined_epoch == 0 {
+            return Err(VNetworkError::Consensus(format!(
+                "validator `{}` joined_epoch must be >= 1",
+                v.validator_id
+            )));
         }
         if !seen_ids.insert(v.validator_id.clone()) {
             return Err(VNetworkError::Consensus(format!(
@@ -175,6 +331,8 @@ pub struct ConsensusProposal {
     pub epoch: u64,
     #[serde(default)]
     pub validator_set_hash: String,
+    #[serde(default)]
+    pub consensus_parameters_hash: String,
     pub proposer_validator_id: String,
     #[serde(default)]
     pub parent_commitment: String,
@@ -213,6 +371,7 @@ impl ConsensusProposal {
             None => None,
         };
         let obj = serde_json::json!({
+            "consensus_parameters_hash": self.consensus_parameters_hash,
             "domain": DOM_PROPOSAL_DIGEST_V1,
             "epoch": self.epoch,
             "event_hashes": event_hashes,
@@ -270,6 +429,16 @@ impl ConsensusProposal {
                     .to_string(),
             ));
         }
+        if self.consensus_parameters_hash.len() != 64
+            || !self
+                .consensus_parameters_hash
+                .chars()
+                .all(|c| c.is_ascii_hexdigit())
+        {
+            return Err(VNetworkError::Consensus(
+                "proposal missing valid 64-hex consensus_parameters_hash".to_string(),
+            ));
+        }
         let expected_digest = self.compute_expected_digest()?;
         if self.proposal_digest.len() != 64 || self.proposal_digest != expected_digest {
             return Err(VNetworkError::Consensus(format!(
@@ -295,6 +464,7 @@ impl ConsensusProposal {
             None => None,
         };
         let obj = serde_json::json!({
+            "consensus_parameters_hash": self.consensus_parameters_hash,
             "domain": DOM_PROPOSAL_SIGN_V1,
             "epoch": self.epoch,
             "event_hashes": event_hashes,
@@ -356,6 +526,8 @@ pub struct ConsensusVote {
     #[serde(default)]
     pub validator_set_hash: String,
     #[serde(default)]
+    pub consensus_parameters_hash: String,
+    #[serde(default)]
     pub parent_commitment: String,
     #[serde(default)]
     pub pre_state_root: String,
@@ -375,6 +547,7 @@ impl ConsensusVote {
     pub fn canonical_signing_bytes(&self) -> VResult<Vec<u8>> {
         let obj = serde_json::json!({
             "approve": self.approve,
+            "consensus_parameters_hash": self.consensus_parameters_hash,
             "domain": DOM_VOTE_SIGN_V1,
             "epoch": self.epoch,
             "genesis_commitment": self.genesis_commitment,
@@ -421,6 +594,16 @@ impl ConsensusVote {
                 "vote missing required domain/proposal binding fields".to_string(),
             ));
         }
+        if self.consensus_parameters_hash.len() != 64
+            || !self
+                .consensus_parameters_hash
+                .chars()
+                .all(|c| c.is_ascii_hexdigit())
+        {
+            return Err(VNetworkError::Consensus(
+                "vote missing valid 64-hex consensus_parameters_hash".to_string(),
+            ));
+        }
         let expected_pk = canonical_ed25519_pubkey_bytes(&validator.validator_pubkey_hex)?;
         let actual_pk = canonical_ed25519_pubkey_bytes(&self.validator_pubkey_hex)?;
         if expected_pk != actual_pk {
@@ -450,6 +633,8 @@ pub struct QuorumCertificate {
     #[serde(default)]
     pub validator_set_hash: String,
     #[serde(default)]
+    pub consensus_parameters_hash: String,
+    #[serde(default)]
     pub parent_commitment: String,
     #[serde(default)]
     pub pre_state_root: String,
@@ -470,21 +655,40 @@ pub struct QuorumCertificate {
 
 impl QuorumCertificate {
     pub fn certificate_digest(&self) -> VResult<String> {
-        let mut vote_sigs: Vec<(&str, &str, &str)> = self
-            .votes
-            .iter()
-            .map(|v| {
-                (
-                    v.validator_id.as_str(),
-                    v.validator_pubkey_hex.as_str(),
-                    v.signature.as_str(),
-                )
-            })
-            .collect();
-        vote_sigs.sort_by(|a, b| a.0.cmp(b.0));
+        let mut seen_validators = BTreeSet::new();
+        let mut seen_pubkeys: BTreeSet<[u8; 32]> = BTreeSet::new();
+        let mut vote_sigs: Vec<(String, String, String)> = Vec::with_capacity(self.votes.len());
+
+        for v in &self.votes {
+            if v.validator_id.trim().is_empty() {
+                return Err(VNetworkError::Consensus(
+                    "QC vote has empty validator_id".to_string(),
+                ));
+            }
+            if !seen_validators.insert(v.validator_id.clone()) {
+                return Err(VNetworkError::Consensus(format!(
+                    "duplicate validator_id `{}` in QC certificate_digest",
+                    v.validator_id
+                )));
+            }
+            let pk_bytes = canonical_ed25519_pubkey_bytes(&v.validator_pubkey_hex)?;
+            if !seen_pubkeys.insert(pk_bytes) {
+                return Err(VNetworkError::Consensus(format!(
+                    "duplicate canonical public key in QC certificate_digest for `{}`",
+                    v.validator_id
+                )));
+            }
+            vote_sigs.push((
+                v.validator_id.clone(),
+                hex::encode(pk_bytes),
+                v.signature.clone(),
+            ));
+        }
+        vote_sigs.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
         let obj = serde_json::json!({
             "approving_weight": self.approving_weight,
-            "certificate_id": self.certificate_id,
+            "consensus_parameters_hash": self.consensus_parameters_hash,
             "domain": DOM_QC_V1,
             "epoch": self.epoch,
             "event_hashes": self.event_hashes,
@@ -509,6 +713,60 @@ impl QuorumCertificate {
         });
         Ok(blake3_hex(&canonical_json_bytes(&obj)?))
     }
+
+    pub fn compute_certificate_id(&self) -> VResult<String> {
+        let digest = self.certificate_digest()?;
+        Ok(format!("qc_{}_{}", self.height, &digest[..32]))
+    }
+
+    pub fn finalize_certificate_id(&mut self) -> VResult<()> {
+        self.votes.sort_by(|a, b| a.validator_id.cmp(&b.validator_id));
+        self.certificate_id = self.compute_certificate_id()?;
+        Ok(())
+    }
+
+    pub fn verify_certificate_id(&self) -> VResult<()> {
+        let expected = self.compute_certificate_id()?;
+        if self.certificate_id != expected {
+            return Err(VNetworkError::Consensus(format!(
+                "QC certificate_id `{}` is not canonically derived from QC payload `{expected}`",
+                self.certificate_id
+            )));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum VoteEvidenceClassification {
+    InvalidObservedVote,
+    LocalSigningIntent,
+    ConflictingSigningIntent,
+    ValidSignedVote,
+    ProvenEquivocation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SigningConflictIncident {
+    pub classification: VoteEvidenceClassification,
+    pub network_id: String,
+    pub genesis_commitment: String,
+    pub protocol_version: String,
+    pub validator_id: String,
+    pub pubkey_fingerprint: String,
+    pub epoch: u64,
+    pub height: u64,
+    pub round: u64,
+    pub vote_phase: VotePhase,
+    pub existing_proposal_id: String,
+    pub existing_proposal_digest: String,
+    pub conflicting_proposal_id: String,
+    pub conflicting_proposal_digest: String,
+    #[serde(default)]
+    pub observed_vote: Option<ConsensusVote>,
+    pub reason: String,
+    pub detected_at_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -533,4 +791,66 @@ pub struct EquivocationEvidence {
     pub vote_a: ConsensusVote,
     pub vote_b: ConsensusVote,
     pub detected_at_ms: u64,
+}
+
+impl EquivocationEvidence {
+    /// Verifies that this evidence proves genuine cryptographic double-signing:
+    /// two distinct, validly signed votes by the same validator in the same signing slot
+    /// with conflicting vote commitments. Unsigned intents or malformed votes cannot be
+    /// promoted to `ProvenEquivocation`.
+    pub fn verify_cryptographic_conflict(&self) -> VResult<()> {
+        if self.network_id.trim().is_empty()
+            || self.genesis_commitment.trim().is_empty()
+            || self.protocol_version.trim().is_empty()
+            || self.validator_id.trim().is_empty()
+            || self.pubkey_fingerprint.trim().is_empty()
+        {
+            return Err(VNetworkError::Consensus(
+                "equivocation evidence missing required network/validator binding metadata"
+                    .to_string(),
+            ));
+        }
+        for (label, v) in [("vote_a", &self.vote_a), ("vote_b", &self.vote_b)] {
+            if v.signature.trim().is_empty() {
+                return Err(VNetworkError::Consensus(format!(
+                    "equivocation evidence {label} has empty signature (not cryptographically signed)"
+                )));
+            }
+            if v.network_id != self.network_id
+                || v.genesis_commitment != self.genesis_commitment
+                || v.protocol_version != self.protocol_version
+                || v.validator_id != self.validator_id
+                || v.epoch != self.epoch
+                || v.height != self.height
+                || v.round != self.round
+                || v.vote_phase != self.vote_phase
+            {
+                return Err(VNetworkError::Consensus(format!(
+                    "equivocation evidence {label} does not match slot binding metadata"
+                )));
+            }
+            let fp = pubkey_fingerprint(&v.validator_pubkey_hex)?;
+            if fp != self.pubkey_fingerprint {
+                return Err(VNetworkError::Consensus(format!(
+                    "equivocation evidence {label} public key fingerprint mismatch"
+                )));
+            }
+            let bytes = v.canonical_signing_bytes()?;
+            verify_ed25519(&v.validator_pubkey_hex, &bytes, &v.signature)?;
+        }
+
+        let conflicts = self.vote_a.proposal_id != self.vote_b.proposal_id
+            || self.vote_a.proposal_digest != self.vote_b.proposal_digest
+            || self.vote_a.post_state_root != self.vote_b.post_state_root
+            || self.vote_a.validator_set_hash != self.vote_b.validator_set_hash
+            || self.vote_a.consensus_parameters_hash != self.vote_b.consensus_parameters_hash
+            || self.vote_a.parent_commitment != self.vote_b.parent_commitment
+            || self.vote_a.approve != self.vote_b.approve;
+        if !conflicts {
+            return Err(VNetworkError::Consensus(
+                "equivocation evidence vote_a and vote_b do not conflict".to_string(),
+            ));
+        }
+        Ok(())
+    }
 }

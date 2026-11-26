@@ -101,14 +101,44 @@ impl FilesystemModuleResolver {
 
 impl ModuleResolver for FilesystemModuleResolver {
     fn resolve(&self, path: &str) -> Result<String, RuntimeError> {
-        let candidate = Path::new(path);
-        if candidate.is_absolute() || path.contains("..") {
+        let trimmed = path.trim();
+        if trimmed.is_empty() || trimmed.contains('\\') {
             return Err(RuntimeError::new(RuntimeErrorKind::ImportError(format!(
                 "unsafe module import path `{path}`"
             ))));
         }
-        let full = self.base_dir.join(candidate);
-        std::fs::read_to_string(&full).map_err(|e| {
+        let candidate = Path::new(trimmed);
+        if candidate.is_absolute()
+            || candidate.components().any(|c| {
+                matches!(
+                    c,
+                    std::path::Component::ParentDir
+                        | std::path::Component::RootDir
+                        | std::path::Component::Prefix(_)
+                )
+            })
+        {
+            return Err(RuntimeError::new(RuntimeErrorKind::ImportError(format!(
+                "unsafe module import path `{path}`"
+            ))));
+        }
+        let canonical_base = std::fs::canonicalize(&self.base_dir).map_err(|e| {
+            RuntimeError::new(RuntimeErrorKind::ImportError(format!(
+                "failed to resolve module base dir for `{path}`: {e}"
+            )))
+        })?;
+        let full = canonical_base.join(candidate);
+        let canonical_full = std::fs::canonicalize(&full).map_err(|e| {
+            RuntimeError::new(RuntimeErrorKind::ImportError(format!(
+                "failed to resolve module `{path}`: {e}"
+            )))
+        })?;
+        if !canonical_full.starts_with(&canonical_base) {
+            return Err(RuntimeError::new(RuntimeErrorKind::ImportError(format!(
+                "module import path `{path}` escapes base directory"
+            ))));
+        }
+        std::fs::read_to_string(&canonical_full).map_err(|e| {
             RuntimeError::new(RuntimeErrorKind::ImportError(format!(
                 "failed to read module `{path}`: {e}"
             )))
@@ -306,7 +336,11 @@ pub fn compile_program(program: &Program) -> Result<CompilationUnit, RuntimeErro
                 let env = BTreeMap::new();
                 let amount = eval_int(&p.amount, &env)?;
                 let policy = p.policy.as_ref().map(expr_to_string);
-                projection_seq = projection_seq.saturating_add(1);
+                projection_seq = projection_seq.checked_add(1).ok_or_else(|| {
+                    RuntimeError::new(RuntimeErrorKind::InvalidOperation(
+                        "projection sequence overflow".to_string(),
+                    ))
+                })?;
                 let projection_id = format!("proj_{:03}", projection_seq);
                 ops.push(KernelOp::Project {
                     source: p.source.clone(),
@@ -391,6 +425,7 @@ pub fn compile_source_with_imports(
         &mut table,
         &mut ops,
         false,
+        0,
     )?;
 
     imported_modules.sort_by(|a, b| a.path.cmp(&b.path));
@@ -424,6 +459,9 @@ pub fn compile_source_with_imports(
     })
 }
 
+const MAX_IMPORT_DEPTH: usize = 16;
+const MAX_IMPORT_MODULES: usize = 64;
+
 #[allow(clippy::too_many_arguments)]
 fn compile_unit_recursive(
     source: &str,
@@ -434,12 +472,26 @@ fn compile_unit_recursive(
     table: &mut SymbolTable,
     ops: &mut Vec<CompiledOp>,
     is_imported_module: bool,
+    depth: usize,
 ) -> Result<(), RuntimeError> {
+    if depth > MAX_IMPORT_DEPTH {
+        return Err(RuntimeError::new(RuntimeErrorKind::ImportError(format!(
+            "module import depth exceeded limit ({MAX_IMPORT_DEPTH})"
+        ))));
+    }
     let program = parse(source)?;
     validate_program_semantics(&program, file_kind, table)?;
 
     for stmt in &program.statements {
         if let Statement::Import(imp) = stmt {
+            if imported_modules.len() >= MAX_IMPORT_MODULES {
+                return Err(RuntimeError::with_span(
+                    RuntimeErrorKind::ImportError(format!(
+                        "imported module count exceeded limit ({MAX_IMPORT_MODULES})"
+                    )),
+                    imp.span,
+                ));
+            }
             if !visited.insert(imp.path.clone()) {
                 return Err(RuntimeError::with_span(
                     RuntimeErrorKind::ImportError(format!(
@@ -476,6 +528,7 @@ fn compile_unit_recursive(
                 table,
                 ops,
                 true,
+                depth + 1,
             )?;
             continue;
         }

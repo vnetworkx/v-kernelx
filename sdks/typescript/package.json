@@ -8,5 +8,9 @@
     ".": "./src/index.ts",
     "./browser": "./src/browser.ts"
   },
+  "scripts": {
+    "check": "../../node_modules/.bin/tsc -p tsconfig.json --noEmit",
+    "build": "../../node_modules/.bin/tsc -p tsconfig.json --noEmit"
+  },
   "license": "MIT OR Apache-2.0"
 }

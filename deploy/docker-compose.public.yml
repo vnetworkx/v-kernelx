@@ -18,12 +18,15 @@ services:
       NETWORK_IDENTITY_PATH: /var/lib/vnetwork/bootstrap-identity.json
       NETWORK_GENESIS_FILE: /etc/vnetwork/genesis.json
       NETWORK_ALLOW_BOOTSTRAP_ATLAS: "false"
+      NETWORK_KEY_PASSPHRASE_FILE: /etc/vnetwork/node-key.passphrase
+      NETWORK_TLS_CONFIGURATION: '{"enabled":false,"cert_path":"","key_path":"","terminated_by_reverse_proxy":true}'
     ports:
       - "9000:9000"
       - "127.0.0.1:8080:8080"
     volumes:
       - vnetwork_public_data:/var/lib/vnetwork
       - ./genesis.json:/etc/vnetwork/genesis.json:ro
+      - ./node-key.passphrase:/etc/vnetwork/node-key.passphrase:ro
 
   caddy:
     image: caddy:2.8-alpine

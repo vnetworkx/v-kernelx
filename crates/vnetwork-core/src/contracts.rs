@@ -53,12 +53,18 @@ pub fn apply_create_contract(
             }
         }
     }
-    let max_executions = rules
-        .get("max_executions")
-        .and_then(|v| v.as_u64());
-    let expires_at_ms = rules
-        .get("expires_at_ms")
-        .and_then(|v| v.as_u64());
+    let max_executions = match rules.get("max_executions") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(v) => Some(v.as_u64().ok_or_else(|| {
+            VNetworkError::Validation("contract max_executions must be unsigned integer".to_string())
+        })?),
+    };
+    let expires_at_ms = match rules.get("expires_at_ms") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(v) => Some(v.as_u64().ok_or_else(|| {
+            VNetworkError::Validation("contract expires_at_ms must be unsigned integer".to_string())
+        })?),
+    };
     if let Some(exp) = expires_at_ms {
         if timestamp_ms >= exp {
             return Err(VNetworkError::Validation(
@@ -66,12 +72,16 @@ pub fn apply_create_contract(
             ));
         }
     }
-    let min_auth_ratio_bps = rules
-        .get("min_auth_ratio_bps")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
+    let min_auth_ratio_bps = match rules.get("min_auth_ratio_bps") {
+        None | Some(serde_json::Value::Null) => 0,
+        Some(v) => v.as_u64().ok_or_else(|| {
+            VNetworkError::Validation("contract min_auth_ratio_bps must be unsigned integer".to_string())
+        })?,
+    };
 
-    let nonce = (state.contracts.len() as u64) + 1;
+    let nonce = (state.contracts.len() as u64)
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("contract nonce overflow".to_string()))?;
     let contract_id = derive_contract_id(clean_name, actor_pubkey, nonce);
     let contract = VContractEntity {
         contract_id: contract_id.clone(),
@@ -93,8 +103,13 @@ pub fn apply_create_contract(
     };
 
     state.contracts.insert(contract_id.clone(), contract.clone());
-    state.logical_clock += 1;
-    let sequence = (state.events.len() as u64) + 1;
+    state.logical_clock = state
+        .logical_clock
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
+    let sequence = (state.events.len() as u64)
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
     let parents = state.latest_event_hash().into_iter().collect();
     let after_hash = blake3_hex(&canonical_json_bytes(&contract)?);
     let event = LedgerEvent::build(
@@ -107,7 +122,7 @@ pub fn apply_create_contract(
         actor_pubkey,
         state.logical_clock,
         timestamp_ms,
-        serde_json::to_value(&contract).unwrap_or_default(),
+        serde_json::to_value(&contract).map_err(|e| VNetworkError::Serialization(e.to_string()))?,
         "",
         after_hash,
     )?;
@@ -215,8 +230,13 @@ pub fn apply_execute_contract(
         .contracts
         .insert(contract.contract_id.clone(), contract.clone());
 
-    state.logical_clock += 1;
-    let sequence = (state.events.len() as u64) + 1;
+    state.logical_clock = state
+        .logical_clock
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
+    let sequence = (state.events.len() as u64)
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
     let parents = state.latest_event_hash().into_iter().collect();
     let after_hash = blake3_hex(&canonical_json_bytes(&contract)?);
     let event = LedgerEvent::build(

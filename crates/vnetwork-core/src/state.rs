@@ -13,10 +13,14 @@ pub struct GenesisConfig {
     pub profile: NetworkProfile,
     pub protocol_version: String,
     pub genesis_timestamp_ms: u64,
+    #[serde(default = "default_validator_epoch")]
+    pub genesis_epoch: u64,
     pub initial_validators: Vec<ConsensusValidator>,
     pub allow_bootstrap_atlas: bool,
     #[serde(default)]
     pub drain_policy: DrainPolicy,
+    #[serde(default)]
+    pub consensus_parameters: NetworkConsensusParameters,
 }
 
 impl GenesisConfig {
@@ -32,15 +36,45 @@ impl GenesisConfig {
             profile,
             protocol_version: PROTOCOL_VERSION.to_string(),
             genesis_timestamp_ms: 1_764_150_000_000,
+            genesis_epoch: 1,
             initial_validators: validators,
             allow_bootstrap_atlas: profile.allows_dev_atlas_fixture(),
             drain_policy: DrainPolicy::unconfigured(),
+            consensus_parameters: NetworkConsensusParameters::default(),
         }
     }
 
     pub fn with_drain_policy(mut self, policy: DrainPolicy) -> Self {
         self.drain_policy = policy;
         self
+    }
+
+    pub fn with_consensus_parameters(
+        mut self,
+        consensus_parameters: NetworkConsensusParameters,
+    ) -> VResult<Self> {
+        consensus_parameters.validate()?;
+        self.consensus_parameters = consensus_parameters;
+        Ok(self)
+    }
+
+    pub fn consensus_context(&self) -> VResult<ConsensusVerificationContext> {
+        self.consensus_context_for_epoch(self.genesis_epoch)
+    }
+
+    pub fn consensus_context_for_epoch(
+        &self,
+        epoch: u64,
+    ) -> VResult<ConsensusVerificationContext> {
+        self.validate()?;
+        let genesis_commitment = self.commitment_hash()?;
+        ConsensusVerificationContext::new(
+            self.network_id.clone(),
+            genesis_commitment,
+            self.protocol_version.clone(),
+            Some(epoch),
+            self.consensus_parameters.clone(),
+        )
     }
 
     pub fn validate(&self) -> VResult<()> {
@@ -55,7 +89,13 @@ impl GenesisConfig {
                 self.protocol_version
             )));
         }
+        if self.genesis_epoch == 0 {
+            return Err(VNetworkError::Consensus(
+                "genesis_epoch must be >= 1".to_string(),
+            ));
+        }
         self.drain_policy.validate()?;
+        self.consensus_parameters.validate()?;
         if !self.initial_validators.is_empty() {
             validate_validator_set(&self.initial_validators)?;
         }
@@ -67,7 +107,9 @@ impl GenesisConfig {
         sorted_validators.sort_by(|a, b| a.validator_id.cmp(&b.validator_id));
         let obj = serde_json::json!({
             "allow_bootstrap_atlas": self.allow_bootstrap_atlas,
+            "consensus_parameters": self.consensus_parameters,
             "drain_policy": self.drain_policy,
+            "genesis_epoch": self.genesis_epoch,
             "genesis_timestamp_ms": self.genesis_timestamp_ms,
             "initial_validators": sorted_validators,
             "network_id": self.network_id,
@@ -81,12 +123,41 @@ impl GenesisConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValidatorEpochTransition {
+    #[serde(default = "default_validator_epoch")]
+    pub prev_epoch: u64,
     pub epoch: u64,
     pub height: u64,
     pub prev_validator_set_hash: String,
     pub new_validator_set_hash: String,
+    #[serde(default)]
+    pub consensus_parameters_hash: String,
+    #[serde(default)]
+    pub transition_payload_digest: String,
     pub new_validators: Vec<ConsensusValidator>,
     pub transition_certificate: QuorumCertificate,
+}
+
+impl ValidatorEpochTransition {
+    pub fn compute_transition_payload_digest(&self) -> VResult<String> {
+        let mut sorted_validators = self.new_validators.clone();
+        sorted_validators.sort_by(|a, b| a.validator_id.cmp(&b.validator_id));
+        let obj = serde_json::json!({
+            "consensus_parameters_hash": self.consensus_parameters_hash,
+            "domain": DOM_EPOCH_TRANSITION_V1,
+            "epoch": self.epoch,
+            "height": self.height,
+            "new_validator_set_hash": self.new_validator_set_hash,
+            "new_validators": sorted_validators,
+            "prev_epoch": self.prev_epoch,
+            "prev_validator_set_hash": self.prev_validator_set_hash,
+        });
+        Ok(blake3_hex(&canonical_json_bytes(&obj)?))
+    }
+
+    pub fn finalize_payload_digest(&mut self) -> VResult<()> {
+        self.transition_payload_digest = self.compute_transition_payload_digest()?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,6 +188,10 @@ pub struct NetworkLedgerState {
     pub validator_membership_history: Vec<ValidatorEpochTransition>,
     #[serde(default)]
     pub drain_policy: DrainPolicy,
+    #[serde(default)]
+    pub consensus_parameters: NetworkConsensusParameters,
+    #[serde(default)]
+    pub consensus_parameters_hash: String,
     #[serde(default)]
     pub last_proposal_digest: String,
     #[serde(default)]
@@ -163,6 +238,7 @@ impl NetworkLedgerState {
     pub fn try_new(genesis: &GenesisConfig) -> VResult<Self> {
         genesis.validate()?;
         let genesis_commitment = genesis.commitment_hash()?;
+        let consensus_parameters_hash = genesis.consensus_parameters.parameters_hash()?;
         let initial_event_root = blake3_hex(DOM_EVENT_HISTORY_V1.as_bytes());
         Ok(Self {
             network_id: genesis.network_id.clone(),
@@ -171,10 +247,12 @@ impl NetworkLedgerState {
             genesis_commitment: genesis_commitment.clone(),
             height: 0,
             logical_clock: 0,
-            validator_epoch: 1,
+            validator_epoch: genesis.genesis_epoch,
             validators: genesis.initial_validators.clone(),
             validator_membership_history: Vec::new(),
             drain_policy: genesis.drain_policy.clone(),
+            consensus_parameters: genesis.consensus_parameters.clone(),
+            consensus_parameters_hash,
             last_proposal_digest: genesis_commitment,
             event_history_root: initial_event_root,
             spaces: BTreeMap::new(),
@@ -196,6 +274,25 @@ impl NetworkLedgerState {
             transactions: BTreeMap::new(),
             snapshots: Vec::new(),
         })
+    }
+
+    pub fn consensus_context(&self) -> VResult<ConsensusVerificationContext> {
+        let ctx = ConsensusVerificationContext::new(
+            self.network_id.clone(),
+            self.genesis_commitment.clone(),
+            self.protocol_version.clone(),
+            Some(self.validator_epoch),
+            self.consensus_parameters.clone(),
+        )?;
+        if !self.consensus_parameters_hash.is_empty()
+            && self.consensus_parameters_hash != ctx.consensus_parameters_hash
+        {
+            return Err(VNetworkError::Consensus(format!(
+                "state consensus_parameters_hash `{}` != computed `{}`",
+                self.consensus_parameters_hash, ctx.consensus_parameters_hash
+            )));
+        }
+        Ok(ctx)
     }
 
     pub fn new(genesis: &GenesisConfig) -> Self {
@@ -243,6 +340,8 @@ impl NetworkLedgerState {
         let root_obj = serde_json::json!({
             "actor_nonces": self.actor_nonces,
             "balances": self.balances,
+            "consensus_parameters": self.consensus_parameters,
+            "consensus_parameters_hash": self.consensus_parameters_hash,
             "contracts": self.contracts,
             "drain_policy": self.drain_policy,
             "genesis_commitment": self.genesis_commitment,

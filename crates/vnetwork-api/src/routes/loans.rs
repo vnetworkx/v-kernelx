@@ -42,5 +42,11 @@ pub async fn get_loan(
         .or_else(|| state.loans.values().find(|l| l.name.eq_ignore_ascii_case(&loan_id)))
         .cloned()
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "LOAN_NOT_FOUND", "loan not found"))?;
-    Ok(Json(serde_json::to_value(l).unwrap_or_default()))
+    serde_json::to_value(l).map(Json).map_err(|e| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SERIALIZATION_ERROR",
+            e.to_string(),
+        )
+    })
 }

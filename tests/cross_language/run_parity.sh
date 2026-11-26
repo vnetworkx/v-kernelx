@@ -11,7 +11,14 @@ echo "[2/5] Running JavaScript parity check..."
 JS_JSON="$(node "$ROOT/tests/cross_language/verify_parity.mjs")"
 
 echo "[3/5] Running TypeScript parity check..."
-TS_JSON="$(tsx "$ROOT/tests/cross_language/verify_parity.ts")"
+if command -v tsx >/dev/null 2>&1; then
+  TS_JSON="$(tsx "$ROOT/tests/cross_language/verify_parity.ts")"
+elif command -v bun >/dev/null 2>&1; then
+  TS_JSON="$(bun "$ROOT/tests/cross_language/verify_parity.ts")"
+else
+  echo "ERROR: neither tsx nor bun found to execute TypeScript parity test" >&2
+  exit 1
+fi
 
 echo "[4/5] Running Python parity check..."
 PY_JSON="$(python3 "$ROOT/tests/cross_language/verify_parity.py")"

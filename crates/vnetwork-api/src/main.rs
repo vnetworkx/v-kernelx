@@ -12,7 +12,9 @@ use vnetwork_core::identity::JoinNetworkRequest;
 use vnetwork_core::language::SubmitProgramRequest;
 use vnetwork_core::ledger::LedgerProofReport;
 use vnetwork_core::reconstruction::ReconstructionReport;
+use vnetwork_core::replay::ReplayVerificationReport;
 use vnetwork_core::state::{GenesisConfig, NetworkLedgerState, TransactionReceipt};
+use vnetwork_core::supply::SupplyConservationBreakdown;
 use vnetwork_types::*;
 
 #[derive(Parser, Debug)]
@@ -52,13 +54,17 @@ impl DetachedApiBackend {
 impl NetworkNodeBackend for DetachedApiBackend {
     async fn health_report(&self) -> serde_json::Value {
         serde_json::json!({
-            "healthy": true,
+            "healthy": false,
             "ready": false,
             "storage_ok": false,
+            "wal_consistency_ok": false,
+            "equivocation_store_ok": false,
+            "verification_status": VerificationStatus::Unverified,
             "mode": "standalone-language-only",
             "network_id": self.network_id,
             "profile": self.profile,
             "protocol_version": PROTOCOL_VERSION,
+            "kernel_version": format!("vnetwork-api/{}", env!("CARGO_PKG_VERSION")),
         })
     }
 
@@ -148,6 +154,21 @@ impl NetworkNodeBackend for DetachedApiBackend {
         Err(Self::detached_err())
     }
 
+    async fn verify_replay(&self) -> Result<ReplayVerificationReport, ApiError> {
+        Err(Self::detached_err())
+    }
+
+    async fn verify_token_supply(
+        &self,
+        _token_id: &str,
+    ) -> Result<SupplyConservationBreakdown, ApiError> {
+        Err(Self::detached_err())
+    }
+
+    async fn list_equivocations(&self) -> Vec<EquivocationEvidence> {
+        Vec::new()
+    }
+
     async fn verify_reconstruction(
         &self,
         _entity_kind: &str,
@@ -170,7 +191,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .init();
 
     let args = Args::parse();
-    let profile = NetworkProfile::parse(&args.profile).unwrap_or(NetworkProfile::Development);
+    let profile = NetworkProfile::parse(&args.profile).ok_or_else(|| {
+        VNetworkError::Validation(format!(
+            "invalid NETWORK_PROFILE `{}`; expected DEVELOPMENT, TESTNET, or PRODUCTION",
+            args.profile
+        ))
+    })?;
+    if profile == NetworkProfile::Production && args.network_id.to_ascii_lowercase().contains("devnet") {
+        return Err(Box::new(VNetworkError::ProfileMismatch(
+            "PRODUCTION profile cannot use a devnet network_id".to_string(),
+        )));
+    }
     let genesis = GenesisConfig::for_profile(profile, &args.network_id, "Vector Network", Vec::new());
     let (ws_tx, _) = broadcast::channel(64);
     let backend: Arc<dyn NetworkNodeBackend> = Arc::new(DetachedApiBackend {

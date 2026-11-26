@@ -271,8 +271,13 @@ pub fn verify_and_register_participant(
     state.participants.insert(participant_id.clone(), participant.clone());
     state.nodes.insert(node_id.clone(), node.clone());
 
-    state.logical_clock += 1;
-    let sequence = (state.events.len() as u64) + 1;
+    state.logical_clock = state
+        .logical_clock
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
+    let sequence = (state.events.len() as u64)
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
     let parents = state.latest_event_hash().into_iter().collect();
     let after_hash = blake3_hex(&canonical_json_bytes(&participant)?);
     let event = LedgerEvent::build(
@@ -364,8 +369,13 @@ pub fn apply_grant_participant_scope(
         node.last_seen_ms = timestamp_ms;
     }
 
-    state.logical_clock += 1;
-    let sequence = (state.events.len() as u64) + 1;
+    state.logical_clock = state
+        .logical_clock
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
+    let sequence = (state.events.len() as u64)
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
     let parents = state.latest_event_hash().into_iter().collect();
     let after_hash = blake3_hex(&canonical_json_bytes(&participant)?);
     let event = LedgerEvent::build(
@@ -453,8 +463,13 @@ pub fn apply_revoke_participant_scope(
         node.last_seen_ms = timestamp_ms;
     }
 
-    state.logical_clock += 1;
-    let sequence = (state.events.len() as u64) + 1;
+    state.logical_clock = state
+        .logical_clock
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
+    let sequence = (state.events.len() as u64)
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
     let parents = state.latest_event_hash().into_iter().collect();
     let after_hash = blake3_hex(&canonical_json_bytes(&participant)?);
     let event = LedgerEvent::build(

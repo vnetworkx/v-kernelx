@@ -49,11 +49,22 @@ export async function GET() {
       `Replay hash mismatch: replayed=${r.replayed_replay_hash ?? "missing"} live=${r.live_replay_hash ?? "missing"}`,
     );
   }
-  if (proofsRes.ok && proofsRes.data && proofsRes.data.chain_valid !== true) {
+
+  let proofMissing = false;
+  if (!proofsRes.ok || !proofsRes.data) {
+    proofMissing = true;
+    mismatchReasons.push("Ledger proof report unavailable");
+  } else if (proofsRes.data.chain_valid !== true) {
     mismatchReasons.push("Ledger event chain proof verification failed");
   }
 
   const verified = mismatchReasons.length === 0;
+  const verificationStatus = verified
+    ? "VERIFIED"
+    : proofMissing && mismatchReasons.length === 1
+      ? "UNVERIFIED"
+      : "INVALID";
+
   return NextResponse.json({
     state_root: {
       root_hash: String(r.live_state_root ?? proofsRes.data?.state_root ?? ""),
@@ -66,7 +77,7 @@ export async function GET() {
     live_state_root: String(r.live_state_root ?? ""),
     applied_event_hashes: [],
     matches_stored_state: verified,
-    verification_status: verified ? "VERIFIED" : "INVALID",
+    verification_status: verificationStatus,
     mismatch_reasons: mismatchReasons,
   });
 }

@@ -47,5 +47,11 @@ pub async fn get_contract(
         })
         .cloned()
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "CONTRACT_NOT_FOUND", "contract not found"))?;
-    Ok(Json(serde_json::to_value(c).unwrap_or_default()))
+    serde_json::to_value(c).map(Json).map_err(|e| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SERIALIZATION_ERROR",
+            e.to_string(),
+        )
+    })
 }

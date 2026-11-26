@@ -23,4 +23,5 @@ pub struct NodeHealthReport {
     pub api_enabled: bool,
     pub p2p_enabled: bool,
     pub protocol_version: String,
+    pub kernel_version: String,
 }

@@ -8,9 +8,22 @@ import type {
   ProgramSubmission,
 } from "./types.js";
 
+export { blake3Hex } from "./blake3.js";
+export { canonicalJsonBytes, canonicalJsonString, sortJsonValue } from "./canonical.js";
+
 const ED25519_PKCS8_PREFIX = new Uint8Array([
   0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06,
   0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
+]);
+
+const ED25519_SPKI_PREFIX = new Uint8Array([
+  0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65,
+  0x70, 0x03, 0x21, 0x00,
+]);
+
+const WEAK_PUBKEY_HEXES = new Set([
+  "0".repeat(64),
+  "01" + "0".repeat(62),
 ]);
 
 export const PROTOCOL_VERSION = "vector-network/1.0.0";
@@ -29,26 +42,180 @@ function fromHex(hex: string): Uint8Array {
   return out;
 }
 
+export function derivePrefixedId(prefix: string, domain: string, materialBytes: Uint8Array): string {
+  const domainBytes = new TextEncoder().encode(`${domain}:`);
+  const combined = new Uint8Array(domainBytes.length + materialBytes.length);
+  combined.set(domainBytes, 0);
+  combined.set(materialBytes, domainBytes.length);
+  return `${prefix}_${blake3Hex(combined).slice(0, 24)}`;
+}
+
+export function deriveParticipantId(pubkeyHex: string): string {
+  return derivePrefixedId("prt", "vnetwork/participant-id-v1", new TextEncoder().encode(pubkeyHex));
+}
+
+export function deriveNodeId(pubkeyHex: string): string {
+  return derivePrefixedId("nod", "vnetwork/node-id-v1", new TextEncoder().encode(pubkeyHex));
+}
+
+export function formatDecimalAmount(amount: number | bigint | string): string {
+  if (typeof amount === "bigint") {
+    if (amount < 0n) throw new Error("Amount must be non-negative");
+    return amount.toString(10);
+  }
+  if (typeof amount === "number") {
+    if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount < 0) {
+      throw new Error("Numeric amount must be a finite non-negative integer; use string/bigint for u128");
+    }
+    return String(amount);
+  }
+  const clean = amount.trim();
+  if (!/^\d+$/.test(clean)) {
+    throw new Error(`Invalid unsigned integer amount string: ${amount}`);
+  }
+  return BigInt(clean).toString(10);
+}
+
+export function canonicalProgramSubmitObject(params: {
+  actorPubkey: string;
+  fileName: string;
+  sourceBytes: string;
+  modules?: Record<string, string>;
+  networkId: string;
+  requestId: string;
+  nonce: number;
+  executionParams?: Record<string, unknown>;
+}): Record<string, unknown> {
+  const modules = params.modules ?? {};
+  const sourceHash = blake3Hex(params.sourceBytes);
+  const fileKind = params.fileName.endsWith(".vdx") ? "vdx" : "vx";
+  const moduleHashes: Record<string, string> = {};
+  for (const k of Object.keys(modules).sort()) {
+    moduleHashes[k] = blake3Hex(modules[k]);
+  }
+  return {
+    actor_pubkey: params.actorPubkey,
+    compiler_version: COMPILER_VERSION,
+    execution_params: params.executionParams ?? {},
+    file_kind: fileKind,
+    file_name: params.fileName,
+    language_version: LANGUAGE_VERSION,
+    module_hashes: moduleHashes,
+    network_id: params.networkId,
+    nonce: params.nonce,
+    protocol_version: PROTOCOL_VERSION,
+    request_id: params.requestId,
+    source_hash: sourceHash,
+  };
+}
+
+export function canonicalWalletPopObject(params: {
+  networkId: string;
+  walletId: string;
+  participantIdentity: string;
+  authorizedPubkey: string;
+  purpose: string;
+  nonce: string;
+  expiresAtMs?: number | null;
+}): Record<string, unknown> {
+  return {
+    authorized_pubkey: params.authorizedPubkey,
+    expires_at_ms: params.expiresAtMs ?? null,
+    network_id: params.networkId,
+    nonce: params.nonce,
+    participant_identity: params.participantIdentity,
+    protocol_version: PROTOCOL_VERSION,
+    purpose: params.purpose,
+    wallet_id: params.walletId,
+  };
+}
+
+export function canonicalTransferApprovalObject(params: {
+  networkId: string;
+  tokenId: string;
+  fromWalletId: string;
+  toWalletId: string;
+  amount: number | bigint | string;
+}): Record<string, unknown> {
+  return {
+    amount: formatDecimalAmount(params.amount),
+    domain: DOM_TRANSFER_APPROVAL_V1,
+    from_wallet_id: params.fromWalletId,
+    network_id: params.networkId,
+    protocol_version: PROTOCOL_VERSION,
+    to_wallet_id: params.toWalletId,
+    token_id: params.tokenId,
+  };
+}
+
 export async function generateBrowserKeypair(role = "participant"): Promise<KeypairMaterial> {
   const kp = (await globalThis.crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])) as CryptoKeyPair;
   const spki = new Uint8Array(await globalThis.crypto.subtle.exportKey("spki", kp.publicKey));
   const pkcs8 = new Uint8Array(await globalThis.crypto.subtle.exportKey("pkcs8", kp.privateKey));
   const publicKeyHex = toHex(spki.slice(spki.length - 32));
   const privateKeyHex = toHex(pkcs8.slice(pkcs8.length - 32));
-  const prefix = role === "node" ? "nod" : "prt";
-  const domain = role === "node" ? "vnetwork/node-id-v1" : "vnetwork/participant-id-v1";
-  const derived_id = `${prefix}_${blake3Hex(new TextEncoder().encode(`${domain}:${publicKeyHex}`)).slice(0, 24)}`;
+  const derived_id = role === "node" ? deriveNodeId(publicKeyHex) : deriveParticipantId(publicKeyHex);
   return { key_role: role, derived_id, public_key_hex: publicKeyHex, private_key_hex: privateKeyHex };
 }
 
+export async function browserKeypairFromPrivateHex(role: string, privateKeyHex: string): Promise<KeypairMaterial> {
+  const clean = privateKeyHex.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(clean)) {
+    throw new Error("Ed25519 private key must be 32 bytes hex");
+  }
+  const raw = fromHex(clean);
+  const pkcs8 = new Uint8Array(ED25519_PKCS8_PREFIX.length + raw.length);
+  pkcs8.set(ED25519_PKCS8_PREFIX, 0);
+  pkcs8.set(raw, ED25519_PKCS8_PREFIX.length);
+  const privKey = await globalThis.crypto.subtle.importKey("pkcs8", pkcs8, { name: "Ed25519" }, true, ["sign"]);
+  const jwk = (await globalThis.crypto.subtle.exportKey("jwk", privKey)) as { x?: string };
+  if (!jwk.x) throw new Error("Failed to derive Ed25519 public key in browser WebCrypto");
+  const base64 = jwk.x.replace(/-/g, "+").replace(/_/g, "/") + "==".slice(0, (4 - (jwk.x.length % 4)) % 4);
+  const pubRaw = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  const publicKeyHex = toHex(pubRaw);
+  const derived_id = role === "node" ? deriveNodeId(publicKeyHex) : deriveParticipantId(publicKeyHex);
+  return { key_role: role, derived_id, public_key_hex: publicKeyHex, private_key_hex: clean };
+}
+
 export async function signBrowserEd25519(privateKeyHex: string, messageBytes: Uint8Array): Promise<string> {
-  const raw = fromHex(privateKeyHex);
+  const clean = privateKeyHex.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(clean)) {
+    throw new Error("Ed25519 private key must be 32 bytes hex");
+  }
+  const raw = fromHex(clean);
   const pkcs8 = new Uint8Array(ED25519_PKCS8_PREFIX.length + raw.length);
   pkcs8.set(ED25519_PKCS8_PREFIX, 0);
   pkcs8.set(raw, ED25519_PKCS8_PREFIX.length);
   const key = await globalThis.crypto.subtle.importKey("pkcs8", pkcs8, { name: "Ed25519" }, false, ["sign"]);
   const sig = await globalThis.crypto.subtle.sign("Ed25519", key, new Uint8Array(messageBytes));
   return toHex(new Uint8Array(sig));
+}
+
+export async function verifyBrowserEd25519(
+  publicKeyHex: string,
+  messageBytes: Uint8Array,
+  signatureHex: string,
+): Promise<boolean> {
+  const pkClean = publicKeyHex.trim().toLowerCase();
+  const sigClean = signatureHex.trim().toLowerCase();
+  if (
+    !/^[0-9a-f]{64}$/.test(pkClean) ||
+    WEAK_PUBKEY_HEXES.has(pkClean) ||
+    !/^[0-9a-f]{128}$/.test(sigClean)
+  ) {
+    return false;
+  }
+  try {
+    const pubRaw = fromHex(pkClean);
+    const sigRaw = fromHex(sigClean);
+    const spki = new Uint8Array(ED25519_SPKI_PREFIX.length + pubRaw.length);
+    spki.set(ED25519_SPKI_PREFIX, 0);
+    spki.set(pubRaw, ED25519_SPKI_PREFIX.length);
+    const key = await globalThis.crypto.subtle.importKey("spki", spki, { name: "Ed25519" }, false, ["verify"]);
+    return await globalThis.crypto.subtle.verify("Ed25519", key, new Uint8Array(sigRaw), new Uint8Array(messageBytes));
+  } catch {
+    return false;
+  }
 }
 
 export class BrowserVectorNetworkClient {
@@ -62,8 +229,7 @@ export class BrowserVectorNetworkClient {
   ) {}
 
   async connect(): Promise<NetworkInfo> {
-    const res = await fetch(`${this.baseUrl.replace(/\/+$/, "")}/v1/network/info`);
-    const info = (await res.json()) as NetworkInfo;
+    const info = await this.getJson<NetworkInfo>("/v1/network/info");
     if (info.protocol_version !== PROTOCOL_VERSION) {
       throw new Error(`Protocol mismatch: ${info.protocol_version} != ${PROTOCOL_VERSION}`);
     }
@@ -74,13 +240,23 @@ export class BrowserVectorNetworkClient {
     return info;
   }
 
+  private resolvedNetworkId(): string {
+    const net = this.connectedNetworkId ?? this.expectedNetworkId;
+    if (!net) {
+      throw new Error("Client must call connect() before write operations");
+    }
+    return net;
+  }
+
   async join(
     scopes: ParticipationLevel[] = ["NETWORK", "SPACE", "REGION", "WALLET", "TOKEN"],
     scopeAuthorizations: Array<Record<string, unknown>> = [],
-  ): Promise<unknown> {
+  ): Promise<Record<string, unknown>> {
     if (!this.connectedNetworkId) await this.connect();
-    const base = this.baseUrl.replace(/\/+$/, "");
-    const ch = await (await fetch(`${base}/v1/participants/challenge`, { method: "POST" })).json();
+    const ch = await this.postJson<{ challenge_id: string; network_id: string; nonce: string }>(
+      "/v1/participants/challenge",
+      {},
+    );
     const msg = canonicalJsonBytes({
       challenge_id: ch.challenge_id,
       network_id: ch.network_id,
@@ -91,23 +267,18 @@ export class BrowserVectorNetworkClient {
     });
     const participantSig = await signBrowserEd25519(this.identity.participant_key.private_key_hex, msg);
     const nodeSig = await signBrowserEd25519(this.identity.node_key.private_key_hex, msg);
-    const res = await fetch(`${base}/v1/participants/join`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        challenge_id: ch.challenge_id,
-        participant_pubkey: this.identity.participant_key.public_key_hex,
-        node_pubkey: this.identity.node_key.public_key_hex,
-        display_name: this.identity.display_name,
-        node_kind: "FULL_NODE",
-        requested_scopes: scopes,
-        advertised_addresses: [],
-        participant_signature: participantSig,
-        node_signature: nodeSig,
-        scope_authorizations: scopeAuthorizations,
-      }),
+    return this.postJson("/v1/participants/join", {
+      challenge_id: ch.challenge_id,
+      participant_pubkey: this.identity.participant_key.public_key_hex,
+      node_pubkey: this.identity.node_key.public_key_hex,
+      display_name: this.identity.display_name,
+      node_kind: "FULL_NODE",
+      requested_scopes: scopes,
+      advertised_addresses: [],
+      participant_signature: participantSig,
+      node_signature: nodeSig,
+      scope_authorizations: scopeAuthorizations,
     });
-    return res.json();
   }
 
   async submitProgram(
@@ -117,46 +288,33 @@ export class BrowserVectorNetworkClient {
     executionParams: Record<string, unknown> = {},
   ): Promise<ProgramSubmission> {
     if (!this.connectedNetworkId) await this.connect();
-    const networkId = this.connectedNetworkId!;
+    const networkId = this.resolvedNetworkId();
     const requestId = `req_${globalThis.crypto.randomUUID().replace(/-/g, "")}`;
     const nonce = this.nonce++;
-    const sourceHash = blake3Hex(sourceBytes);
-    const fileKind = fileName.endsWith(".vdx") ? "vdx" : "vx";
-    const moduleHashes: Record<string, string> = {};
-    for (const k of Object.keys(modules).sort()) {
-      moduleHashes[k] = blake3Hex(modules[k]);
-    }
-    const msg = canonicalJsonBytes({
-      actor_pubkey: this.identity.participant_key.public_key_hex,
-      compiler_version: COMPILER_VERSION,
-      execution_params: executionParams,
-      file_kind: fileKind,
-      file_name: fileName,
-      language_version: LANGUAGE_VERSION,
-      module_hashes: moduleHashes,
-      network_id: networkId,
-      nonce,
-      protocol_version: PROTOCOL_VERSION,
-      request_id: requestId,
-      source_hash: sourceHash,
-    });
-    const signature = await signBrowserEd25519(this.identity.participant_key.private_key_hex, msg);
-    const res = await fetch(`${this.baseUrl.replace(/\/+$/, "")}/v1/programs/submit`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        file_name: fileName,
-        source_bytes: sourceBytes,
+    const msg = canonicalJsonBytes(
+      canonicalProgramSubmitObject({
+        actorPubkey: this.identity.participant_key.public_key_hex,
+        fileName,
+        sourceBytes,
         modules,
-        actor_pubkey: this.identity.participant_key.public_key_hex,
-        network_id: networkId,
-        request_id: requestId,
+        networkId,
+        requestId,
         nonce,
-        signature,
-        execution_params: executionParams,
+        executionParams,
       }),
+    );
+    const signature = await signBrowserEd25519(this.identity.participant_key.private_key_hex, msg);
+    return this.postJson<ProgramSubmission>("/v1/programs/submit", {
+      file_name: fileName,
+      source_bytes: sourceBytes,
+      modules,
+      actor_pubkey: this.identity.participant_key.public_key_hex,
+      network_id: networkId,
+      request_id: requestId,
+      nonce,
+      signature,
+      execution_params: executionParams,
     });
-    return (await res.json()) as ProgramSubmission;
   }
 
   async signWalletPop(
@@ -167,17 +325,18 @@ export class BrowserVectorNetworkClient {
     authorizedKey: KeypairMaterial,
     expiresAtMs: number | null = null,
   ): Promise<string> {
-    if (!this.connectedNetworkId) await this.connect();
-    const msg = canonicalJsonBytes({
-      authorized_pubkey: authorizedKey.public_key_hex,
-      expires_at_ms: expiresAtMs,
-      network_id: this.connectedNetworkId!,
-      nonce: popNonce,
-      participant_identity: participantIdentity,
-      protocol_version: PROTOCOL_VERSION,
-      purpose,
-      wallet_id: walletId,
-    });
+    if (!this.connectedNetworkId && !this.expectedNetworkId) await this.connect();
+    const msg = canonicalJsonBytes(
+      canonicalWalletPopObject({
+        networkId: this.resolvedNetworkId(),
+        walletId,
+        participantIdentity,
+        authorizedPubkey: authorizedKey.public_key_hex,
+        purpose,
+        nonce: popNonce,
+        expiresAtMs,
+      }),
+    );
     return signBrowserEd25519(authorizedKey.private_key_hex, msg);
   }
 
@@ -188,22 +347,22 @@ export class BrowserVectorNetworkClient {
     amount: number | bigint | string,
     cosignerKey: KeypairMaterial,
   ): Promise<string> {
-    if (!this.connectedNetworkId) await this.connect();
-    const msg = canonicalJsonBytes({
-      amount: String(amount),
-      domain: DOM_TRANSFER_APPROVAL_V1,
-      from_wallet_id: fromWalletId,
-      network_id: this.connectedNetworkId!,
-      protocol_version: PROTOCOL_VERSION,
-      to_wallet_id: toWalletId,
-      token_id: tokenId,
-    });
+    if (!this.connectedNetworkId && !this.expectedNetworkId) await this.connect();
+    const msg = canonicalJsonBytes(
+      canonicalTransferApprovalObject({
+        networkId: this.resolvedNetworkId(),
+        tokenId,
+        fromWalletId,
+        toWalletId,
+        amount,
+      }),
+    );
     return signBrowserEd25519(cosignerKey.private_key_hex, msg);
   }
 
   async submitOperation(operation: NetworkOperation): Promise<Record<string, unknown>> {
     if (!this.connectedNetworkId) await this.connect();
-    const networkId = this.connectedNetworkId!;
+    const networkId = this.resolvedNetworkId();
     const requestId = `req_${globalThis.crypto.randomUUID().replace(/-/g, "")}`;
     const nonce = this.nonce++;
     const timestampMs = Date.now();
@@ -217,19 +376,36 @@ export class BrowserVectorNetworkClient {
       timestamp_ms: timestampMs,
     });
     const signature = await signBrowserEd25519(this.identity.participant_key.private_key_hex, signingBytes);
-    const res = await fetch(`${this.baseUrl.replace(/\/+$/, "")}/v1/transactions`, {
+    return this.postJson("/v1/transactions", {
+      request_id: requestId,
+      network_id: networkId,
+      actor_pubkey: this.identity.participant_key.public_key_hex,
+      nonce,
+      timestamp_ms: timestampMs,
+      signature,
+      operation,
+    });
+  }
+
+  async getJson<T = Record<string, unknown>>(endpointPath: string): Promise<T> {
+    const res = await fetch(`${this.baseUrl.replace(/\/+$/, "")}${endpointPath}`);
+    const body = (await res.json()) as Record<string, unknown>;
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${(body.error as string) ?? JSON.stringify(body)}`);
+    }
+    return body as T;
+  }
+
+  async postJson<T = Record<string, unknown>>(endpointPath: string, payload: unknown): Promise<T> {
+    const res = await fetch(`${this.baseUrl.replace(/\/+$/, "")}${endpointPath}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        request_id: requestId,
-        network_id: networkId,
-        actor_pubkey: this.identity.participant_key.public_key_hex,
-        nonce,
-        timestamp_ms: timestampMs,
-        signature,
-        operation,
-      }),
+      body: JSON.stringify(payload),
     });
-    return (await res.json()) as Record<string, unknown>;
+    const body = (await res.json()) as Record<string, unknown>;
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${(body.error as string) ?? JSON.stringify(body)}`);
+    }
+    return body as T;
   }
 }

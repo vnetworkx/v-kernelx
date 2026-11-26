@@ -14,9 +14,16 @@ pub async fn run_join(
     let mut parsed_scopes = Vec::new();
     for s in scopes {
         for part in s.split(',') {
-            if let Some(lvl) = ParticipationLevel::parse(part) {
-                parsed_scopes.push(lvl);
+            let trimmed = part.trim();
+            if trimmed.is_empty() {
+                continue;
             }
+            let lvl = ParticipationLevel::parse(trimmed).ok_or_else(|| {
+                format!(
+                    "invalid participation scope `{trimmed}`; expected NETWORK, SPACE, REGION, WALLET, or TOKEN"
+                )
+            })?;
+            parsed_scopes.push(lvl);
         }
     }
     if parsed_scopes.is_empty() {

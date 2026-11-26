@@ -62,7 +62,13 @@ pub async fn get_participant(
                 format!("participant `{participant_id}` not found"),
             )
         })?;
-    Ok(Json(serde_json::to_value(p).unwrap_or_default()))
+    serde_json::to_value(p).map(Json).map_err(|e| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SERIALIZATION_ERROR",
+            e.to_string(),
+        )
+    })
 }
 
 pub async fn get_participant_scope(
