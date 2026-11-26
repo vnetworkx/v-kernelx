@@ -59,6 +59,101 @@ export function signEd25519(privateKeyHex: string, messageBytes: Uint8Array): st
   return crypto.sign(null, Buffer.from(messageBytes), key).toString("hex");
 }
 
+const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
+
+export const PROTOCOL_VERSION = "vector-network/1.0.0";
+export const LANGUAGE_VERSION = "v-langx/1.2.0";
+export const COMPILER_VERSION = "vectorspace-compiler/1.2.0";
+
+export function verifyEd25519(
+  publicKeyHex: string,
+  messageBytes: Uint8Array,
+  signatureHex: string,
+): boolean {
+  const pubRaw = Buffer.from(publicKeyHex.trim(), "hex");
+  const spki = Buffer.concat([ED25519_SPKI_PREFIX, pubRaw]);
+  const key = crypto.createPublicKey({ key: spki, format: "der", type: "spki" });
+  return crypto.verify(
+    null,
+    Buffer.from(messageBytes),
+    key,
+    Buffer.from(signatureHex.trim(), "hex"),
+  );
+}
+
+export function canonicalProgramSubmitObject(params: {
+  actorPubkey: string;
+  fileName: string;
+  sourceBytes: string;
+  modules?: Record<string, string>;
+  networkId: string;
+  requestId: string;
+  nonce: number;
+  executionParams?: Record<string, unknown>;
+}): Record<string, unknown> {
+  const modules = params.modules ?? {};
+  const sourceHash = blake3Hex(params.sourceBytes);
+  const fileKind = params.fileName.endsWith(".vdx") ? "vdx" : "vx";
+  const moduleHashes: Record<string, string> = {};
+  for (const k of Object.keys(modules).sort()) {
+    moduleHashes[k] = blake3Hex(modules[k]);
+  }
+  return {
+    actor_pubkey: params.actorPubkey,
+    compiler_version: COMPILER_VERSION,
+    execution_params: params.executionParams ?? {},
+    file_kind: fileKind,
+    file_name: params.fileName,
+    language_version: LANGUAGE_VERSION,
+    module_hashes: moduleHashes,
+    network_id: params.networkId,
+    nonce: params.nonce,
+    protocol_version: PROTOCOL_VERSION,
+    request_id: params.requestId,
+    source_hash: sourceHash,
+  };
+}
+
+export function canonicalWalletPopObject(params: {
+  networkId: string;
+  walletId: string;
+  participantIdentity: string;
+  authorizedPubkey: string;
+  purpose: string;
+  nonce: string;
+  expiresAtMs?: number | null;
+}): Record<string, unknown> {
+  return {
+    authorized_pubkey: params.authorizedPubkey,
+    expires_at_ms: params.expiresAtMs ?? null,
+    network_id: params.networkId,
+    nonce: params.nonce,
+    participant_identity: params.participantIdentity,
+    protocol_version: PROTOCOL_VERSION,
+    purpose: params.purpose,
+    wallet_id: params.walletId,
+  };
+}
+
+export function canonicalTransferApprovalObject(params: {
+  networkId: string;
+  tokenId: string;
+  fromWalletId: string;
+  toWalletId: string;
+  amount: number | bigint | string;
+  drainBps?: number | null;
+}): Record<string, unknown> {
+  return {
+    amount: String(params.amount),
+    drain_bps: params.drainBps ?? null,
+    from_wallet_id: params.fromWalletId,
+    network_id: params.networkId,
+    protocol_version: PROTOCOL_VERSION,
+    to_wallet_id: params.toWalletId,
+    token_id: params.tokenId,
+  };
+}
+
 export class ClientIdentity {
   readonly display_name: string;
   readonly participant_key: KeypairMaterial;

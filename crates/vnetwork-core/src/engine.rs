@@ -1,4 +1,4 @@
-use crate::authorization::{record_nonce_and_request, validate_signed_envelope, verify_non_replay};
+use crate::authorization::{validate_signed_envelope, verify_non_replay};
 use crate::consensus_gate::commit_verified_proposal;
 use crate::identity::{issue_participant_challenge, verify_and_register_participant, JoinNetworkRequest};
 use crate::language::{
@@ -42,12 +42,20 @@ impl ProtocolEngine {
     }
 
     pub fn from_restored(genesis: GenesisConfig, state: NetworkLedgerState) -> Self {
-        let validators = genesis.initial_validators.clone();
+        let validators = if state.validators.is_empty() {
+            genesis.initial_validators.clone()
+        } else {
+            state.validators.clone()
+        };
         Self {
             genesis,
             state,
             validators,
         }
+    }
+
+    pub fn validator_set_hash(&self) -> VResult<String> {
+        compute_validator_set_hash(&self.validators)
     }
 
     pub fn issue_challenge(&mut self, timestamp_ms: u64) -> ParticipantChallenge {
@@ -64,6 +72,7 @@ impl ProtocolEngine {
         let mut staged = self.state.clone();
         let pre_root = staged.compute_state_root()?;
         let next_height = self.state.height + 1;
+        let vset_hash = self.validator_set_hash()?;
         let (participant, node, event) =
             verify_and_register_participant(&mut staged, req, timestamp_ms)?;
         staged.height = next_height;
@@ -83,7 +92,8 @@ impl ProtocolEngine {
             network_id: self.state.network_id.clone(),
             height: next_height,
             round: 1,
-            epoch: 1,
+            epoch: self.state.validator_epoch,
+            validator_set_hash: vset_hash,
             proposer_validator_id: proposer_validator_id.to_string(),
             pre_state_root: pre_root,
             post_state_root: post_root.clone(),
@@ -169,6 +179,7 @@ impl ProtocolEngine {
             &compiled,
             &req.actor_pubkey,
             timestamp_ms,
+            Some((req.actor_pubkey.as_str(), req.request_id.as_str(), req.nonce)),
         ) {
             Ok(ok) => ok,
             Err(fail) => {
@@ -198,6 +209,7 @@ impl ProtocolEngine {
             next_height,
             &blake3_hex(exec.post_state_root.as_bytes())[..16]
         );
+        let vset_hash = self.validator_set_hash()?;
 
         let bundle = ProgramSourceBundle {
             file_name: req.file_name.clone(),
@@ -212,7 +224,8 @@ impl ProtocolEngine {
             network_id: self.state.network_id.clone(),
             height: next_height,
             round: 1,
-            epoch: 1,
+            epoch: self.state.validator_epoch,
+            validator_set_hash: vset_hash,
             proposer_validator_id: proposer_validator_id.to_string(),
             pre_state_root: exec.pre_state_root,
             post_state_root: exec.post_state_root.clone(),
@@ -276,8 +289,20 @@ impl ProtocolEngine {
         let mut staged = self.state.clone();
         let pre_root = staged.compute_state_root()?;
         let next_height = self.state.height + 1;
-        let outcome =
-            apply_network_operation_with_genesis(&mut staged, &self.genesis, &op, &envelope.actor_pubkey, timestamp_ms)?;
+        let vset_hash = self.validator_set_hash()?;
+        let outcome = apply_network_operation_with_genesis(
+            &mut staged,
+            &self.genesis,
+            op,
+            &envelope.actor_pubkey,
+            timestamp_ms,
+        )?;
+        crate::authorization::record_nonce_and_request(
+            &mut staged,
+            &envelope.request_id,
+            &envelope.actor_pubkey,
+            envelope.nonce,
+        );
         staged.height = next_height;
         let post_root = staged.compute_state_root()?;
         let tx_id = format!(
@@ -295,7 +320,8 @@ impl ProtocolEngine {
             network_id: self.state.network_id.clone(),
             height: next_height,
             round: 1,
-            epoch: 1,
+            epoch: self.state.validator_epoch,
+            validator_set_hash: vset_hash,
             proposer_validator_id: proposer_validator_id.to_string(),
             pre_state_root: pre_root,
             post_state_root: post_root.clone(),
@@ -318,7 +344,7 @@ impl ProtocolEngine {
             tx_id: tx_id.clone(),
             request_id: envelope.request_id.clone(),
             actor_pubkey: envelope.actor_pubkey.clone(),
-            operation: serde_json::to_value(&op)
+            operation: serde_json::to_value(op)
                 .ok()
                 .and_then(|v| v.get("op").and_then(|s| s.as_str()).map(|s| s.to_string()))
                 .unwrap_or_else(|| "OPERATION".to_string()),
@@ -349,10 +375,6 @@ impl ProtocolEngine {
     ) -> VResult<String> {
         let post_root =
             commit_verified_proposal(&mut self.state, proposal, qc, &self.validators)?;
-
-        if let Some((actor_pubkey, request_id, nonce)) = &proposal.nonce_binding {
-            record_nonce_and_request(&mut self.state, request_id, actor_pubkey, *nonce);
-        }
 
         if let Some(pid) = &proposal.program_id {
             if let Some(sub) = self.state.programs.get_mut(pid) {

@@ -21,11 +21,54 @@ pub enum NetworkOperation {
         region_id: String,
         name: String,
         ghost: bool,
+        #[serde(default)]
+        approval_threshold: Option<u16>,
     },
     AuthorizeWalletKey {
         wallet_id: String,
         authorized_pubkey: String,
         role: String,
+        #[serde(default)]
+        permissions: Vec<String>,
+        #[serde(default)]
+        allowed_token_ids: Vec<String>,
+        #[serde(default)]
+        max_amount_per_op: Option<u128>,
+        #[serde(default)]
+        expires_at_ms: Option<u64>,
+        #[serde(default)]
+        pop_nonce: Option<String>,
+        #[serde(default)]
+        pop_signature: Option<String>,
+        #[serde(default)]
+        participant_identity: Option<String>,
+    },
+    RevokeWalletKey {
+        wallet_id: String,
+        target_pubkey: String,
+    },
+    RotateWalletKey {
+        wallet_id: String,
+        old_pubkey: String,
+        new_pubkey: String,
+        role: Option<String>,
+        #[serde(default)]
+        pop_nonce: Option<String>,
+        #[serde(default)]
+        pop_signature: Option<String>,
+        #[serde(default)]
+        participant_identity: Option<String>,
+    },
+    GrantParticipantScope {
+        target_participant_id: String,
+        level: String,
+        target_id: Option<String>,
+        expires_at_ms: Option<u64>,
+    },
+    RevokeParticipantScope {
+        target_participant_id: String,
+        level: String,
+        target_id: Option<String>,
     },
     CreateToken {
         wallet_id: String,
@@ -33,6 +76,8 @@ pub enum NetworkOperation {
         symbol: String,
         initial_supply: u128,
         max_supply: u128,
+        #[serde(default)]
+        unlimited_supply: bool,
         auth_ratio_au: u128,
         energy: u128,
         drain_bps: u16,
@@ -46,11 +91,20 @@ pub enum NetworkOperation {
         to_wallet_id: String,
         amount: u128,
         drain_bps: Option<u16>,
+        #[serde(default)]
+        cosignatures: Vec<(String, String)>,
     },
     DrainToken {
         token_id: String,
         wallet_id: String,
         amount: u128,
+    },
+    AdjustNonTransferableDimensions {
+        token_id: String,
+        wallet_id: String,
+        new_auth_ratio_au: Option<u128>,
+        new_energy: Option<u128>,
+        reason: String,
     },
     CreateContract {
         name: String,
@@ -71,6 +125,8 @@ pub enum NetworkOperation {
         principal: u128,
         collateral: u128,
         interest_bps: u16,
+        #[serde(default)]
+        maturity_at_ms: Option<u64>,
     },
     ExecuteLoan {
         loan_id: String,

@@ -1,68 +1,56 @@
 import { NextResponse } from "next/server";
-import { findValidNonce, STATE_SCHEMA_V1 } from "@/ts/src/index.ts";
-import { getSandboxKernel, resetSandboxKernel } from "@/lib/server/kernel";
+import { postNetworkApiJson } from "@/lib/server/network-proxy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const sandbox = getSandboxKernel();
   return NextResponse.json({
-    schema: STATE_SCHEMA_V1,
-    vectors: sandbox.queryVectors(),
-    records: sandbox.queryRecords(),
+    schema: "vector-network/1.0.0",
+    vectors: [],
+    records: [],
   });
 }
 
 export async function POST(request: Request) {
-  try {
-    const body = (await request.json().catch(() => ({}))) as {
-      action?: unknown;
-      script?: unknown;
-    };
-    const action = typeof body.action === "string" ? body.action : "execute";
+  const body = (await request.json().catch(() => ({}))) as {
+    file_name?: unknown;
+    script?: unknown;
+    source_bytes?: unknown;
+    modules?: unknown;
+  };
 
-    if (action === "demo") {
-      const sandbox = resetSandboxKernel();
-      const nonceA = findValidNonce("seed-a", 1) ?? 0;
-      const nonceB = findValidNonce("seed-b", 1) ?? 0;
-      sandbox.originCreate("v-a", "pk-a", "space-1", [1000, 2000], "seed-a", nonceA, 1);
-      sandbox.originCreate("v-b", "pk-b", "space-1", [50, 75], "seed-b", nonceB, 1);
-      sandbox.transfer("v-a", "v-b", [250, 250]);
-      sandbox.drain("v-a", 100);
-      sandbox.project("v-b", [10, 10], "escrow-1");
-      sandbox.reconstruct("v-b", [2, 1], [0, 0], "settled");
-      return NextResponse.json({
-        schema: STATE_SCHEMA_V1,
-        output: "Loaded canonical 6-step protocol demo (ORIGIN_CREATE x2 -> TRANSFER -> DRAIN -> PROJECT -> RECONSTRUCT).",
-        vectors: sandbox.queryVectors(),
-        records: sandbox.queryRecords(),
-      });
-    }
-
-    if (action === "reset") {
-      const sandbox = resetSandboxKernel();
-      return NextResponse.json({
-        schema: STATE_SCHEMA_V1,
-        output: "Sandbox reset.",
-        vectors: sandbox.queryVectors(),
-        records: sandbox.queryRecords(),
-      });
-    }
-
-    const script = String(body.script ?? "");
-    const sandbox = getSandboxKernel();
-    const lines = sandbox.execute(script);
-    return NextResponse.json({
-      schema: STATE_SCHEMA_V1,
-      output: lines.length > 0 ? lines.join("\n") : "Executed (0 commands).",
-      vectors: sandbox.queryVectors(),
-      records: sandbox.queryRecords(),
-    });
-  } catch (err) {
+  const sourceBytes =
+    typeof body.source_bytes === "string"
+      ? body.source_bytes
+      : typeof body.script === "string"
+        ? body.script
+        : "";
+  if (!sourceBytes.trim()) {
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : String(err) },
+      { error: "Vector Language source_bytes (or script) is required" },
       { status: 400 },
     );
   }
+
+  const upstream = await postNetworkApiJson("/v1/language/compile", {
+    file_name: typeof body.file_name === "string" ? body.file_name : "sandbox.vx",
+    source_bytes: sourceBytes,
+    modules:
+      body.modules && typeof body.modules === "object" ? body.modules : {},
+  });
+
+  if (!upstream.ok) {
+    return NextResponse.json(
+      { error: upstream.error ?? "Rust Vector Language compiler unavailable" },
+      { status: upstream.status },
+    );
+  }
+
+  return NextResponse.json({
+    schema: "vector-network/1.0.0",
+    compiled: upstream.data,
+    vectors: [],
+    records: [],
+  });
 }

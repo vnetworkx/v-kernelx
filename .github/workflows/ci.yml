@@ -44,10 +44,46 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Lint
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Check
+        run: cargo check --workspace --all-targets --all-features
 
       - name: Test
-        run: cargo test
+        run: cargo test --workspace --all-features
 
-      - name: Build release library
-        run: cargo build --release
+      - name: Build release workspace
+        run: cargo build --workspace --release
+
+  cross-sdk-and-scripts:
+    name: Cross-language parity & config validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Verify JS/Python/Go parity & TypeScript compilation
+        run: |
+          node tests/cross_language/verify_parity.mjs
+          python3 tests/cross_language/verify_parity.py
+          go -C sdks/go build ./...
+          go -C examples/go build ./...
+      - name: Validate shell scripts syntax
+        run: |
+          for s in scripts/*.sh tests/cross_language/*.sh; do
+            bash -n "$s"
+          done
+      - name: Validate config TOML manifests
+        run: |
+          python3 -c 'import glob, tomllib; [tomllib.load(open(p, "rb")) for p in glob.glob("config/*.toml")]'

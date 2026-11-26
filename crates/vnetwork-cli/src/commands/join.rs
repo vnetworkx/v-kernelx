@@ -1,8 +1,12 @@
 use crate::config::{load_cli_state, save_cli_state};
+use std::path::PathBuf;
 use vnetwork_sdk::VectorNetworkClient;
 use vnetwork_types::ParticipationLevel;
 
-pub async fn run_join(scopes: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run_join(
+    scopes: Vec<String>,
+    auth_file: Option<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let state = load_cli_state();
     let id = state
         .identity
@@ -17,19 +21,21 @@ pub async fn run_join(scopes: Vec<String>) -> Result<(), Box<dyn std::error::Err
         }
     }
     if parsed_scopes.is_empty() {
-        parsed_scopes = vec![
-            ParticipationLevel::Network,
-            ParticipationLevel::Space,
-            ParticipationLevel::Region,
-            ParticipationLevel::Wallet,
-            ParticipationLevel::Token,
-        ];
+        parsed_scopes = vec![ParticipationLevel::Network];
     }
+    let scope_authorizations: Vec<serde_json::Value> = if let Some(path) = auth_file {
+        let raw = std::fs::read_to_string(&path)?;
+        serde_json::from_str(&raw)?
+    } else {
+        Vec::new()
+    };
     let mut client = VectorNetworkClient::new(&state.endpoint, id);
     if let Some(net) = &state.network_id {
         client = client.with_expected_network(net);
     }
-    let res = client.join(parsed_scopes).await?;
+    let res = client
+        .join_with_authorizations(parsed_scopes, scope_authorizations)
+        .await?;
     save_cli_state(&state)?;
     println!("{}", serde_json::to_string_pretty(&res)?);
     Ok(())

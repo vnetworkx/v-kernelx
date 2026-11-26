@@ -15,7 +15,7 @@ func main() {
 	}
 	networkID := os.Getenv("VNETWORK_NETWORK_ID")
 	if networkID == "" {
-		networkID = "vnetwork-devnet-1"
+		networkID = "vector-devnet-1"
 	}
 
 	identity, err := vnetwork.GenerateIdentity("go-sdk-participant")

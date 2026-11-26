@@ -1,3 +1,4 @@
+use crate::authorization::record_nonce_and_request;
 use crate::events::events_for_entity;
 use crate::ledger::build_ledger_proof_report;
 use crate::reconstruction::reconstruct_entity;
@@ -31,6 +32,7 @@ pub fn execute_compiled_program_staged(
     compiled: &CompiledProgram,
     actor_pubkey: &str,
     timestamp_ms: u64,
+    nonce_binding: Option<(&str, &str, u64)>,
 ) -> Result<StagedProgramExecution, ProgramFailure> {
     let pre_state_root = base_state.compute_state_root().map_err(|e| ProgramFailure {
         failed_operation_index: 0,
@@ -74,6 +76,10 @@ pub fn execute_compiled_program_staged(
                 });
             }
         }
+    }
+
+    if let Some((actor, req_id, nonce)) = nonce_binding {
+        record_nonce_and_request(&mut staged, req_id, actor, nonce);
     }
 
     staged.height = base_state.height + 1;
@@ -145,10 +151,12 @@ fn execute_single_compiled_op(
             outs.push(format!("network verified: {}", state.network_id));
         }
         "PARTICIPANT_JOIN" => {
-            crate::identity::require_participant_scope(
+            crate::identity::require_participant_scope_at(
                 state,
                 actor_pubkey,
                 ParticipationLevel::Network,
+                None,
+                timestamp_ms,
             )?;
             let pname = op
                 .params
@@ -245,11 +253,13 @@ fn execute_single_compiled_op(
                 .unwrap_or(false);
             let fields = op.params.get("fields").cloned().unwrap_or_default();
             let name = field_str(&fields, "name").unwrap_or_else(|| sym.to_string());
+            let approval_threshold = field_u128(&fields, "approval_threshold").map(|v| v as u16);
 
             let net_op = NetworkOperation::CreateWallet {
                 region_id,
                 name,
                 ghost,
+                approval_threshold,
             };
             let outcome = apply_network_operation_with_genesis(state, genesis, &net_op, actor_pubkey, timestamp_ms)?;
             if let Some(ent) = outcome.created_entities.first() {
@@ -271,18 +281,50 @@ fn execute_single_compiled_op(
                 .params
                 .get("public_key")
                 .and_then(|v| v.as_str())
-                .unwrap_or(actor_pubkey)
+                .ok_or_else(|| VNetworkError::Validation("missing public_key".to_string()))?
                 .to_string();
             let role = op
                 .params
                 .get("role")
                 .and_then(|v| v.as_str())
-                .unwrap_or("co-signer")
+                .unwrap_or("signer")
                 .to_string();
+            let fields = op.params.get("fields").cloned().unwrap_or_default();
+            let permissions = fields
+                .get("permissions")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let allowed_token_ids = fields
+                .get("allowed_token_ids")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let max_amount_per_op = field_u128(&fields, "max_amount_per_op");
+            let expires_at_ms = field_u128(&fields, "expires_at_ms").map(|v| v as u64);
+            let pop_nonce = field_str(&fields, "pop_nonce");
+            let pop_signature = field_str(&fields, "pop_signature");
+            let participant_identity = field_str(&fields, "participant_identity");
+
             let net_op = NetworkOperation::AuthorizeWalletKey {
                 wallet_id,
                 authorized_pubkey: pubkey,
                 role,
+                permissions,
+                allowed_token_ids,
+                max_amount_per_op,
+                expires_at_ms,
+                pop_nonce,
+                pop_signature,
+                participant_identity,
             };
             let outcome = apply_network_operation_with_genesis(state, genesis, &net_op, actor_pubkey, timestamp_ms)?;
             events.extend(outcome.events);
@@ -315,42 +357,56 @@ fn execute_single_compiled_op(
                 )));
             }
 
-            let (mut initial_supply, mut auth_ratio_au, mut energy) = (1_000_000u128, 1_000u128, 0u128);
-            if let Some(arr) = fields.get("vector").and_then(|v| v.as_array()) {
-                if arr.len() != 3 {
-                    return Err(VNetworkError::DimensionInvariant(
-                        "token vector must have 3 elements [token, authratio(au), energy]"
-                            .to_string(),
-                    ));
-                }
-                initial_supply = arr[0]
-                    .as_str()
-                    .and_then(|s| s.parse().ok())
-                    .or_else(|| arr[0].as_u64().map(|u| u as u128))
-                    .unwrap_or(0);
-                auth_ratio_au = arr[1]
-                    .as_str()
-                    .and_then(|s| s.parse().ok())
-                    .or_else(|| arr[1].as_u64().map(|u| u as u128))
-                    .unwrap_or(1000);
-                energy = arr[2]
-                    .as_str()
-                    .and_then(|s| s.parse().ok())
-                    .or_else(|| arr[2].as_u64().map(|u| u as u128))
-                    .unwrap_or(0);
-            } else {
-                if let Some(s) = field_u128(&fields, "supply").or_else(|| field_u128(&fields, "initial_supply")) {
-                    initial_supply = s;
-                }
-                if let Some(au) = field_u128(&fields, "authratio").or_else(|| field_u128(&fields, "auth_ratio_au")) {
-                    auth_ratio_au = au;
-                }
-                if let Some(en) = field_u128(&fields, "energy") {
-                    energy = en;
-                }
-            }
+            let (initial_supply, auth_ratio_au, energy) =
+                if let Some(arr) = fields.get("vector").and_then(|v| v.as_array()) {
+                    if arr.len() != 3 {
+                        return Err(VNetworkError::DimensionInvariant(
+                            "token vector must have 3 elements [token, authratio(au), energy]"
+                                .to_string(),
+                        ));
+                    }
+                    let parse_elem = |val: &serde_json::Value, idx: usize| -> VResult<u128> {
+                        val.as_str()
+                            .and_then(|s| s.replace('_', "").parse::<u128>().ok())
+                            .or_else(|| val.as_u64().map(|u| u as u128))
+                            .ok_or_else(|| {
+                                VNetworkError::Validation(format!(
+                                    "invalid token vector integer at dimension {idx}"
+                                ))
+                            })
+                    };
+                    (
+                        parse_elem(&arr[0], 0)?,
+                        parse_elem(&arr[1], 1)?,
+                        parse_elem(&arr[2], 2)?,
+                    )
+                } else {
+                    let s = field_u128(&fields, "supply")
+                        .or_else(|| field_u128(&fields, "initial_supply"))
+                        .ok_or_else(|| {
+                            VNetworkError::Validation(
+                                "token create requires explicit `vector = [token, authratio, energy]` or `initial_supply`"
+                                    .to_string(),
+                            )
+                        })?;
+                    let au = field_u128(&fields, "authratio")
+                        .or_else(|| field_u128(&fields, "auth_ratio_au"))
+                        .unwrap_or(0);
+                    let en = field_u128(&fields, "energy").unwrap_or(0);
+                    (s, au, en)
+                };
 
-            let max_supply = field_u128(&fields, "max_supply").unwrap_or(initial_supply);
+            let unlimited_supply = fields
+                .get("unlimited_supply")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let max_supply = if let Some(m) = field_u128(&fields, "max_supply") {
+                m
+            } else if unlimited_supply {
+                0
+            } else {
+                initial_supply
+            };
             let drain_bps = field_u128(&fields, "drain_bps").unwrap_or(0) as u16;
             let purpose = field_str(&fields, "purpose").unwrap_or_else(|| "network".to_string());
             let external_monetary_value =
@@ -362,6 +418,7 @@ fn execute_single_compiled_op(
                 symbol,
                 initial_supply,
                 max_supply,
+                unlimited_supply,
                 auth_ratio_au,
                 energy,
                 drain_bps,
@@ -383,6 +440,11 @@ fn execute_single_compiled_op(
                 .get("token")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
+            if token_ref.trim().is_empty() {
+                return Err(VNetworkError::Validation(
+                    "transfer requires explicit non-empty token identifier".to_string(),
+                ));
+            }
             let from_ref = op
                 .params
                 .get("from")
@@ -405,16 +467,7 @@ fn execute_single_compiled_op(
                 .and_then(|v| v.as_str())
                 .and_then(|s| s.parse::<u16>().ok());
 
-            let token_id = if token_ref.trim().is_empty() {
-                state
-                    .tokens
-                    .keys()
-                    .next()
-                    .cloned()
-                    .ok_or_else(|| VNetworkError::NotFound("no token specified or available".to_string()))?
-            } else {
-                resolve_alias(aliases, token_ref)
-            };
+            let token_id = resolve_alias(aliases, token_ref);
             let from_wallet_id = resolve_alias(aliases, from_ref);
             let to_wallet_id = resolve_alias(aliases, to_ref);
 
@@ -424,6 +477,7 @@ fn execute_single_compiled_op(
                 to_wallet_id,
                 amount,
                 drain_bps,
+                cosignatures: Vec::new(),
             };
             let outcome = apply_network_operation_with_genesis(state, genesis, &net_op, actor_pubkey, timestamp_ms)?;
             events.extend(outcome.events);
@@ -444,6 +498,7 @@ fn execute_single_compiled_op(
                     to_wallet_id,
                     amount,
                     drain_bps: None,
+                    cosignatures: Vec::new(),
                 };
                 let outcome = apply_network_operation_with_genesis(state, genesis, &net_op, actor_pubkey, timestamp_ms)?;
                 events.extend(outcome.events);
@@ -548,6 +603,7 @@ fn execute_single_compiled_op(
             let principal = field_u128(&fields, "principal").unwrap_or(0);
             let collateral = field_u128(&fields, "collateral").unwrap_or(0);
             let interest_bps = field_u128(&fields, "interest_bps").unwrap_or(0) as u16;
+            let maturity_at_ms = field_u128(&fields, "maturity_at_ms").map(|v| v as u64);
 
             let net_op = NetworkOperation::CreateLoan {
                 name: name.to_string(),
@@ -557,6 +613,7 @@ fn execute_single_compiled_op(
                 principal,
                 collateral,
                 interest_bps,
+                maturity_at_ms,
             };
             let outcome = apply_network_operation_with_genesis(state, genesis, &net_op, actor_pubkey, timestamp_ms)?;
             if let Some(ent) = outcome.created_entities.first() {

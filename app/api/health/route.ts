@@ -1,21 +1,41 @@
 import { NextResponse } from "next/server";
-import { getKernel } from "@/lib/server/kernel";
+import { fetchNetworkApiJson, getNetworkApiUrl } from "@/lib/server/network-proxy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  try {
-    const kernel = getKernel();
-    return NextResponse.json({
-      status: "ok",
-      node_id: kernel.nodeId,
-      db_integrity_ok: kernel.store.integrityCheck(),
-    });
-  } catch (err) {
+  const upstream = await fetchNetworkApiJson<{
+    healthy?: boolean;
+    storage_ok?: boolean;
+    node_id?: string;
+    network_id?: string;
+    height?: number;
+  }>("/healthz");
+
+  if (!upstream.ok || !upstream.data) {
     return NextResponse.json(
-      { status: "error", error: err instanceof Error ? err.message : String(err) },
-      { status: 500 },
+      {
+        status: "unhealthy",
+        healthy: false,
+        storage_ok: false,
+        endpoint: getNetworkApiUrl(),
+        error: upstream.error ?? "Upstream Rust node unreachable",
+      },
+      { status: 503 },
     );
   }
+
+  const healthy = upstream.data.healthy === true && upstream.data.storage_ok !== false;
+  return NextResponse.json(
+    {
+      status: healthy ? "ok" : "degraded",
+      healthy,
+      node_id: upstream.data.node_id ?? "",
+      network_id: upstream.data.network_id ?? "",
+      height: upstream.data.height ?? 0,
+      db_integrity_ok: upstream.data.storage_ok !== false,
+    },
+    { status: healthy ? 200 : 503 },
+  );
 }

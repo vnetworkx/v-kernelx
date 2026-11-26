@@ -1,43 +1,14 @@
-import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
-import { getKernel, logServerEvent } from "@/lib/server/kernel";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function POST(request: Request) {
-  try {
-    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-    const kernel = getKernel();
-    const requestId = String(
-      body.request_id ?? `transport_${Date.now()}_${randomBytes(4).toString("hex")}`,
-    );
-
-    if (!body.signature || !body.actor_public_key) {
-      return NextResponse.json(
-        { error: "Ed25519 client signature (actor_public_key + signature) is required" },
-        { status: 400 },
-      );
-    }
-
-    const result = kernel.transportToken({
-      request_id: requestId,
-      token_id: String(body.token_id ?? ""),
-      to_wallet_id: String(body.to_wallet_id ?? ""),
-      amount: String(body.amount ?? "0"),
-      actor_public_key: String(body.actor_public_key),
-      signature: String(body.signature),
-    });
-    logServerEvent("info", "token_transported", {
-      token_id: result.token.token_id,
-      to: result.balance.wallet_id,
-      amount: String(body.amount),
-    });
-    return NextResponse.json(result);
-  } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : String(err) },
-      { status: 400 },
-    );
-  }
+export async function POST() {
+  return NextResponse.json(
+    {
+      error:
+        "Supply transport is governed by the authoritative Rust kernel CreateToken/TransferToken/DrainToken protocol",
+    },
+    { status: 410 },
+  );
 }

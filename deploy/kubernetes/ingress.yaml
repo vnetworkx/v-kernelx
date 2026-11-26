@@ -9,10 +9,10 @@ metadata:
 spec:
   tls:
     - hosts:
-        - rpc.vnetwork.example
+        - rpc.vectornetwork.example
       secretName: vnetwork-rpc-tls
   rules:
-    - host: rpc.vnetwork.example
+    - host: rpc.vectornetwork.example
       http:
         paths:
           - path: /

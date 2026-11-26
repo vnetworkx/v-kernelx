@@ -48,7 +48,9 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse().unwrap()))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .init();
 
     let cli = Cli::parse();
@@ -95,7 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         cfg.public_api_bind = bind;
     }
 
-    let explicit_genesis: Option<GenesisConfig> = if let Some(gpath) = &cli.genesis_file {
+    let explicit_genesis: Option<GenesisConfig> = if let Some(gpath) = cli.genesis_file.as_ref().or(cfg.genesis_file.as_ref()) {
         let raw = std::fs::read_to_string(gpath)?;
         Some(serde_json::from_str(&raw)?)
     } else {

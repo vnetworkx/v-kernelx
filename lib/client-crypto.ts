@@ -170,6 +170,97 @@ export async function signOperationRequest(
   return signBytesWithPrivateKey(privateKeyHex, bytes);
 }
 
+export const PROTOCOL_VERSION = "vector-network/1.0.0";
+export const LANGUAGE_VERSION = "v-langx/1.2.0";
+export const COMPILER_VERSION = "vectorspace-compiler/1.2.0";
+
+export function deriveParticipantIdClient(publicKeyHex: string): string {
+  const clean = publicKeyHex.trim().toLowerCase();
+  return `prt_${blake3HexClient(`vnetwork/participant-id-v1:${clean}`).slice(0, 24)}`;
+}
+
+export function deriveNodeIdClient(publicKeyHex: string): string {
+  const clean = publicKeyHex.trim().toLowerCase();
+  return `nod_${blake3HexClient(`vnetwork/node-id-v1:${clean}`).slice(0, 24)}`;
+}
+
+export function canonicalProgramSubmitBytesClient(params: {
+  actor_pubkey: string;
+  file_name: string;
+  source_bytes: string;
+  modules?: Record<string, string>;
+  network_id: string;
+  request_id: string;
+  nonce: number;
+  execution_params?: Record<string, unknown>;
+}): Uint8Array {
+  const modules = params.modules ?? {};
+  const module_hashes: Record<string, string> = {};
+  for (const k of Object.keys(modules).sort()) {
+    module_hashes[k] = blake3HexClient(modules[k]);
+  }
+  return utf8ToBytes(
+    sortedJsonStringifyClient({
+      actor_pubkey: params.actor_pubkey,
+      compiler_version: COMPILER_VERSION,
+      execution_params: params.execution_params ?? {},
+      file_kind: params.file_name.endsWith(".vdx") ? "vdx" : "vx",
+      file_name: params.file_name,
+      language_version: LANGUAGE_VERSION,
+      module_hashes,
+      network_id: params.network_id,
+      nonce: params.nonce,
+      protocol_version: PROTOCOL_VERSION,
+      request_id: params.request_id,
+      source_hash: blake3HexClient(params.source_bytes),
+    }),
+  );
+}
+
+export function canonicalWalletPopBytesClient(params: {
+  network_id: string;
+  wallet_id: string;
+  participant_identity: string;
+  authorized_pubkey: string;
+  purpose: string;
+  nonce: string;
+  expires_at_ms?: number | null;
+}): Uint8Array {
+  return utf8ToBytes(
+    sortedJsonStringifyClient({
+      authorized_pubkey: params.authorized_pubkey,
+      expires_at_ms: params.expires_at_ms ?? null,
+      network_id: params.network_id,
+      nonce: params.nonce,
+      participant_identity: params.participant_identity,
+      protocol_version: PROTOCOL_VERSION,
+      purpose: params.purpose,
+      wallet_id: params.wallet_id,
+    }),
+  );
+}
+
+export function canonicalTransferApprovalBytesClient(params: {
+  network_id: string;
+  token_id: string;
+  from_wallet_id: string;
+  to_wallet_id: string;
+  amount: string | number | bigint;
+  drain_bps?: number | null;
+}): Uint8Array {
+  return utf8ToBytes(
+    sortedJsonStringifyClient({
+      amount: String(params.amount),
+      drain_bps: params.drain_bps ?? null,
+      from_wallet_id: params.from_wallet_id,
+      network_id: params.network_id,
+      protocol_version: PROTOCOL_VERSION,
+      to_wallet_id: params.to_wallet_id,
+      token_id: params.token_id,
+    }),
+  );
+}
+
 export function canonicalAttestationSigningBytesClient(params: {
   event_hash: string;
   validator_id: string;

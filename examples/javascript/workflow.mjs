@@ -1,7 +1,7 @@
 import { ClientIdentity, VectorNetworkClient } from "../../sdks/javascript/index.js";
 
 const endpoint = process.env.VNETWORK_ENDPOINT || "http://127.0.0.1:8080";
-const networkId = process.env.VNETWORK_NETWORK_ID || "vnetwork-devnet-1";
+const networkId = process.env.VNETWORK_NETWORK_ID || "vector-devnet-1";
 const vxFile = process.argv[2];
 
 const identity = ClientIdentity.generate("js-sdk-participant");

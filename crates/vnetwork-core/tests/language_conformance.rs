@@ -1,9 +1,13 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 use vnetwork_core::engine::ProtocolEngine;
-use vnetwork_core::identity::{canonical_join_signing_bytes, JoinNetworkRequest};
+use vnetwork_core::identity::{
+    canonical_join_signing_bytes, JoinNetworkRequest, SignedScopeAuthorization,
+};
 use vnetwork_core::language::{compile_vx_source, SubmitProgramRequest};
 use vnetwork_core::state::GenesisConfig;
+use vnetwork_core::token::canonical_transfer_approval_bytes;
+use vnetwork_core::wallet::canonical_wallet_pop_bytes;
 use vnetwork_types::*;
 
 fn single_val_qc(
@@ -34,6 +38,7 @@ fn single_val_qc(
         height: prop.height,
         round: prop.round,
         epoch: prop.epoch,
+        validator_set_hash: prop.validator_set_hash.clone(),
         post_state_root: prop.post_state_root.clone(),
         event_hashes: prop.events.iter().map(|e| e.event_hash.clone()).collect(),
         total_weight: 100,
@@ -44,11 +49,31 @@ fn single_val_qc(
     }
 }
 
+fn signed_scope_auth(
+    grantor: &KeypairMaterial,
+    target_pubkey: &str,
+    network_id: &str,
+    scopes: Vec<ParticipationLevel>,
+) -> SignedScopeAuthorization {
+    let mut auth = SignedScopeAuthorization {
+        target_participant_pubkey: target_pubkey.to_string(),
+        grantor_pubkey: grantor.public_key_hex.clone(),
+        scopes,
+        target_id: None,
+        expires_at_ms: None,
+        authorization_basis: "genesis_validator_delegation".to_string(),
+        signature: String::new(),
+    };
+    let bytes = auth.canonical_signing_bytes(network_id).unwrap();
+    auth.signature = grantor.sign(&bytes).unwrap();
+    auth
+}
+
 fn make_dev_engine() -> (ProtocolEngine, KeypairMaterial, KeypairMaterial, KeypairMaterial) {
     let val_kp = KeypairMaterial::generate("validator");
     let genesis = GenesisConfig::for_profile(
         NetworkProfile::Development,
-        "vnetwork-devnet-1",
+        "vector-devnet-1",
         "Dev Network",
         vec![ConsensusValidator {
             validator_id: "val_1".to_string(),
@@ -78,6 +103,17 @@ fn make_dev_engine() -> (ProtocolEngine, KeypairMaterial, KeypairMaterial, Keypa
         &scopes,
     )
     .unwrap();
+    let scope_auth = signed_scope_auth(
+        &val_kp,
+        &participant_kp.public_key_hex,
+        "vector-devnet-1",
+        vec![
+            ParticipationLevel::Space,
+            ParticipationLevel::Region,
+            ParticipationLevel::Wallet,
+            ParticipationLevel::Token,
+        ],
+    );
     let join_req = JoinNetworkRequest {
         challenge_id: ch.challenge_id,
         participant_pubkey: participant_kp.public_key_hex.clone(),
@@ -88,6 +124,7 @@ fn make_dev_engine() -> (ProtocolEngine, KeypairMaterial, KeypairMaterial, Keypa
         advertised_addresses: vec![],
         participant_signature: participant_kp.sign(&join_bytes).unwrap(),
         node_signature: node_kp.sign(&join_bytes).unwrap(),
+        scope_authorizations: vec![scope_auth],
     };
     let (_, _, prop, _) = engine
         .stage_participant_join(&join_req, "val_1", |b| val_kp.sign(b), 1_001)
@@ -121,6 +158,29 @@ fn sign_program_req(
     let bytes = req.canonical_signing_bytes().unwrap();
     req.signature = actor.sign(&bytes).unwrap();
     req
+}
+
+fn sign_operation(
+    actor: &KeypairMaterial,
+    network_id: &str,
+    nonce: u64,
+    request_id: &str,
+    ts: u64,
+    op: &NetworkOperation,
+) -> SignedRequestEnvelope {
+    let payload_hash = blake3_hex(&canonical_json_bytes(op).unwrap());
+    let mut env = SignedRequestEnvelope {
+        actor_pubkey: actor.public_key_hex.clone(),
+        network_id: network_id.to_string(),
+        request_id: request_id.to_string(),
+        nonce,
+        timestamp_ms: ts,
+        payload_hash,
+        signature: String::new(),
+    };
+    let bytes = env.canonical_signing_bytes().unwrap();
+    env.signature = actor.sign(&bytes).unwrap();
+    env
 }
 
 #[test]
@@ -186,7 +246,6 @@ fn test_staged_execution_leaves_zero_partial_state_on_failure_and_rejects_replay
     let (mut engine, val_kp, actor_kp, _) = make_dev_engine();
     let initial_root = engine.state.compute_state_root().unwrap();
 
-    // Fail at step 4 (transfer from non-existent/insufficient wallet after creating Space/Region/Wallet)
     let failing_prog = r#"
 space create PartialSpace { visibility = "public" }
 region create PartialRegion in "PartialSpace" { prefix = "PRT"; visibility = "public"; section = 1; }
@@ -198,7 +257,7 @@ transfer "NONEXISTENT" from "PartialWallet" to "MissingWallet" amount 999;
         failing_prog,
         BTreeMap::new(),
         &actor_kp,
-        "vnetwork-devnet-1",
+        "vector-devnet-1",
         1,
         "req_fail_1",
     );
@@ -235,7 +294,7 @@ transfer "OKTOK" from "OkWalletA" to "OkWalletB" amount 250;
         ok_prog,
         BTreeMap::new(),
         &actor_kp,
-        "vnetwork-devnet-1",
+        "vector-devnet-1",
         2,
         "req_ok_2",
     );
@@ -256,13 +315,14 @@ transfer "OKTOK" from "OkWalletA" to "OkWalletB" amount 250;
     engine.commit_proposal_with_qc(&staged.proposal, &qc, 2_101).unwrap();
     assert_eq!(engine.state.spaces.len(), 1);
     assert_eq!(engine.state.tokens.len(), 1);
+    assert!(engine.verify_replay().unwrap().valid);
 
     let replay_req = sign_program_req(
         "ok.vx",
         ok_prog,
         BTreeMap::new(),
         &actor_kp,
-        "vnetwork-devnet-1",
+        "vector-devnet-1",
         2,
         "req_ok_replay",
     );
@@ -273,11 +333,272 @@ transfer "OKTOK" from "OkWalletA" to "OkWalletB" amount 250;
 }
 
 #[test]
+fn test_open_join_cannot_self_escalate_scope() {
+    let (mut engine, val_kp, _, _) = make_dev_engine();
+    let rogue_p = KeypairMaterial::generate("rogue-p");
+    let rogue_n = KeypairMaterial::generate("rogue-n");
+    let ch = engine.issue_challenge(3_000);
+    let requested = vec![
+        ParticipationLevel::Network,
+        ParticipationLevel::Space,
+        ParticipationLevel::Wallet,
+        ParticipationLevel::Token,
+    ];
+    let bytes = canonical_join_signing_bytes(
+        &ch,
+        &rogue_p.public_key_hex,
+        &rogue_n.public_key_hex,
+        &requested,
+    )
+    .unwrap();
+    let join_req = JoinNetworkRequest {
+        challenge_id: ch.challenge_id,
+        participant_pubkey: rogue_p.public_key_hex.clone(),
+        node_pubkey: rogue_n.public_key_hex.clone(),
+        display_name: "rogue".to_string(),
+        node_kind: NodeKind::FullNode,
+        requested_scopes: requested,
+        advertised_addresses: vec![],
+        participant_signature: rogue_p.sign(&bytes).unwrap(),
+        node_signature: rogue_n.sign(&bytes).unwrap(),
+        scope_authorizations: vec![],
+    };
+    let (participant, _, prop, _) = engine
+        .stage_participant_join(&join_req, "val_1", |b| val_kp.sign(b), 3_001)
+        .unwrap();
+    assert_eq!(participant.scope.levels.len(), 1);
+    assert!(participant.scope.levels.contains(&ParticipationLevel::Network));
+    let qc = single_val_qc(&prop, &val_kp, "qc_rogue", 3_002);
+    engine.commit_proposal_with_qc(&prop, &qc, 3_002).unwrap();
+
+    let create_space = r#"space create RogueSpace { visibility = "public" }"#;
+    let req = sign_program_req(
+        "rogue.vx",
+        create_space,
+        BTreeMap::new(),
+        &rogue_p,
+        "vector-devnet-1",
+        1,
+        "req_rogue_1",
+    );
+    let failed = engine
+        .stage_program_submission(&req, None, "val_1", |b| val_kp.sign(b), 3_003)
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(failed.status, ProgramLifecycleStatus::Rejected);
+}
+
+#[test]
+fn test_wallet_pop_multisig_and_loan_collateral_escrow_conservation() {
+    let (mut engine, val_kp, actor_kp, _) = make_dev_engine();
+    let cosigner_kp = KeypairMaterial::generate("cosigner");
+
+    // 1. Setup Space + Region
+    let space_op = NetworkOperation::CreateSpace {
+        name: "VaultSpace".to_string(),
+        visibility: "public".to_string(),
+        ghost: false,
+    };
+    let env1 = sign_operation(&actor_kp, "vector-devnet-1", 1, "op_1", 4_000, &space_op);
+    let b1 = engine
+        .stage_signed_operation(&env1, &space_op, "val_1", |b| val_kp.sign(b), 4_000)
+        .unwrap();
+    let qc1 = single_val_qc(&b1.proposal, &val_kp, "qc_m1", 4_001);
+    engine.commit_proposal_with_qc(&b1.proposal, &qc1, 4_001).unwrap();
+    let space_id = b1.created_entities[0].id.clone();
+
+    let reg_op = NetworkOperation::CreateRegion {
+        space_id,
+        name: "VaultRegion".to_string(),
+        prefix: Some("VLT".to_string()),
+        title: None,
+        visibility: "public".to_string(),
+        section: 1,
+        ghost: false,
+    };
+    let env2 = sign_operation(&actor_kp, "vector-devnet-1", 2, "op_2", 4_002, &reg_op);
+    let b2 = engine
+        .stage_signed_operation(&env2, &reg_op, "val_1", |b| val_kp.sign(b), 4_002)
+        .unwrap();
+    let qc2 = single_val_qc(&b2.proposal, &val_kp, "qc_m2", 4_003);
+    engine.commit_proposal_with_qc(&b2.proposal, &qc2, 4_003).unwrap();
+    let region_id = b2.created_entities[0].id.clone();
+
+    // 2. Create 2-of-2 multisig wallet and borrower wallet
+    let w_a = NetworkOperation::CreateWallet {
+        region_id: region_id.clone(),
+        name: "MultiVault".to_string(),
+        ghost: false,
+        approval_threshold: Some(2),
+    };
+    let env3 = sign_operation(&actor_kp, "vector-devnet-1", 3, "op_3", 4_004, &w_a);
+    let b3 = engine
+        .stage_signed_operation(&env3, &w_a, "val_1", |b| val_kp.sign(b), 4_004)
+        .unwrap();
+    let qc3 = single_val_qc(&b3.proposal, &val_kp, "qc_m3", 4_005);
+    engine.commit_proposal_with_qc(&b3.proposal, &qc3, 4_005).unwrap();
+    let vault_id = b3.created_entities[0].id.clone();
+
+    let w_b = NetworkOperation::CreateWallet {
+        region_id,
+        name: "BorrowerVault".to_string(),
+        ghost: false,
+        approval_threshold: Some(1),
+    };
+    let env4 = sign_operation(&actor_kp, "vector-devnet-1", 4, "op_4", 4_006, &w_b);
+    let b4 = engine
+        .stage_signed_operation(&env4, &w_b, "val_1", |b| val_kp.sign(b), 4_006)
+        .unwrap();
+    let qc4 = single_val_qc(&b4.proposal, &val_kp, "qc_m4", 4_007);
+    engine.commit_proposal_with_qc(&b4.proposal, &qc4, 4_007).unwrap();
+    let borrower_id = b4.created_entities[0].id.clone();
+
+    // 3. Invalid PoP fails; valid PoP succeeds
+    let bad_auth = NetworkOperation::AuthorizeWalletKey {
+        wallet_id: vault_id.clone(),
+        authorized_pubkey: cosigner_kp.public_key_hex.clone(),
+        role: "signer".to_string(),
+        permissions: vec![],
+        allowed_token_ids: vec![],
+        max_amount_per_op: None,
+        expires_at_ms: None,
+        pop_nonce: Some("pop_n1".to_string()),
+        pop_signature: Some("deadbeef".to_string()),
+        participant_identity: None,
+    };
+    let env_bad = sign_operation(&actor_kp, "vector-devnet-1", 5, "op_5_bad", 4_008, &bad_auth);
+    assert!(engine
+        .stage_signed_operation(&env_bad, &bad_auth, "val_1", |b| val_kp.sign(b), 4_008)
+        .is_err());
+
+    let p_id = derive_participant_id(&actor_kp.public_key_hex);
+    let pop_bytes = canonical_wallet_pop_bytes(
+        "vector-devnet-1",
+        &vault_id,
+        &p_id,
+        &cosigner_kp.public_key_hex,
+        "wallet_key_authorization",
+        "pop_n1",
+        None,
+        PROTOCOL_VERSION,
+    )
+    .unwrap();
+    let pop_sig = cosigner_kp.sign(&pop_bytes).unwrap();
+    let good_auth = NetworkOperation::AuthorizeWalletKey {
+        wallet_id: vault_id.clone(),
+        authorized_pubkey: cosigner_kp.public_key_hex.clone(),
+        role: "signer".to_string(),
+        permissions: vec![],
+        allowed_token_ids: vec![],
+        max_amount_per_op: None,
+        expires_at_ms: None,
+        pop_nonce: Some("pop_n1".to_string()),
+        pop_signature: Some(pop_sig),
+        participant_identity: Some(p_id),
+    };
+    let env5 = sign_operation(&actor_kp, "vector-devnet-1", 5, "op_5", 4_009, &good_auth);
+    let b5 = engine
+        .stage_signed_operation(&env5, &good_auth, "val_1", |b| val_kp.sign(b), 4_009)
+        .unwrap();
+    let qc5 = single_val_qc(&b5.proposal, &val_kp, "qc_m5", 4_010);
+    engine.commit_proposal_with_qc(&b5.proposal, &qc5, 4_010).unwrap();
+
+    // 4. Mint token in MultiVault and test 2-of-2 multisig transfer
+    let tok_op = NetworkOperation::CreateToken {
+        wallet_id: vault_id.clone(),
+        name: "Multi Token".to_string(),
+        symbol: "MTOK".to_string(),
+        initial_supply: 50_000,
+        max_supply: 50_000,
+        unlimited_supply: false,
+        auth_ratio_au: 1000,
+        energy: 5,
+        drain_bps: 0,
+        purpose: "multisig".to_string(),
+        external_monetary_value: "None".to_string(),
+        ghost: false,
+    };
+    let env6 = sign_operation(&actor_kp, "vector-devnet-1", 6, "op_6", 4_011, &tok_op);
+    let b6 = engine
+        .stage_signed_operation(&env6, &tok_op, "val_1", |b| val_kp.sign(b), 4_011)
+        .unwrap();
+    let qc6 = single_val_qc(&b6.proposal, &val_kp, "qc_m6", 4_012);
+    engine.commit_proposal_with_qc(&b6.proposal, &qc6, 4_012).unwrap();
+    let token_id = b6.created_entities[0].id.clone();
+
+    let solo_xfer = NetworkOperation::TransferToken {
+        token_id: token_id.clone(),
+        from_wallet_id: vault_id.clone(),
+        to_wallet_id: borrower_id.clone(),
+        amount: 5_000,
+        drain_bps: Some(0),
+        cosignatures: vec![],
+    };
+    let env_solo = sign_operation(&actor_kp, "vector-devnet-1", 7, "op_7_solo", 4_013, &solo_xfer);
+    assert!(engine
+        .stage_signed_operation(&env_solo, &solo_xfer, "val_1", |b| val_kp.sign(b), 4_013)
+        .is_err());
+
+    let approval_bytes = canonical_transfer_approval_bytes(
+        "vector-devnet-1",
+        PROTOCOL_VERSION,
+        &token_id,
+        &vault_id,
+        &borrower_id,
+        5_000,
+        Some(0),
+    )
+    .unwrap();
+    let cosig = cosigner_kp.sign(&approval_bytes).unwrap();
+    let multi_xfer = NetworkOperation::TransferToken {
+        token_id: token_id.clone(),
+        from_wallet_id: vault_id.clone(),
+        to_wallet_id: borrower_id.clone(),
+        amount: 5_000,
+        drain_bps: Some(0),
+        cosignatures: vec![(cosigner_kp.public_key_hex.clone(), cosig)],
+    };
+    let env7 = sign_operation(&actor_kp, "vector-devnet-1", 7, "op_7", 4_014, &multi_xfer);
+    let b7 = engine
+        .stage_signed_operation(&env7, &multi_xfer, "val_1", |b| val_kp.sign(b), 4_014)
+        .unwrap();
+    let qc7 = single_val_qc(&b7.proposal, &val_kp, "qc_m7", 4_015);
+    engine.commit_proposal_with_qc(&b7.proposal, &qc7, 4_015).unwrap();
+
+    // Non-transferable dimensions stay [5000, 0, 0] on recipient
+    let recipient_vec = engine.state.get_balance(&token_id, &borrower_id).unwrap().vector;
+    assert_eq!(recipient_vec, TokenVector::new(5_000, 0, 0));
+
+    // 5. Collateralized loan create -> escrow locks collateral -> repay -> escrow releases -> replay verifies!
+    let loan_op = NetworkOperation::CreateLoan {
+        name: "CollateralLoan".to_string(),
+        token_id: token_id.clone(),
+        lender_wallet_id: vault_id.clone(),
+        borrower_wallet_id: borrower_id.clone(),
+        principal: 1_000,
+        collateral: 3_000,
+        interest_bps: 0,
+        maturity_at_ms: None,
+    };
+    let env8 = sign_operation(&actor_kp, "vector-devnet-1", 8, "op_8", 4_016, &loan_op);
+    let b8 = engine
+        .stage_signed_operation(&env8, &loan_op, "val_1", |b| val_kp.sign(b), 4_016)
+        .unwrap();
+    let qc8 = single_val_qc(&b8.proposal, &val_kp, "qc_m8", 4_017);
+    engine.commit_proposal_with_qc(&b8.proposal, &qc8, 4_017).unwrap();
+    assert_eq!(
+        engine.state.get_balance(&token_id, &borrower_id).unwrap().vector.token,
+        2_000
+    );
+    assert!(engine.verify_replay().unwrap().valid);
+}
+
+#[test]
 fn test_production_profile_disallows_atlas_bootstrap() {
     let val_kp = KeypairMaterial::generate("validator");
     let prod_genesis = GenesisConfig::for_profile(
         NetworkProfile::Production,
-        "vnetwork-mainnet-1",
+        "vector-main",
         "Mainnet",
         vec![ConsensusValidator {
             validator_id: "val_1".to_string(),
@@ -306,6 +627,17 @@ fn test_production_profile_disallows_atlas_bootstrap() {
         &scopes,
     )
     .unwrap();
+    let scope_auth = signed_scope_auth(
+        &val_kp,
+        &actor_kp.public_key_hex,
+        "vector-main",
+        vec![
+            ParticipationLevel::Space,
+            ParticipationLevel::Region,
+            ParticipationLevel::Wallet,
+            ParticipationLevel::Token,
+        ],
+    );
     let (_, _, prop, _) = engine
         .stage_participant_join(
             &JoinNetworkRequest {
@@ -318,6 +650,7 @@ fn test_production_profile_disallows_atlas_bootstrap() {
                 advertised_addresses: vec![],
                 participant_signature: actor_kp.sign(&join_bytes).unwrap(),
                 node_signature: node_kp.sign(&join_bytes).unwrap(),
+                scope_authorizations: vec![scope_auth],
             },
             "val_1",
             |b| val_kp.sign(b),
@@ -333,7 +666,7 @@ fn test_production_profile_disallows_atlas_bootstrap() {
         atlas_src,
         BTreeMap::new(),
         &actor_kp,
-        "vnetwork-mainnet-1",
+        "vector-main",
         1,
         "req_atlas",
     );

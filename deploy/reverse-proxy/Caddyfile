@@ -1,4 +1,4 @@
-rpc.vnetwork.example {
+rpc.vectornetwork.example {
     encode gzip
-    reverse_proxy 127.0.0.1:8080
+    reverse_proxy bootstrap-seed:8080
 }

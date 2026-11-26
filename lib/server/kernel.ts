@@ -1,12 +1,15 @@
 import "server-only";
 import fs from "node:fs";
 import path from "node:path";
-import { AtlasKernel, VectorKernelX } from "@/ts/src/index.ts";
+import { getNetworkApiUrl } from "./network-proxy";
 
-declare global {
-  var __atlasKernel: AtlasKernel | undefined;
-  var __atlasSandboxKernel: VectorKernelX | undefined;
-}
+export {
+  fetchNetworkApiJson,
+  fetchNetworkExplorerSnapshot,
+  getNetworkApiUrl,
+  mapNetworkSnapshotToWorkbenchProps,
+  postNetworkApiJson,
+} from "./network-proxy";
 
 function readCleanEnv(name: string): string | null {
   const raw = process.env[name]?.trim();
@@ -24,46 +27,17 @@ export function getDataDir(): string {
   return path.join(process.cwd(), "data");
 }
 
-export function getKernel(): AtlasKernel {
-  if (!globalThis.__atlasKernel) {
-    globalThis.__atlasKernel = new AtlasKernel(getDataDir());
-  }
-  return globalThis.__atlasKernel;
-}
-
-export function getSandboxKernel(): VectorKernelX {
-  if (!globalThis.__atlasSandboxKernel) {
-    globalThis.__atlasSandboxKernel = new VectorKernelX();
-  }
-  return globalThis.__atlasSandboxKernel;
-}
-
-export function resetSandboxKernel(): VectorKernelX {
-  globalThis.__atlasSandboxKernel = new VectorKernelX();
-  return globalThis.__atlasSandboxKernel;
-}
-
-export function getCoreTriggerEventHash(kernel = getKernel()): string {
-  return kernel.ensureCoreTriggerEventHash(kernel.nodePubkey, kernel.nodeId);
-}
-
 export function logServerEvent(
   level: "info" | "warn" | "error",
   event: string,
   details: Record<string, unknown> = {},
 ): void {
-  let nodeId = "uninitialized";
-  try {
-    nodeId = getKernel().nodeId;
-  } catch {
-    // ignore during early startup error logging
-  }
   console.log(
     JSON.stringify({
       ts: new Date().toISOString(),
       level,
       event,
-      node_id: nodeId,
+      upstream_api: getNetworkApiUrl(),
       ...details,
     }),
   );

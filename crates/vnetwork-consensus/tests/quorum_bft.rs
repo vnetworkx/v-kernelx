@@ -22,12 +22,14 @@ fn test_bft_supermajority_quorum_and_equivocation() {
     // ceil(400 * 6667 / 10000) = 267 -> 3 validators (weight 300) required; 2 (200) insufficient!
     assert_eq!(membership.required_weight(), 267);
 
+    let vset_hash = compute_validator_set_hash(&validators).unwrap();
     let mut proposal = ConsensusProposal {
         proposal_id: "prop_test_1".to_string(),
-        network_id: "vnetwork-devnet-1".to_string(),
+        network_id: "vector-devnet-1".to_string(),
         height: 1,
         round: 1,
         epoch: 1,
+        validator_set_hash: vset_hash,
         proposer_validator_id: "val_1".to_string(),
         pre_state_root: "pre".to_string(),
         post_state_root: "post".to_string(),
@@ -57,6 +59,7 @@ fn test_bft_supermajority_quorum_and_equivocation() {
     let qc = tracker.record_vote(&membership, v3, 1_003).unwrap().expect("3/4 should form QC");
     assert_eq!(qc.approving_weight, 300);
     assert_eq!(qc.votes.len(), 3);
+    assert!(!qc.validator_set_hash.is_empty());
 
     // Equivocation test: validator 1 voting on a different proposal at same height/round triggers equivocation
     let mut conflicting_prop = proposal.clone();

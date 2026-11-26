@@ -5,6 +5,37 @@ use std::path::{Path, PathBuf};
 use vnetwork_core::state::TransactionReceipt;
 use vnetwork_types::*;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersistFailpoint {
+    None,
+    AfterPendingRecord,
+    AfterEventWal,
+    AfterConsensusWal,
+    AfterCommittedMarker,
+    AfterSnapshot,
+    AfterTransactions,
+    AfterEntityIndex,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingCommitRecord {
+    pub height: u64,
+    pub proposal_id: String,
+    pub certificate_id: String,
+    pub post_state_root: String,
+    pub prior_event_count: usize,
+    pub event_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommittedCommitMarker {
+    pub height: u64,
+    pub proposal_id: String,
+    pub certificate_id: String,
+    pub post_state_root: String,
+    pub event_count: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommittedProposalRecord {
     pub proposal: ConsensusProposal,
@@ -82,6 +113,10 @@ impl ConsensusWal {
 }
 
 pub fn atomic_write_json<T: Serialize>(path: &Path, value: &T) -> VResult<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| VNetworkError::Storage(format!("create parent dir {:?} failed: {e}", parent)))?;
+    }
     let tmp = path.with_extension("json.tmp");
     let bytes = serde_json::to_vec_pretty(value)
         .map_err(|e| VNetworkError::Serialization(e.to_string()))?;

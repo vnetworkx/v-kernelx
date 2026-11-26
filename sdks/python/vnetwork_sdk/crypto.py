@@ -48,6 +48,80 @@ class KeypairMaterial:
         return ed25519_sign(seed, message).hex()
 
 
+PROTOCOL_VERSION = "vector-network/1.0.0"
+LANGUAGE_VERSION = "v-langx/1.2.0"
+COMPILER_VERSION = "vectorspace-compiler/1.2.0"
+
+
+def canonical_program_submit_object(
+    actor_pubkey: str,
+    file_name: str,
+    source_bytes: str,
+    modules: dict,
+    network_id: str,
+    request_id: str,
+    nonce: int,
+    execution_params: dict | None = None,
+) -> dict:
+    source_hash = blake3_hex(source_bytes)
+    file_kind = "vdx" if file_name.endswith(".vdx") else "vx"
+    module_hashes = {k: blake3_hex(modules[k]) for k in sorted(modules.keys())}
+    return {
+        "actor_pubkey": actor_pubkey,
+        "compiler_version": COMPILER_VERSION,
+        "execution_params": execution_params or {},
+        "file_kind": file_kind,
+        "file_name": file_name,
+        "language_version": LANGUAGE_VERSION,
+        "module_hashes": module_hashes,
+        "network_id": network_id,
+        "nonce": nonce,
+        "protocol_version": PROTOCOL_VERSION,
+        "request_id": request_id,
+        "source_hash": source_hash,
+    }
+
+
+def canonical_wallet_pop_object(
+    network_id: str,
+    wallet_id: str,
+    participant_identity: str,
+    authorized_pubkey: str,
+    purpose: str,
+    nonce: str,
+    expires_at_ms: int | None = None,
+) -> dict:
+    return {
+        "authorized_pubkey": authorized_pubkey,
+        "expires_at_ms": expires_at_ms,
+        "network_id": network_id,
+        "nonce": nonce,
+        "participant_identity": participant_identity,
+        "protocol_version": PROTOCOL_VERSION,
+        "purpose": purpose,
+        "wallet_id": wallet_id,
+    }
+
+
+def canonical_transfer_approval_object(
+    network_id: str,
+    token_id: str,
+    from_wallet_id: str,
+    to_wallet_id: str,
+    amount: int | str,
+    drain_bps: int | None = None,
+) -> dict:
+    return {
+        "amount": str(amount),
+        "drain_bps": drain_bps,
+        "from_wallet_id": from_wallet_id,
+        "network_id": network_id,
+        "protocol_version": PROTOCOL_VERSION,
+        "to_wallet_id": to_wallet_id,
+        "token_id": token_id,
+    }
+
+
 @dataclass
 class ClientIdentity:
     display_name: str

@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use libp2p::{gossipsub, identify, multiaddr::Protocol, request_response, swarm::SwarmEvent, Multiaddr, PeerId};
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, oneshot, RwLock};
@@ -94,6 +94,8 @@ pub struct NodeHandle {
     pub shared_state: Arc<RwLock<NetworkLedgerState>>,
     pub shared_peers: Arc<RwLock<PeerRegistry>>,
     pub shared_membership: Arc<RwLock<ValidatorMembership>>,
+    pub storage: StorageDatabase,
+    pub storage_healthy: Arc<AtomicBool>,
     pub metrics: Arc<NodeMetrics>,
     pub ws_tx: broadcast::Sender<NetworkWsEvent>,
     pub genesis: GenesisConfig,
@@ -105,9 +107,16 @@ impl NetworkNodeBackend for NodeHandle {
     async fn health_report(&self) -> serde_json::Value {
         let state = self.shared_state.read().await;
         let peers = self.shared_peers.read().await;
+        let storage_ok =
+            self.storage_healthy.load(Ordering::Relaxed) && self.storage.check_health().is_ok();
+        let ready = storage_ok
+            && (state.height > 0
+                || peers.connected_count() > 0
+                || !self.config.enable_p2p
+                || self.config.bootstrap_peers.is_empty());
         let report = NodeHealthReport {
-            healthy: true,
-            ready: state.height > 0 || peers.connected_count() > 0 || !self.config.enable_p2p || self.config.bootstrap_peers.is_empty(),
+            healthy: storage_ok,
+            ready,
             node_id: self.identity.node_id.clone(),
             peer_id: self.identity.libp2p_peer_id.to_string(),
             network_id: self.config.network_id.clone(),
@@ -117,7 +126,7 @@ impl NetworkNodeBackend for NodeHandle {
             state_root: state.compute_state_root().unwrap_or_default(),
             connected_peers: peers.connected_count(),
             validator_active: self.config.enable_validator,
-            storage_ok: true,
+            storage_ok,
             api_enabled: self.config.enable_public_api,
             p2p_enabled: self.config.enable_p2p,
             protocol_version: self.config.protocol_version.clone(),
@@ -128,14 +137,18 @@ impl NetworkNodeBackend for NodeHandle {
     async fn ready_report(&self) -> (bool, serde_json::Value) {
         let state = self.shared_state.read().await;
         let peers = self.shared_peers.read().await;
-        let ready = !self.config.enable_p2p
-            || self.config.bootstrap_peers.is_empty()
-            || peers.connected_count() > 0
-            || state.height > 0;
+        let storage_ok =
+            self.storage_healthy.load(Ordering::Relaxed) && self.storage.check_health().is_ok();
+        let ready = storage_ok
+            && (!self.config.enable_p2p
+                || self.config.bootstrap_peers.is_empty()
+                || peers.connected_count() > 0
+                || state.height > 0);
         (
             ready,
             serde_json::json!({
                 "ready": ready,
+                "storage_ok": storage_ok,
                 "node_id": self.identity.node_id,
                 "network_id": self.config.network_id,
                 "height": state.height,
@@ -324,7 +337,8 @@ impl NetworkNodeBackend for NodeHandle {
         serde_json::json!({
             "network_id": self.config.network_id,
             "height": state.height,
-            "epoch": (state.height / 100) + 1,
+            "epoch": state.validator_epoch,
+            "validator_set_hash": compute_validator_set_hash(&state.validators).unwrap_or_default(),
             "quorum_threshold_bps": membership.quorum_threshold_bps(),
             "required_weight": membership.required_weight(),
             "total_active_weight": membership.total_active_weight(),
@@ -424,6 +438,7 @@ pub async fn start_node_runtime(
     let shared_state = Arc::new(RwLock::new(recovered_state));
     let shared_peers = Arc::new(RwLock::new(PeerRegistry::default()));
     let shared_membership = Arc::new(RwLock::new(membership));
+    let storage_healthy = Arc::new(AtomicBool::new(storage.check_health().is_ok()));
     let metrics = Arc::new(NodeMetrics::default());
     let (ws_tx, _) = broadcast::channel(512);
     let (cmd_tx, cmd_rx) = mpsc::channel(256);
@@ -436,6 +451,8 @@ pub async fn start_node_runtime(
         shared_state: shared_state.clone(),
         shared_peers: shared_peers.clone(),
         shared_membership: shared_membership.clone(),
+        storage: storage.clone(),
+        storage_healthy: storage_healthy.clone(),
         metrics: metrics.clone(),
         ws_tx: ws_tx.clone(),
         genesis: genesis.clone(),
@@ -448,6 +465,7 @@ pub async fn start_node_runtime(
         genesis,
         engine,
         storage,
+        storage_healthy,
         shared_state,
         shared_peers,
         shared_membership,
@@ -468,6 +486,7 @@ async fn run_node_loop(
     genesis: GenesisConfig,
     mut engine: ProtocolEngine,
     storage: StorageDatabase,
+    storage_healthy: Arc<AtomicBool>,
     shared_state: Arc<RwLock<NetworkLedgerState>>,
     shared_peers: Arc<RwLock<PeerRegistry>>,
     shared_membership: Arc<RwLock<ValidatorMembership>>,
@@ -570,24 +589,36 @@ async fn run_node_loop(
                                     tx.status = ProgramLifecycleStatus::Rejected;
                                     tx.error = Some(err_msg.clone());
                                 }
-                                let _ = storage.persist_metadata_only(&engine.state);
-                                *shared_state.write().await = engine.state.clone();
+                                if let Err(e) = storage.persist_metadata_only(&engine.state) {
+                                    storage_healthy.store(false, Ordering::Relaxed);
+                                    tracing::error!(proposal_id = %pid, error = %e, "failed to persist rejected program metadata");
+                                } else {
+                                    *shared_state.write().await = engine.state.clone();
+                                }
                             }
                             PendingKind::Join { receipt, .. } => {
                                 if let Some(tx) = engine.state.transactions.get_mut(&receipt.tx_id) {
                                     tx.status = ProgramLifecycleStatus::Rejected;
                                     tx.error = Some(err_msg.clone());
                                 }
-                                let _ = storage.persist_metadata_only(&engine.state);
-                                *shared_state.write().await = engine.state.clone();
+                                if let Err(e) = storage.persist_metadata_only(&engine.state) {
+                                    storage_healthy.store(false, Ordering::Relaxed);
+                                    tracing::error!(proposal_id = %pid, error = %e, "failed to persist rejected join metadata");
+                                } else {
+                                    *shared_state.write().await = engine.state.clone();
+                                }
                             }
                             PendingKind::Transaction { tx_id, .. } => {
                                 if let Some(tx) = engine.state.transactions.get_mut(tx_id) {
                                     tx.status = ProgramLifecycleStatus::Rejected;
                                     tx.error = Some(err_msg.clone());
                                 }
-                                let _ = storage.persist_metadata_only(&engine.state);
-                                *shared_state.write().await = engine.state.clone();
+                                if let Err(e) = storage.persist_metadata_only(&engine.state) {
+                                    storage_healthy.store(false, Ordering::Relaxed);
+                                    tracing::error!(proposal_id = %pid, error = %e, "failed to persist rejected transaction metadata");
+                                } else {
+                                    *shared_state.write().await = engine.state.clone();
+                                }
                             }
                         }
                         let api_err = ApiError::new(
@@ -691,6 +722,7 @@ async fn run_node_loop(
                                     &genesis,
                                     &mut engine,
                                     &storage,
+                                    &storage_healthy,
                                     &shared_state,
                                     &shared_membership,
                                     &metrics,
@@ -750,6 +782,7 @@ async fn run_node_loop(
                                     &genesis,
                                     &mut engine,
                                     &storage,
+                                    &storage_healthy,
                                     &shared_state,
                                     &shared_membership,
                                     &metrics,
@@ -766,9 +799,15 @@ async fn run_node_loop(
                                 .await;
                             }
                             Ok(Err(failed_sub)) => {
-                                let _ = storage.persist_metadata_only(&engine.state);
-                                *shared_state.write().await = engine.state.clone();
-                                let _ = reply.send(Ok(failed_sub));
+                                if let Err(e) = storage.persist_metadata_only(&engine.state) {
+                                    storage_healthy.store(false, Ordering::Relaxed);
+                                    tracing::error!(error = %e, "failed to persist failed program submission metadata");
+                                    let _ = reply.send(Err(ApiError::from(e)));
+                                } else {
+                                    storage_healthy.store(true, Ordering::Relaxed);
+                                    *shared_state.write().await = engine.state.clone();
+                                    let _ = reply.send(Ok(failed_sub));
+                                }
                             }
                             Err(e) => {
                                 let _ = reply.send(Err(ApiError::from(e)));
@@ -814,6 +853,7 @@ async fn run_node_loop(
                                     &genesis,
                                     &mut engine,
                                     &storage,
+                                    &storage_healthy,
                                     &shared_state,
                                     &shared_membership,
                                     &metrics,
@@ -906,6 +946,7 @@ async fn run_node_loop(
                                 &genesis,
                                 &mut engine,
                                 &storage,
+                                &storage_healthy,
                                 &shared_state,
                                 &shared_membership,
                                 &metrics,
@@ -957,6 +998,7 @@ async fn run_node_loop(
                                             &genesis,
                                             &mut engine,
                                             &storage,
+                                            &storage_healthy,
                                             &shared_state,
                                             &shared_membership,
                                             &metrics,
@@ -983,6 +1025,7 @@ async fn run_node_loop(
                                             &genesis,
                                             &mut engine,
                                             &storage,
+                                            &storage_healthy,
                                             &shared_state,
                                             &shared_membership,
                                             &metrics,
@@ -1009,6 +1052,7 @@ async fn run_node_loop(
                                             &genesis,
                                             &mut engine,
                                             &storage,
+                                            &storage_healthy,
                                             &shared_state,
                                             &shared_membership,
                                             &metrics,
@@ -1039,13 +1083,17 @@ async fn run_node_loop(
                                             let membership_guard = shared_membership.read().await;
                                             match reconcile_sync_commits(&mut engine, &storage, &membership_guard, &commits, now) {
                                                 Ok(applied) if applied > 0 => {
+                                                    storage_healthy.store(true, Ordering::Relaxed);
                                                     metrics.sync_batches_applied.fetch_add(1, Ordering::Relaxed);
                                                     *shared_state.write().await = engine.state.clone();
                                                     tracing::info!(node_id = %identity.node_id, applied, height = engine.state.height, "synchronized verified commits from peer");
                                                 }
                                                 Ok(_) => {}
                                                 Err(e) => {
-                                                    tracing::warn!(node_id = %identity.node_id, error = %e, "sync verification failed");
+                                                    if matches!(e, VNetworkError::Storage(_)) {
+                                                        storage_healthy.store(false, Ordering::Relaxed);
+                                                    }
+                                                    tracing::warn!(node_id = %identity.node_id, error = %e, "sync verification or persistence failed");
                                                 }
                                             }
                                         }
@@ -1068,6 +1116,7 @@ async fn process_new_proposal(
     genesis: &GenesisConfig,
     engine: &mut ProtocolEngine,
     storage: &StorageDatabase,
+    storage_healthy: &Arc<AtomicBool>,
     shared_state: &Arc<RwLock<NetworkLedgerState>>,
     shared_membership: &Arc<RwLock<ValidatorMembership>>,
     metrics: &Arc<NodeMetrics>,
@@ -1117,6 +1166,7 @@ async fn process_new_proposal(
                     cfg,
                     engine,
                     storage,
+                    storage_healthy,
                     shared_state,
                     &membership,
                     metrics,
@@ -1144,6 +1194,7 @@ async fn handle_gossip_or_relay_message(
     genesis: &GenesisConfig,
     engine: &mut ProtocolEngine,
     storage: &StorageDatabase,
+    storage_healthy: &Arc<AtomicBool>,
     shared_state: &Arc<RwLock<NetworkLedgerState>>,
     shared_membership: &Arc<RwLock<ValidatorMembership>>,
     metrics: &Arc<NodeMetrics>,
@@ -1192,6 +1243,7 @@ async fn handle_gossip_or_relay_message(
                                 cfg,
                                 engine,
                                 storage,
+                                storage_healthy,
                                 shared_state,
                                 &membership,
                                 metrics,
@@ -1221,6 +1273,7 @@ async fn handle_gossip_or_relay_message(
                     cfg,
                     engine,
                     storage,
+                    storage_healthy,
                     shared_state,
                     &membership,
                     metrics,
@@ -1247,6 +1300,7 @@ async fn handle_gossip_or_relay_message(
                     cfg,
                     engine,
                     storage,
+                    storage_healthy,
                     shared_state,
                     &membership,
                     metrics,
@@ -1296,6 +1350,7 @@ async fn finalize_proposal_everywhere(
     cfg: &NodeConfig,
     engine: &mut ProtocolEngine,
     storage: &StorageDatabase,
+    storage_healthy: &Arc<AtomicBool>,
     shared_state: &Arc<RwLock<NetworkLedgerState>>,
     membership: &ValidatorMembership,
     metrics: &Arc<NodeMetrics>,
@@ -1316,9 +1371,25 @@ async fn finalize_proposal_everywhere(
         return;
     }
 
-    match finalize_and_commit(engine, membership, &proposal, &qc, now) {
+    let mut staged_engine = engine.clone();
+    match finalize_and_commit(&mut staged_engine, membership, &proposal, &qc, now) {
         Ok(post_root) => {
-            let _ = storage.persist_commit(&engine.state, &proposal, &qc);
+            if let Err(e) = storage.persist_commit(&staged_engine.state, &proposal, &qc) {
+                storage_healthy.store(false, Ordering::Relaxed);
+                metrics.proposals_rejected.fetch_add(1, Ordering::Relaxed);
+                tracing::error!(proposal_id = %proposal_id, error = %e, "storage persist_commit failed; aborting commit finality");
+                if let Some(waiter) = pending_waiters.remove(proposal_id) {
+                    let err = ApiError::from(e);
+                    match waiter.kind {
+                        PendingKind::Join { reply, .. } => { let _ = reply.send(Err(err)); }
+                        PendingKind::Program { reply, .. } => { let _ = reply.send(Err(err)); }
+                        PendingKind::Transaction { reply, .. } => { let _ = reply.send(Err(err)); }
+                    }
+                }
+                return;
+            }
+            storage_healthy.store(true, Ordering::Relaxed);
+            *engine = staged_engine;
             *shared_state.write().await = engine.state.clone();
             metrics.proposals_committed.fetch_add(1, Ordering::Relaxed);
 

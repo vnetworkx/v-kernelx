@@ -8,7 +8,7 @@
 
 ```bash
 VNETWORK_ENDPOINT=http://127.0.0.1:18081 \
-VNETWORK_NETWORK_ID=vnetwork-devnet-1 \
+VNETWORK_NETWORK_ID=vector-devnet-1 \
 python3 examples/python/workflow.py
 ```
 
@@ -16,7 +16,7 @@ python3 examples/python/workflow.py
 from vnetwork_sdk import ClientIdentity, VectorNetworkClient
 
 identity = ClientIdentity.generate("py-participant")
-client = VectorNetworkClient("http://127.0.0.1:18081", identity, expected_network_id="vnetwork-devnet-1")
+client = VectorNetworkClient("http://127.0.0.1:18081", identity, expected_network_id="vector-devnet-1")
 client.connect()
 client.join(["NETWORK", "SPACE", "REGION", "WALLET", "TOKEN"])
 sub = client.submit_vx_file("examples/vector-language/create-token.vx")

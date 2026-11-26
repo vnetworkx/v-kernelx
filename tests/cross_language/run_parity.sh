@@ -23,7 +23,22 @@ python3 - "$RUST_JSON" "$JS_JSON" "$TS_JSON" "$PY_JSON" "$GO_JSON" <<'PY'
 import json, sys
 
 records = [json.loads(arg) for arg in sys.argv[1:]]
-fields = ["empty_b3", "hello_b3", "multi_b3", "canon_str", "participant_pubkey", "participant_id", "node_id", "sig"]
+fields = [
+    "empty_b3",
+    "hello_b3",
+    "multi_b3",
+    "canon_str",
+    "participant_pubkey",
+    "participant_id",
+    "node_id",
+    "sig",
+    "submit_str",
+    "submit_sig",
+    "pop_str",
+    "pop_sig",
+    "xfer_str",
+    "xfer_sig",
+]
 ref = records[0]
 for rec in records[1:]:
     for f in fields:

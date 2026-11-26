@@ -78,6 +78,97 @@ func (k KeypairMaterial) Sign(message []byte) (string, error) {
 	return hex.EncodeToString(sig), nil
 }
 
+const (
+	ProtocolVersion = "vector-network/1.0.0"
+	LanguageVersion = "v-langx/1.2.0"
+	CompilerVersion = "vectorspace-compiler/1.2.0"
+)
+
+func VerifyEd25519(publicKeyHex string, message []byte, signatureHex string) (bool, error) {
+	pub, err := hex.DecodeString(strings.TrimSpace(publicKeyHex))
+	if err != nil || len(pub) != ed25519.PublicKeySize {
+		return false, fmt.Errorf("invalid 32-byte Ed25519 public key")
+	}
+	sig, err := hex.DecodeString(strings.TrimSpace(signatureHex))
+	if err != nil || len(sig) != ed25519.SignatureSize {
+		return false, fmt.Errorf("invalid 64-byte Ed25519 signature")
+	}
+	return ed25519.Verify(ed25519.PublicKey(pub), message, sig), nil
+}
+
+func CanonicalProgramSubmitMap(
+	actorPubkey, fileName, sourceBytes string,
+	modules map[string]string,
+	networkID, requestID string,
+	nonce uint64,
+	executionParams map[string]any,
+) map[string]any {
+	fileKind := "vx"
+	if strings.HasSuffix(fileName, ".vdx") {
+		fileKind = "vdx"
+	}
+	moduleHashes := make(map[string]string, len(modules))
+	for k, v := range modules {
+		moduleHashes[k] = Blake3Hex([]byte(v))
+	}
+	if executionParams == nil {
+		executionParams = map[string]any{}
+	}
+	return map[string]any{
+		"actor_pubkey":     actorPubkey,
+		"compiler_version": CompilerVersion,
+		"execution_params": executionParams,
+		"file_kind":        fileKind,
+		"file_name":        fileName,
+		"language_version": LanguageVersion,
+		"module_hashes":    moduleHashes,
+		"network_id":       networkID,
+		"nonce":            nonce,
+		"protocol_version": ProtocolVersion,
+		"request_id":       requestID,
+		"source_hash":      Blake3Hex([]byte(sourceBytes)),
+	}
+}
+
+func CanonicalWalletPoPMap(
+	networkID, walletID, participantIdentity, authorizedPubkey, purpose, nonce string,
+	expiresAtMs *uint64,
+) map[string]any {
+	var exp any = nil
+	if expiresAtMs != nil {
+		exp = *expiresAtMs
+	}
+	return map[string]any{
+		"authorized_pubkey":    authorizedPubkey,
+		"expires_at_ms":        exp,
+		"network_id":           networkID,
+		"nonce":                nonce,
+		"participant_identity": participantIdentity,
+		"protocol_version":     ProtocolVersion,
+		"purpose":              purpose,
+		"wallet_id":            walletID,
+	}
+}
+
+func CanonicalTransferApprovalMap(
+	networkID, tokenID, fromWalletID, toWalletID, amountStr string,
+	drainBps *uint16,
+) map[string]any {
+	var drain any = nil
+	if drainBps != nil {
+		drain = *drainBps
+	}
+	return map[string]any{
+		"amount":           amountStr,
+		"drain_bps":        drain,
+		"from_wallet_id":   fromWalletID,
+		"network_id":       networkID,
+		"protocol_version": ProtocolVersion,
+		"to_wallet_id":     toWalletID,
+		"token_id":         tokenID,
+	}
+}
+
 type ClientIdentity struct {
 	DisplayName    string          `json:"display_name"`
 	ParticipantKey KeypairMaterial `json:"participant_key"`

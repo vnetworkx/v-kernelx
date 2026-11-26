@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use vnetwork_types::*;
 
+fn default_validator_epoch() -> u64 {
+    1
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GenesisConfig {
     pub network_id: String,
@@ -30,6 +34,21 @@ impl GenesisConfig {
             allow_bootstrap_atlas: profile.allows_dev_atlas_fixture(),
         }
     }
+
+    pub fn commitment_hash(&self) -> VResult<String> {
+        let mut sorted_validators = self.initial_validators.clone();
+        sorted_validators.sort_by(|a, b| a.validator_id.cmp(&b.validator_id));
+        let obj = serde_json::json!({
+            "allow_bootstrap_atlas": self.allow_bootstrap_atlas,
+            "genesis_timestamp_ms": self.genesis_timestamp_ms,
+            "initial_validators": sorted_validators,
+            "network_id": self.network_id,
+            "network_name": self.network_name,
+            "profile": self.profile,
+            "protocol_version": self.protocol_version,
+        });
+        Ok(blake3_hex(&canonical_json_bytes(&obj)?))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,8 +67,14 @@ pub struct NetworkLedgerState {
     pub network_id: String,
     pub profile: NetworkProfile,
     pub protocol_version: String,
+    #[serde(default)]
+    pub genesis_commitment: String,
     pub height: u64,
     pub logical_clock: u64,
+    #[serde(default = "default_validator_epoch")]
+    pub validator_epoch: u64,
+    #[serde(default)]
+    pub validators: Vec<ConsensusValidator>,
     pub spaces: BTreeMap<String, SpaceEntity>,
     pub regions: BTreeMap<String, RegionEntity>,
     pub wallets: BTreeMap<String, WalletEntity>,
@@ -67,6 +92,8 @@ pub struct NetworkLedgerState {
     /// Keyed by actor_pubkey -> highest accepted nonce
     pub actor_nonces: BTreeMap<String, u64>,
     pub seen_request_ids: BTreeSet<String>,
+    #[serde(default)]
+    pub used_wallet_pop_nonces: BTreeSet<String>,
     /// Transactions / program_ids indexed by tx_id
     pub transactions: BTreeMap<String, TransactionReceipt>,
     pub snapshots: Vec<StateSnapshot>,
@@ -88,12 +115,16 @@ pub struct TransactionReceipt {
 
 impl NetworkLedgerState {
     pub fn new(genesis: &GenesisConfig) -> Self {
+        let genesis_commitment = genesis.commitment_hash().unwrap_or_default();
         Self {
             network_id: genesis.network_id.clone(),
             profile: genesis.profile,
             protocol_version: genesis.protocol_version.clone(),
+            genesis_commitment,
             height: 0,
             logical_clock: 0,
+            validator_epoch: 1,
+            validators: genesis.initial_validators.clone(),
             spaces: BTreeMap::new(),
             regions: BTreeMap::new(),
             wallets: BTreeMap::new(),
@@ -109,6 +140,7 @@ impl NetworkLedgerState {
             challenges: BTreeMap::new(),
             actor_nonces: BTreeMap::new(),
             seen_request_ids: BTreeSet::new(),
+            used_wallet_pop_nonces: BTreeSet::new(),
             transactions: BTreeMap::new(),
             snapshots: Vec::new(),
         }
@@ -127,18 +159,28 @@ impl NetworkLedgerState {
     }
 
     pub fn compute_state_root(&self) -> VResult<String> {
+        let mut sorted_validators = self.validators.clone();
+        sorted_validators.sort_by(|a, b| a.validator_id.cmp(&b.validator_id));
         let root_obj = serde_json::json!({
+            "actor_nonces": self.actor_nonces,
             "balances": self.balances,
             "contracts": self.contracts,
+            "genesis_commitment": self.genesis_commitment,
             "height": self.height,
             "loans": self.loans,
             "logical_clock": self.logical_clock,
             "network_id": self.network_id,
+            "nodes": self.nodes,
             "participants": self.participants,
             "profile": self.profile,
+            "protocol_version": self.protocol_version,
             "regions": self.regions,
+            "seen_request_ids": self.seen_request_ids,
             "spaces": self.spaces,
             "tokens": self.tokens,
+            "used_wallet_pop_nonces": self.used_wallet_pop_nonces,
+            "validator_epoch": self.validator_epoch,
+            "validators": sorted_validators,
             "wallets": self.wallets,
         });
         let bytes = canonical_json_bytes(&root_obj)?;

@@ -1,5 +1,5 @@
 use crate::hierarchy::verify_space_exists;
-use crate::identity::require_participant_scope;
+use crate::identity::require_participant_scope_at;
 use crate::state::NetworkLedgerState;
 use std::collections::BTreeMap;
 use vnetwork_types::*;
@@ -18,9 +18,26 @@ pub fn apply_create_region(
     metadata: BTreeMap<String, String>,
     timestamp_ms: u64,
 ) -> VResult<(RegionEntity, LedgerEvent)> {
-    require_participant_scope(state, actor_pubkey, ParticipationLevel::Region)?;
-
     let parent_space = verify_space_exists(state, space_ref)?.clone();
+    let is_parent_owner = parent_space.owner_pubkey == actor_pubkey
+        && require_participant_scope_at(
+            state,
+            actor_pubkey,
+            ParticipationLevel::Space,
+            Some(&parent_space.space_id),
+            timestamp_ms,
+        )
+        .is_ok();
+    if !is_parent_owner {
+        require_participant_scope_at(
+            state,
+            actor_pubkey,
+            ParticipationLevel::Region,
+            Some(&parent_space.space_id),
+            timestamp_ms,
+        )?;
+    }
+
     if parent_space.visibility == Visibility::Private && parent_space.owner_pubkey != actor_pubkey {
         return Err(VNetworkError::Authorization(format!(
             "cannot create region in private space `{}` owned by another key",

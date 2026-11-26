@@ -1,11 +1,18 @@
 use crate::contracts::{apply_create_contract, apply_execute_contract};
+use crate::identity::{apply_grant_participant_scope, apply_revoke_participant_scope};
 use crate::loans::{apply_create_loan, apply_execute_loan};
 use crate::region::apply_create_region;
 use crate::space::apply_create_space;
 use crate::state::{GenesisConfig, NetworkLedgerState};
-use crate::token::{apply_create_token, apply_drain_token, apply_transfer_token};
+use crate::token::{
+    apply_adjust_non_transferable_dimensions, apply_create_token, apply_drain_token,
+    apply_transfer_token,
+};
 use crate::validation::validate_operation_preconditions_with_policy;
-use crate::wallet::{apply_authorize_wallet_key, apply_create_wallet};
+use crate::wallet::{
+    apply_authorize_wallet_key, apply_create_wallet, apply_revoke_wallet_key,
+    apply_rotate_wallet_key,
+};
 use std::collections::BTreeMap;
 use vnetwork_types::*;
 
@@ -122,12 +129,14 @@ pub fn apply_network_operation_with_policy(
             region_id,
             name,
             ghost,
+            approval_threshold,
         } => {
             let (wallet, ev) = apply_create_wallet(
                 state,
                 region_id,
                 name,
                 *ghost,
+                *approval_threshold,
                 actor_pubkey,
                 timestamp_ms,
             )?;
@@ -143,12 +152,26 @@ pub fn apply_network_operation_with_policy(
             wallet_id,
             authorized_pubkey,
             role,
+            permissions,
+            allowed_token_ids,
+            max_amount_per_op,
+            expires_at_ms,
+            pop_nonce,
+            pop_signature,
+            participant_identity,
         } => {
             let (wallet, ev) = apply_authorize_wallet_key(
                 state,
                 wallet_id,
                 authorized_pubkey,
                 role,
+                permissions,
+                allowed_token_ids,
+                *max_amount_per_op,
+                *expires_at_ms,
+                pop_nonce.as_deref(),
+                pop_signature.as_deref(),
+                participant_identity.as_deref(),
                 actor_pubkey,
                 timestamp_ms,
             )?;
@@ -158,12 +181,97 @@ pub fn apply_network_operation_with_policy(
             ));
             events.push(ev);
         }
+        NetworkOperation::RevokeWalletKey {
+            wallet_id,
+            target_pubkey,
+        } => {
+            let (wallet, ev) = apply_revoke_wallet_key(
+                state,
+                wallet_id,
+                target_pubkey,
+                actor_pubkey,
+                timestamp_ms,
+            )?;
+            outputs.push(format!(
+                "wallet key revoked on {} ({})",
+                wallet.name, target_pubkey
+            ));
+            events.push(ev);
+        }
+        NetworkOperation::RotateWalletKey {
+            wallet_id,
+            old_pubkey,
+            new_pubkey,
+            role,
+            pop_nonce,
+            pop_signature,
+            participant_identity,
+        } => {
+            let (wallet, ev) = apply_rotate_wallet_key(
+                state,
+                wallet_id,
+                old_pubkey,
+                new_pubkey,
+                role.as_deref(),
+                pop_nonce.as_deref(),
+                pop_signature.as_deref(),
+                participant_identity.as_deref(),
+                actor_pubkey,
+                timestamp_ms,
+            )?;
+            outputs.push(format!(
+                "wallet key rotated on {} ({} -> {})",
+                wallet.name, old_pubkey, new_pubkey
+            ));
+            events.push(ev);
+        }
+        NetworkOperation::GrantParticipantScope {
+            target_participant_id,
+            level,
+            target_id,
+            expires_at_ms,
+        } => {
+            let (participant, ev) = apply_grant_participant_scope(
+                state,
+                target_participant_id,
+                level,
+                target_id.clone(),
+                *expires_at_ms,
+                actor_pubkey,
+                timestamp_ms,
+            )?;
+            outputs.push(format!(
+                "participant scope granted: {} level={level}",
+                participant.participant_id
+            ));
+            events.push(ev);
+        }
+        NetworkOperation::RevokeParticipantScope {
+            target_participant_id,
+            level,
+            target_id,
+        } => {
+            let (participant, ev) = apply_revoke_participant_scope(
+                state,
+                target_participant_id,
+                level,
+                target_id.as_deref(),
+                actor_pubkey,
+                timestamp_ms,
+            )?;
+            outputs.push(format!(
+                "participant scope revoked: {} level={level}",
+                participant.participant_id
+            ));
+            events.push(ev);
+        }
         NetworkOperation::CreateToken {
             wallet_id,
             name,
             symbol,
             initial_supply,
             max_supply,
+            unlimited_supply,
             auth_ratio_au,
             energy,
             drain_bps,
@@ -180,6 +288,7 @@ pub fn apply_network_operation_with_policy(
                 TOKEN_VECTOR_DIMENSIONS,
                 vec3,
                 *max_supply,
+                *unlimited_supply,
                 *drain_bps,
                 purpose,
                 external_monetary_value,
@@ -209,6 +318,7 @@ pub fn apply_network_operation_with_policy(
             to_wallet_id,
             amount,
             drain_bps,
+            cosignatures,
         } => {
             let (from_bal, to_bal, fee, ev) = apply_transfer_token(
                 state,
@@ -217,6 +327,7 @@ pub fn apply_network_operation_with_policy(
                 to_wallet_id,
                 *amount,
                 *drain_bps,
+                cosignatures,
                 actor_pubkey,
                 timestamp_ms,
             )?;
@@ -241,6 +352,33 @@ pub fn apply_network_operation_with_policy(
             outputs.push(format!(
                 "drain: wallet={} token={} remaining={}",
                 bal.wallet_id, bal.token_id, bal.vector.token
+            ));
+            events.push(ev);
+        }
+        NetworkOperation::AdjustNonTransferableDimensions {
+            token_id,
+            wallet_id,
+            new_auth_ratio_au,
+            new_energy,
+            reason,
+        } => {
+            let (bal, ev) = apply_adjust_non_transferable_dimensions(
+                state,
+                token_id,
+                wallet_id,
+                *new_auth_ratio_au,
+                *new_energy,
+                reason,
+                actor_pubkey,
+                timestamp_ms,
+            )?;
+            outputs.push(format!(
+                "dimensions adjusted: wallet={} token={} vec=[{}, {}, {}]",
+                bal.wallet_id,
+                bal.token_id,
+                bal.vector.token,
+                bal.vector.auth_ratio_au,
+                bal.vector.energy
             ));
             events.push(ev);
         }
@@ -303,6 +441,7 @@ pub fn apply_network_operation_with_policy(
             principal,
             collateral,
             interest_bps,
+            maturity_at_ms,
         } => {
             let (loan, ev) = apply_create_loan(
                 state,
@@ -313,6 +452,7 @@ pub fn apply_network_operation_with_policy(
                 *principal,
                 *collateral,
                 *interest_bps,
+                *maturity_at_ms,
                 actor_pubkey,
                 timestamp_ms,
             )?;

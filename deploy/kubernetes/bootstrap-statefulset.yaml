@@ -20,6 +20,10 @@ spec:
           env:
             - name: NETWORK_PROFILE
               value: TESTNET
+            - name: NETWORK_ID
+              value: vector-testnet-1
+            - name: NETWORK_PROTOCOL_VERSION
+              value: vector-network/1.0.0
             - name: NETWORK_NODE_KIND
               value: BOOTSTRAP_SEED
             - name: NETWORK_ENABLE_VALIDATOR

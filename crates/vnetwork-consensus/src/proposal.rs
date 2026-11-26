@@ -1,5 +1,6 @@
 use crate::eligibility::verify_proposer_eligibility;
 use crate::membership::ValidatorMembership;
+use vnetwork_core::authorization::record_nonce_and_request;
 use vnetwork_core::language::validator_verify_program_bundle;
 use vnetwork_core::replay::apply_event_to_state;
 use vnetwork_core::state::{GenesisConfig, NetworkLedgerState};
@@ -17,6 +18,22 @@ pub fn validate_proposal_against_state(
             proposal.network_id, state.network_id
         )));
     }
+    if proposal.epoch != state.validator_epoch {
+        return Err(VNetworkError::Consensus(format!(
+            "proposal epoch {} != active epoch {}",
+            proposal.epoch, state.validator_epoch
+        )));
+    }
+    if !proposal.validator_set_hash.is_empty() {
+        let expected_vhash = compute_validator_set_hash(&membership.all_validators())?;
+        if proposal.validator_set_hash != expected_vhash {
+            return Err(VNetworkError::Consensus(format!(
+                "proposal validator_set_hash `{}` != local `{expected_vhash}`",
+                proposal.validator_set_hash
+            )));
+        }
+    }
+
     let proposer = verify_proposer_eligibility(membership, &proposal.proposer_validator_id)?;
     proposal.verify_proposer_signature(&proposer)?;
 
@@ -54,6 +71,9 @@ pub fn validate_proposal_against_state(
             )));
         }
         apply_event_to_state(&mut staged, ev)?;
+    }
+    if let Some((actor, req_id, nonce)) = &proposal.nonce_binding {
+        record_nonce_and_request(&mut staged, req_id, actor, *nonce);
     }
     staged.height = proposal.height;
     let computed_post = staged.compute_state_root()?;

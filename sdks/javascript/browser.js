@@ -44,6 +44,10 @@ export async function signBrowserEd25519(privateKeyHex, messageBytes) {
   return bytesToHex(new Uint8Array(sig));
 }
 
+export const PROTOCOL_VERSION = "vector-network/1.0.0";
+export const LANGUAGE_VERSION = "v-langx/1.2.0";
+export const COMPILER_VERSION = "vectorspace-compiler/1.2.0";
+
 export class BrowserVectorNetworkClient {
   constructor(baseUrl, identity, expectedNetworkId = null) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
@@ -55,8 +59,8 @@ export class BrowserVectorNetworkClient {
 
   async connect() {
     const info = await this.getJson("/v1/network/info");
-    if (info.protocol_version !== "vnetwork/1.0") {
-      throw new Error(`Protocol mismatch: ${info.protocol_version}`);
+    if (info.protocol_version !== PROTOCOL_VERSION) {
+      throw new Error(`Protocol mismatch: ${info.protocol_version} != ${PROTOCOL_VERSION}`);
     }
     if (this.expectedNetworkId && info.network_id !== this.expectedNetworkId) {
       throw new Error(`Expected network ${this.expectedNetworkId}, got ${info.network_id}`);
@@ -65,7 +69,7 @@ export class BrowserVectorNetworkClient {
     return info;
   }
 
-  async join(scopes = ["NETWORK", "SPACE", "REGION", "WALLET", "TOKEN"]) {
+  async join(scopes = ["NETWORK", "SPACE", "REGION", "WALLET", "TOKEN"], scopeAuthorizations = []) {
     if (!this.connectedNetworkId) await this.connect();
     const challenge = await this.postJson("/v1/participants/challenge", {});
     const msg = canonicalJsonBytes({
@@ -88,20 +92,32 @@ export class BrowserVectorNetworkClient {
       advertised_addresses: [],
       participant_signature: participantSig,
       node_signature: nodeSig,
+      scope_authorizations: scopeAuthorizations,
     });
   }
 
-  async submitProgram(fileName, sourceBytes, modules = {}) {
+  async submitProgram(fileName, sourceBytes, modules = {}, executionParams = {}) {
     if (!this.connectedNetworkId) await this.connect();
     const networkId = this.connectedNetworkId;
     const requestId = `req_${globalThis.crypto.randomUUID().replace(/-/g, "")}`;
     const nonce = this.nonce++;
     const sourceHash = blake3Hex(sourceBytes);
+    const fileKind = fileName.endsWith(".vdx") ? "vdx" : "vx";
+    const moduleHashes = {};
+    for (const k of Object.keys(modules).sort()) {
+      moduleHashes[k] = blake3Hex(modules[k]);
+    }
     const msg = canonicalJsonBytes({
       actor_pubkey: this.identity.participant_key.public_key_hex,
+      compiler_version: COMPILER_VERSION,
+      execution_params: executionParams,
+      file_kind: fileKind,
       file_name: fileName,
+      language_version: LANGUAGE_VERSION,
+      module_hashes: moduleHashes,
       network_id: networkId,
       nonce,
+      protocol_version: PROTOCOL_VERSION,
       request_id: requestId,
       source_hash: sourceHash,
     });
@@ -115,7 +131,49 @@ export class BrowserVectorNetworkClient {
       request_id: requestId,
       nonce,
       signature,
-      execution_params: {},
+      execution_params: executionParams,
+    });
+  }
+
+  async signWalletPop(walletId, participantIdentity, purpose, popNonce, authorizedKey, expiresAtMs = null) {
+    if (!this.connectedNetworkId) await this.connect();
+    const msg = canonicalJsonBytes({
+      authorized_pubkey: authorizedKey.public_key_hex,
+      expires_at_ms: expiresAtMs,
+      network_id: this.connectedNetworkId,
+      nonce: popNonce,
+      participant_identity: participantIdentity,
+      protocol_version: PROTOCOL_VERSION,
+      purpose,
+      wallet_id: walletId,
+    });
+    return signBrowserEd25519(authorizedKey.private_key_hex, msg);
+  }
+
+  async submitOperation(operation) {
+    if (!this.connectedNetworkId) await this.connect();
+    const networkId = this.connectedNetworkId;
+    const requestId = `req_${globalThis.crypto.randomUUID().replace(/-/g, "")}`;
+    const nonce = this.nonce++;
+    const timestampMs = Date.now();
+    const payloadHash = blake3Hex(canonicalJsonBytes(operation));
+    const signingBytes = canonicalJsonBytes({
+      actor_pubkey: this.identity.participant_key.public_key_hex,
+      network_id: networkId,
+      nonce,
+      payload_hash: payloadHash,
+      request_id: requestId,
+      timestamp_ms: timestampMs,
+    });
+    const signature = await signBrowserEd25519(this.identity.participant_key.private_key_hex, signingBytes);
+    return this.postJson("/v1/transactions", {
+      request_id: requestId,
+      network_id: networkId,
+      actor_pubkey: this.identity.participant_key.public_key_hex,
+      nonce,
+      timestamp_ms: timestampMs,
+      signature,
+      operation,
     });
   }
 

@@ -62,6 +62,28 @@ pub struct ScopeGrant {
     pub level: ParticipationLevel,
     pub target_id: Option<String>,
     pub granted_at_ms: u64,
+    #[serde(default)]
+    pub grantor_pubkey: String,
+    #[serde(default)]
+    pub expires_at_ms: Option<u64>,
+    #[serde(default)]
+    pub authorization_basis: String,
+    #[serde(default)]
+    pub revoked: bool,
+}
+
+impl ScopeGrant {
+    pub fn is_active_at(&self, now_ms: u64) -> bool {
+        if self.revoked {
+            return false;
+        }
+        if let Some(exp) = self.expires_at_ms {
+            if now_ms >= exp {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,6 +96,49 @@ pub struct ParticipationScope {
 impl ParticipationScope {
     pub fn has_level(&self, level: ParticipationLevel) -> bool {
         self.levels.contains(&level)
+    }
+
+    pub fn has_active_level(&self, level: ParticipationLevel, now_ms: u64) -> bool {
+        if self.grants.is_empty() {
+            return self.levels.contains(&level);
+        }
+        self.levels.contains(&level)
+            && self
+                .grants
+                .iter()
+                .any(|g| g.level == level && g.is_active_at(now_ms))
+    }
+
+    pub fn has_active_scope(
+        &self,
+        level: ParticipationLevel,
+        target_id: Option<&str>,
+        now_ms: u64,
+    ) -> bool {
+        if !self.levels.contains(&level) {
+            return false;
+        }
+        if self.grants.is_empty() {
+            return true;
+        }
+        self.grants.iter().any(|g| {
+            g.level == level
+                && g.is_active_at(now_ms)
+                && match (&g.target_id, target_id) {
+                    (None, _) => true,
+                    (Some(g_target), Some(req_target)) => g_target == req_target,
+                    (Some(_), None) => false,
+                }
+        })
+    }
+
+    pub fn recompute_levels(&mut self, now_ms: u64) {
+        self.levels = self
+            .grants
+            .iter()
+            .filter(|g| g.is_active_at(now_ms))
+            .map(|g| g.level)
+            .collect();
     }
 }
 

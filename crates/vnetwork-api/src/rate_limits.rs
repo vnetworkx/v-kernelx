@@ -3,6 +3,8 @@ use std::net::IpAddr;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+const MAX_TRACKED_IPS: usize = 10_000;
+
 #[derive(Debug)]
 pub struct RateLimiter {
     max_requests: usize,
@@ -22,6 +24,21 @@ impl RateLimiter {
     pub fn allow(&self, ip: IpAddr) -> bool {
         let now = Instant::now();
         let mut guard = self.buckets.lock().unwrap_or_else(|e| e.into_inner());
+
+        if guard.len() >= MAX_TRACKED_IPS && !guard.contains_key(&ip) {
+            guard.retain(|_, times| {
+                times.retain(|t| now.duration_since(*t) < self.window);
+                !times.is_empty()
+            });
+            while guard.len() >= MAX_TRACKED_IPS {
+                if let Some(evict_ip) = guard.keys().next().copied() {
+                    guard.remove(&evict_ip);
+                } else {
+                    break;
+                }
+            }
+        }
+
         let entry = guard.entry(ip).or_default();
         entry.retain(|t| now.duration_since(*t) < self.window);
         if entry.len() >= self.max_requests {

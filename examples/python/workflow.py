@@ -10,7 +10,7 @@ from vnetwork_sdk import ClientIdentity, VectorNetworkClient  # noqa: E402
 
 def main() -> None:
     endpoint = os.environ.get("VNETWORK_ENDPOINT", "http://127.0.0.1:8080")
-    network_id = os.environ.get("VNETWORK_NETWORK_ID", "vnetwork-devnet-1")
+    network_id = os.environ.get("VNETWORK_NETWORK_ID", "vector-devnet-1")
     vx_file = sys.argv[1] if len(sys.argv) > 1 else None
 
     identity = ClientIdentity.generate("python-sdk-participant")

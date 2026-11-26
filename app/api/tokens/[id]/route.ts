@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { getKernel } from "@/lib/server/kernel";
+import {
+  fetchNetworkExplorerSnapshot,
+  mapNetworkSnapshotToWorkbenchProps,
+} from "@/lib/server/network-proxy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,15 +12,16 @@ export async function GET(
   context: { params: Promise<{ id: string }> },
 ) {
   const { id } = await context.params;
-  const decodedId = decodeURIComponent(id);
-  const kernel = getKernel();
-  const token = kernel.store.getToken(decodedId);
-  if (!token) {
-    return NextResponse.json({ error: "Token not found" }, { status: 404 });
+  const snapshot = await fetchNetworkExplorerSnapshot();
+  if (!snapshot.reachable) {
+    return NextResponse.json({ error: snapshot.error ?? "Node unreachable" }, { status: 503 });
   }
-  return NextResponse.json({
-    token,
-    balances: kernel.store.listTokenBalancesForToken(token.token_id),
-    conservation: kernel.verifySupplyConservation(token.token_id),
-  });
+  const mapped = mapNetworkSnapshotToWorkbenchProps(snapshot);
+  const token = mapped.initialTokens.find(
+    (t) => t.token_id === id || t.symbol.toLowerCase() === id.toLowerCase(),
+  );
+  if (!token) {
+    return NextResponse.json({ error: `Token '${id}' not found` }, { status: 404 });
+  }
+  return NextResponse.json({ token });
 }

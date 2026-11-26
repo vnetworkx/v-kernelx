@@ -24,7 +24,7 @@ vnetwork-types = { path = "../../crates/vnetwork-types" }
 
 ```bash
 VNETWORK_ENDPOINT=http://127.0.0.1:18081 \
-VNETWORK_NETWORK_ID=vnetwork-devnet-1 \
+VNETWORK_NETWORK_ID=vector-devnet-1 \
 cargo run --manifest-path examples/rust/Cargo.toml
 ```
 

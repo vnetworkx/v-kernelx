@@ -78,10 +78,17 @@ pub fn type_compatible_for_transfer(source: VectorType, destination: VectorType)
     )
 }
 
-fn component_allocation(components: &[u128], amount: u128) -> Vec<u128> {
-    let total: u128 = components.iter().copied().sum();
+fn component_allocation(components: &[u128], amount: u128) -> Result<Vec<u128>, RuntimeError> {
+    let mut total: u128 = 0;
+    for &c in components {
+        total = total.checked_add(c).ok_or_else(|| {
+            RuntimeError::new(RuntimeErrorKind::InvalidOperation(
+                "vector component sum overflow".to_string(),
+            ))
+        })?;
+    }
     if total == 0 || amount == 0 {
-        return vec![0; components.len()];
+        return Ok(vec![0; components.len()]);
     }
 
     let mut floors = Vec::with_capacity(components.len());
@@ -89,38 +96,54 @@ fn component_allocation(components: &[u128], amount: u128) -> Vec<u128> {
 
     let mut allocated = 0u128;
     for (idx, &component) in components.iter().enumerate() {
-        let numerator = amount.saturating_mul(component);
+        let numerator = amount.checked_mul(component).ok_or_else(|| {
+            RuntimeError::new(RuntimeErrorKind::InvalidOperation(
+                "component allocation multiplication overflow".to_string(),
+            ))
+        })?;
         let floor = numerator / total;
         let rem = numerator % total;
         floors.push(floor);
         remainders.push((idx, rem));
-        allocated = allocated.saturating_add(floor);
+        allocated = allocated.checked_add(floor).ok_or_else(|| {
+            RuntimeError::new(RuntimeErrorKind::InvalidOperation(
+                "component allocation sum overflow".to_string(),
+            ))
+        })?;
     }
 
-    let mut remaining = amount.saturating_sub(allocated);
+    let mut remaining = amount.checked_sub(allocated).ok_or_else(|| {
+        RuntimeError::new(RuntimeErrorKind::InvalidOperation(
+            "component allocation remainder underflow".to_string(),
+        ))
+    })?;
     remainders.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
     for (idx, _) in remainders {
         if remaining == 0 {
             break;
         }
-        floors[idx] = floors[idx].saturating_add(1);
+        floors[idx] = floors[idx].checked_add(1).ok_or_else(|| {
+            RuntimeError::new(RuntimeErrorKind::InvalidOperation(
+                "component floor increment overflow".to_string(),
+            ))
+        })?;
         remaining -= 1;
     }
 
-    floors
+    Ok(floors)
 }
 
 fn vector_subtract(components: &[u128], amount: u128) -> Result<Vec<u128>, RuntimeError> {
-    let allocation = component_allocation(components, amount);
+    let allocation = component_allocation(components, amount)?;
     let mut out = Vec::with_capacity(components.len());
     for (component, dec) in components.iter().zip(allocation.iter()) {
-        if component < dec {
-            return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation(
+        let rem = component.checked_sub(*dec).ok_or_else(|| {
+            RuntimeError::new(RuntimeErrorKind::InvalidOperation(
                 "allocation exceeded source balance".to_string(),
-            )));
-        }
-        out.push(component - dec);
+            ))
+        })?;
+        out.push(rem);
     }
     Ok(out)
 }
@@ -131,11 +154,15 @@ fn vector_add_strict(components: &[u128], addition: &[u128]) -> Result<Vec<u128>
             "vector dimensions must match".to_string(),
         )));
     }
-    Ok(components
-        .iter()
-        .zip(addition.iter())
-        .map(|(a, b)| a.saturating_add(*b))
-        .collect())
+    let mut out = Vec::with_capacity(components.len());
+    for (a, b) in components.iter().zip(addition.iter()) {
+        out.push(a.checked_add(*b).ok_or_else(|| {
+            RuntimeError::new(RuntimeErrorKind::InvalidOperation(
+                "vector addition overflow".to_string(),
+            ))
+        })?);
+    }
+    Ok(out)
 }
 
 fn canonical_record(
@@ -364,8 +391,12 @@ pub fn execute_kernel_op(state: &mut NetworkState, op: KernelOp) -> Result<Kerne
             }
 
             let after_source = vector_subtract(&before_source, amount)?;
-            let received_amount = amount.saturating_sub(drain);
-            let received = component_allocation(&before_source, received_amount);
+            let received_amount = amount.checked_sub(drain).ok_or_else(|| {
+                RuntimeError::new(RuntimeErrorKind::InvalidOperation(
+                    "drain exceeds transfer amount".to_string(),
+                ))
+            })?;
+            let received = component_allocation(&before_source, received_amount)?;
             let after_dest = vector_add_strict(&before_dest, &received)?;
 
             {
@@ -460,7 +491,7 @@ pub fn execute_kernel_op(state: &mut NetworkState, op: KernelOp) -> Result<Kerne
                     .ok_or_else(|| RuntimeError::new(RuntimeErrorKind::UnknownSymbol(source.clone())))?;
                 vec.components.clone()
             };
-            let locked = component_allocation(&before, amount);
+            let locked = component_allocation(&before, amount)?;
             let remainder = vector_subtract(&before, amount)?;
             {
                 let vec = state

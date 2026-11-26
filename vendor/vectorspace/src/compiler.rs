@@ -267,8 +267,8 @@ pub fn compile_program(program: &Program) -> Result<CompilationUnit, RuntimeErro
                 }
                 context_text.push(')');
 
-                let ratio = compute_auth_ratio(&ctx);
-                let certified = ratio.parse::<f64>().unwrap_or(0.0) >= 0.8000;
+                let (ratio, bps) = compute_auth_ratio_bps(&ctx);
+                let certified = bps >= 8000;
                 ops.push(KernelOp::Certify {
                     target: c.target.clone(),
                     context: context_text,
@@ -396,14 +396,14 @@ pub fn compile_source_with_imports(
     imported_modules.sort_by(|a, b| a.path.cmp(&b.path));
     imported_modules.dedup();
 
-    let canonical_payload = serde_json::json!({
+    let canonical_payload = sort_json_value(serde_json::json!({
         "language_version": LANGUAGE_VERSION,
         "compiler_version": COMPILER_VERSION,
         "file_kind": file_kind.as_str(),
         "source_hash": source_hash,
         "imported_modules": imported_modules,
         "ops": ops,
-    });
+    }));
     let canonical_bytes = serde_json::to_vec(&canonical_payload).map_err(|e| {
         RuntimeError::new(RuntimeErrorKind::InvalidOperation(format!(
             "compiled program serialization error: {e}"
@@ -568,6 +568,7 @@ fn compile_statement_to_op(
                 "wallet": a.wallet,
                 "public_key": expr_to_json(&a.public_key),
                 "role": a.role,
+                "fields": fields_to_json(&a.fields),
             }),
             required_scope: "WALLET".to_string(),
             span: Some(a.span),
@@ -607,14 +608,15 @@ fn compile_statement_to_op(
         },
         Statement::Certify(c) => {
             let ctx = eval_context(&c.context);
-            let ratio = compute_auth_ratio(&ctx);
-            let certified = ratio.parse::<f64>().unwrap_or(0.0) >= 0.8000;
+            let (ratio, bps) = compute_auth_ratio_bps(&ctx);
+            let certified = bps >= 8000;
             CompiledOp {
                 index,
                 op_kind: "CERTIFY".to_string(),
                 params: serde_json::json!({
                     "target": c.target,
                     "auth_ratio": ratio,
+                    "auth_ratio_bps": bps,
                     "certified": certified,
                 }),
                 required_scope: "REGION".to_string(),
@@ -784,34 +786,60 @@ fn compile_statement_to_op(
     Ok(Some(op))
 }
 
-fn compute_auth_ratio(ctx: &Context) -> String {
-    let mut am = 1.0f64;
-    let mut ac = 1.0f64;
-    let mut ao = 1.0f64;
-    let mut ap = 1.0f64;
+fn sort_json_value(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut btree = BTreeMap::new();
+            for (k, v) in map {
+                btree.insert(k, sort_json_value(v));
+            }
+            let mut out = serde_json::Map::new();
+            for (k, v) in btree {
+                out.insert(k, v);
+            }
+            serde_json::Value::Object(out)
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.into_iter().map(sort_json_value).collect())
+        }
+        other => other,
+    }
+}
+
+/// Computes deterministic fixed-point AuthRatio in basis points (0..=10000).
+/// Uses pure integer arithmetic with zero floating-point operations.
+pub fn compute_auth_ratio_bps(ctx: &Context) -> (String, u64) {
+    let mut am_pct: u64 = 100;
+    let mut ac_pct: u64 = 100;
+    let mut ao_pct: u64 = 100;
+    let mut ap_pct: u64 = 100;
+
     if let Some(Value::String(op)) = ctx.get("op") {
         if op.trim().is_empty() {
-            ap = 0.0;
+            ap_pct = 0;
         }
     } else {
-        ap = 0.75;
+        ap_pct = 75;
     }
     if let Some(Value::String(space)) = ctx.get("space") {
         if space.trim().is_empty() {
-            ac = 0.5;
+            ac_pct = 50;
         }
     }
     if let Some(Value::String(risk)) = ctx.get("risk") {
         if risk == "high" {
-            ao = 0.8;
+            ao_pct = 80;
         }
     }
     if ctx.fields.is_empty() {
-        am = 0.5;
-        ac = 0.5;
-        ao = 0.5;
-        ap = 0.5;
+        am_pct = 50;
+        ac_pct = 50;
+        ao_pct = 50;
+        ap_pct = 50;
     }
-    let ratio = 0.35 * am + 0.25 * ac + 0.25 * ao + 0.15 * ap;
-    format!("{ratio:.4}")
+
+    // 0.35*am + 0.25*ac + 0.25*ao + 0.15*ap in basis points (exact 100x scale)
+    let bps = (35 * am_pct) + (25 * ac_pct) + (25 * ao_pct) + (15 * ap_pct);
+    let formatted = format!("{}.{:04}", bps / 10000, bps % 10000);
+    (formatted, bps)
 }

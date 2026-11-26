@@ -1,23 +1,25 @@
 import { NextResponse } from "next/server";
-import { getKernel } from "@/lib/server/kernel";
+import {
+  fetchNetworkExplorerSnapshot,
+  mapNetworkSnapshotToWorkbenchProps,
+} from "@/lib/server/network-proxy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    const { id } = await params;
-    const kernel = getKernel();
-    const wallet = kernel.getWallet(id);
-    if (!wallet) {
-      return NextResponse.json({ error: `Wallet not found: ${id}` }, { status: 404 });
-    }
-    const transactions = kernel.getWalletTransactions(id);
-    return NextResponse.json({ wallet, transactions });
-  } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : String(err) },
-      { status: 400 },
-    );
+export async function GET(
+  _request: Request,
+  context: { params: Promise<{ id: string }> },
+) {
+  const { id } = await context.params;
+  const snapshot = await fetchNetworkExplorerSnapshot();
+  if (!snapshot.reachable) {
+    return NextResponse.json({ error: snapshot.error ?? "Node unreachable" }, { status: 503 });
   }
+  const mapped = mapNetworkSnapshotToWorkbenchProps(snapshot);
+  const wallet = mapped.initialWallets.find((w) => w.wallet_id === id);
+  if (!wallet) {
+    return NextResponse.json({ error: `Wallet '${id}' not found` }, { status: 404 });
+  }
+  return NextResponse.json({ wallet });
 }

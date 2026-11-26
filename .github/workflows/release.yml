@@ -58,22 +58,22 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Rust lint
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Rust tests
-        run: cargo test
+        run: cargo test --workspace --all-features
 
-      - name: Build release library
+      - name: Build release workspace
         if: runner.os != 'Windows'
-        run: cargo build --release
+        run: cargo build --workspace --release
 
-      - name: Build Windows GNU release library
+      - name: Build Windows GNU release workspace
         if: runner.os == 'Windows'
         shell: pwsh
         env:
           CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: gcc
           CC_x86_64_pc_windows_gnu: gcc
-        run: cargo build --release --target x86_64-pc-windows-gnu
+        run: cargo build --workspace --release --target x86_64-pc-windows-gnu
 
       - name: Verify Linux/macOS release library exists
         if: runner.os != 'Windows'

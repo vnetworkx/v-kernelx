@@ -6,7 +6,20 @@ use axum::Json;
 
 pub async fn healthz(State(app): State<ApiAppState>) -> impl IntoResponse {
     let report = app.backend.health_report().await;
-    (StatusCode::OK, Json(report))
+    let healthy = report
+        .get("healthy")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let storage_ok = report
+        .get("storage_ok")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let code = if healthy && storage_ok {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    (code, Json(report))
 }
 
 pub async fn readyz(State(app): State<ApiAppState>) -> impl IntoResponse {

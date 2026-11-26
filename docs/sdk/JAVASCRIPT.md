@@ -12,7 +12,7 @@
 
 ```bash
 VNETWORK_ENDPOINT=http://127.0.0.1:18082 \
-VNETWORK_NETWORK_ID=vnetwork-devnet-1 \
+VNETWORK_NETWORK_ID=vector-devnet-1 \
 node examples/javascript/workflow.mjs
 ```
 
@@ -20,7 +20,7 @@ node examples/javascript/workflow.mjs
 import { ClientIdentity, VectorNetworkClient } from "./sdks/javascript/index.js";
 
 const identity = ClientIdentity.generate("js-user");
-const client = new VectorNetworkClient("http://127.0.0.1:18082", identity, "vnetwork-devnet-1");
+const client = new VectorNetworkClient("http://127.0.0.1:18082", identity, "vector-devnet-1");
 await client.connect();
 await client.join(["NETWORK", "SPACE", "REGION", "WALLET", "TOKEN"]);
 const submission = await client.submitVxFile("examples/vector-language/complete-network-workflow.vx");

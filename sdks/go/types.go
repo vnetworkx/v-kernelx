@@ -23,6 +23,28 @@ type CreatedEntitySummary struct {
 	Name string `json:"name"`
 }
 
+type ConsensusSignature struct {
+	ValidatorID        string `json:"validator_id"`
+	ValidatorPubkeyHex string `json:"validator_pubkey_hex"`
+	Signature          string `json:"signature"`
+}
+
+type QuorumCertificate struct {
+	CertificateID      string               `json:"certificate_id"`
+	NetworkID          string               `json:"network_id"`
+	ProposalID         string               `json:"proposal_id"`
+	Height             uint64               `json:"height"`
+	Epoch              uint64               `json:"epoch"`
+	ValidatorSetHash   string               `json:"validator_set_hash,omitempty"`
+	StateRoot          string               `json:"state_root"`
+	EventRoot          string               `json:"event_root"`
+	ApprovedWeight     uint64               `json:"approved_weight"`
+	TotalWeight        uint64               `json:"total_weight"`
+	QuorumThresholdBps uint16               `json:"quorum_threshold_bps"`
+	Signatures         []ConsensusSignature `json:"signatures"`
+	FinalizedAtMs      uint64               `json:"finalized_at_ms"`
+}
+
 type ProgramSubmission struct {
 	ProgramID            string                 `json:"program_id"`
 	FileName             string                 `json:"file_name"`
@@ -41,6 +63,7 @@ type ProgramSubmission struct {
 	FailedOperationIndex *int                   `json:"failed_operation_index,omitempty"`
 	ErrorMessage         *string                `json:"error_message,omitempty"`
 	ResultingEventIDs    []string               `json:"resulting_event_ids"`
+	ConsensusCertificate *QuorumCertificate     `json:"consensus_certificate,omitempty"`
 	FinalStateRoot       *string                `json:"final_state_root,omitempty"`
 	CreatedEntities      []CreatedEntitySummary `json:"created_entities"`
 	Outputs              []string               `json:"outputs"`

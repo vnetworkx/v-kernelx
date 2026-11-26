@@ -1,26 +1,17 @@
 import { NextResponse } from "next/server";
-import { getKernel } from "@/lib/server/kernel";
+import { fetchNetworkApiJson } from "@/lib/server/network-proxy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    const { id } = await params;
-    const kernel = getKernel();
-    const record =
-      kernel.store.getRecord(id) ??
-      kernel.store.listRecords().find((r) => (r.parameters as Record<string, unknown>)?.request_id === id) ??
-      null;
-    const event = kernel.store.getEventByHash(id) ?? kernel.store.getEventById(id);
-    if (!record && !event) {
-      return NextResponse.json({ error: `Transaction record or event not found: ${id}` }, { status: 404 });
-    }
-    return NextResponse.json({ record, event });
-  } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : String(err) },
-      { status: 400 },
-    );
-  }
+export async function GET(
+  _request: Request,
+  context: { params: Promise<{ id: string }> },
+) {
+  const { id } = await context.params;
+  const upstream = await fetchNetworkApiJson(`/v1/transactions/${encodeURIComponent(id)}`);
+  return NextResponse.json(
+    upstream.data ?? { error: upstream.error ?? "Transaction not found" },
+    { status: upstream.ok ? 200 : upstream.status },
+  );
 }

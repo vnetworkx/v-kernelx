@@ -99,3 +99,80 @@ export class ClientIdentity {
     );
   }
 }
+
+export const PROTOCOL_VERSION = "vector-network/1.0.0";
+export const LANGUAGE_VERSION = "v-langx/1.2.0";
+export const COMPILER_VERSION = "vectorspace-compiler/1.2.0";
+
+export function canonicalProgramSubmitObject({
+  actorPubkey,
+  fileName,
+  sourceBytes,
+  modules = {},
+  networkId,
+  requestId,
+  nonce,
+  executionParams = {},
+}) {
+  const sourceHash = blake3Hex(sourceBytes);
+  const fileKind = fileName.endsWith(".vdx") ? "vdx" : "vx";
+  const moduleHashes = {};
+  for (const k of Object.keys(modules).sort()) {
+    moduleHashes[k] = blake3Hex(modules[k]);
+  }
+  return {
+    actor_pubkey: actorPubkey,
+    compiler_version: COMPILER_VERSION,
+    execution_params: executionParams,
+    file_kind: fileKind,
+    file_name: fileName,
+    language_version: LANGUAGE_VERSION,
+    module_hashes: moduleHashes,
+    network_id: networkId,
+    nonce,
+    protocol_version: PROTOCOL_VERSION,
+    request_id: requestId,
+    source_hash: sourceHash,
+  };
+}
+
+export function canonicalWalletPopObject({
+  networkId,
+  walletId,
+  participantIdentity,
+  authorizedPubkey,
+  purpose,
+  nonce,
+  expiresAtMs = null,
+}) {
+  return {
+    authorized_pubkey: authorizedPubkey,
+    expires_at_ms: expiresAtMs,
+    network_id: networkId,
+    nonce,
+    participant_identity: participantIdentity,
+    protocol_version: PROTOCOL_VERSION,
+    purpose,
+    wallet_id: walletId,
+  };
+}
+
+export function canonicalTransferApprovalObject({
+  networkId,
+  tokenId,
+  fromWalletId,
+  toWalletId,
+  amount,
+  drainBps = null,
+}) {
+  return {
+    amount: String(amount),
+    drain_bps: drainBps,
+    from_wallet_id: fromWalletId,
+    network_id: networkId,
+    protocol_version: PROTOCOL_VERSION,
+    to_wallet_id: toWalletId,
+    token_id: tokenId,
+  };
+}
+

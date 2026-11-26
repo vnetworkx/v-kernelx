@@ -44,6 +44,9 @@ impl QuorumTracker {
             if let Some(collector) = self.proposals.get_mut(&pid) {
                 for v in buffered {
                     if v.height == collector.proposal.height
+                        && v.round == collector.proposal.round
+                        && v.epoch == collector.proposal.epoch
+                        && v.network_id == collector.proposal.network_id
                         && v.post_state_root == collector.proposal.post_state_root
                     {
                         collector.votes.insert(v.validator_id.clone(), v);
@@ -76,6 +79,9 @@ impl QuorumTracker {
         };
 
         if vote.height != collector.proposal.height
+            || vote.round != collector.proposal.round
+            || vote.epoch != collector.proposal.epoch
+            || vote.network_id != collector.proposal.network_id
             || vote.post_state_root != collector.proposal.post_state_root
         {
             return Err(VNetworkError::Consensus(
@@ -101,6 +107,16 @@ impl QuorumTracker {
             .get(proposal_id)
             .ok_or_else(|| VNetworkError::NotFound(format!("proposal `{proposal_id}`")))?;
 
+        let validator_set_hash = compute_validator_set_hash(&membership.all_validators())?;
+        if !collector.proposal.validator_set_hash.is_empty()
+            && collector.proposal.validator_set_hash != validator_set_hash
+        {
+            return Err(VNetworkError::Consensus(format!(
+                "proposal validator_set_hash `{}` != membership `{validator_set_hash}`",
+                collector.proposal.validator_set_hash
+            )));
+        }
+
         let total_weight = membership.total_active_weight();
         if total_weight == 0 {
             return Ok(None);
@@ -109,10 +125,15 @@ impl QuorumTracker {
         let mut approving_weight: u64 = 0;
         let mut approving_votes = Vec::new();
         for vote in collector.votes.values() {
-            if vote.approve {
+            if vote.approve
+                && vote.epoch == collector.proposal.epoch
+                && vote.round == collector.proposal.round
+            {
                 if let Some(val) = membership.get(&vote.validator_id) {
                     if val.active {
-                        approving_weight = approving_weight.saturating_add(val.weight);
+                        approving_weight = approving_weight.checked_add(val.weight).ok_or_else(|| {
+                            VNetworkError::Consensus("approving quorum weight overflow".to_string())
+                        })?;
                         approving_votes.push(vote.clone());
                     }
                 }
@@ -131,8 +152,11 @@ impl QuorumTracker {
             .map(|e| e.event_hash.clone())
             .collect();
         let cert_seed = format!(
-            "{}:{}:{}",
-            collector.proposal.proposal_id, collector.proposal.height, collector.proposal.post_state_root
+            "{}:{}:{}:{}",
+            collector.proposal.proposal_id,
+            collector.proposal.height,
+            collector.proposal.epoch,
+            collector.proposal.post_state_root
         );
         let certificate_id = format!("qc_{}", &blake3_hex(cert_seed.as_bytes())[..20]);
 
@@ -143,6 +167,7 @@ impl QuorumTracker {
             height: collector.proposal.height,
             round: collector.proposal.round,
             epoch: collector.proposal.epoch,
+            validator_set_hash,
             post_state_root: collector.proposal.post_state_root.clone(),
             event_hashes,
             total_weight,

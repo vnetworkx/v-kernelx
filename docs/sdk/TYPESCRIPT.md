@@ -1,8 +1,8 @@
-# Vector Network TypeScript SDK (`@vnetwork/sdk-ts`)
+# Vector Network TypeScript SDK (`@vnetwork/ts-sdk`)
 
 ## Overview
 
-`@vnetwork/sdk-ts` (`sdks/typescript`) provides strictly typed interfaces mirroring Rust `vnetwork-types`, pure TypeScript BLAKE3, canonical JSON, Ed25519 key separation (`ClientIdentity`), Node/Browser transports, and `.vdx` hash-verified bundling.
+`@vnetwork/ts-sdk` (`sdks/typescript`) provides strictly typed interfaces mirroring Rust `vnetwork-types`, pure TypeScript BLAKE3, canonical JSON, Ed25519 key separation (`ClientIdentity`), Node/Browser transports, and `.vdx` hash-verified bundling. Protocol version is `vector-network/1.0.0`.
 
 ## Files
 - `sdks/typescript/src/types.ts` — Strongly typed structs (`NetworkInfo`, `ProgramSubmission`, `QuorumCertificate`, `LedgerProofReport`, `ReconstructionReport`, `SignedRequestEnvelope`).
@@ -13,6 +13,6 @@
 
 ```bash
 VNETWORK_ENDPOINT=http://127.0.0.1:18083 \
-VNETWORK_NETWORK_ID=vnetwork-devnet-1 \
-tsx examples/typescript/workflow.ts
+VNETWORK_NETWORK_ID=vector-devnet-1 \
+node --experimental-strip-types examples/typescript/workflow.ts
 ```

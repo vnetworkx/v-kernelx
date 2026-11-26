@@ -1,7 +1,7 @@
 use crate::hierarchy::verify_region_exists;
-use crate::identity::require_participant_scope;
+use crate::identity::require_participant_scope_at;
 use crate::state::NetworkLedgerState;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use vnetwork_types::*;
 
 pub fn apply_create_contract(
@@ -13,7 +13,13 @@ pub fn apply_create_contract(
     actor_pubkey: &str,
     timestamp_ms: u64,
 ) -> VResult<(VContractEntity, LedgerEvent)> {
-    require_participant_scope(state, actor_pubkey, ParticipationLevel::Network)?;
+    require_participant_scope_at(
+        state,
+        actor_pubkey,
+        ParticipationLevel::Network,
+        None,
+        timestamp_ms,
+    )?;
 
     let clean_name = name.trim();
     if clean_name.is_empty() {
@@ -37,6 +43,34 @@ pub fn apply_create_contract(
         None => (None, None),
     };
 
+    let mut authorized_actors = BTreeSet::new();
+    if let Some(arr) = rules.get("authorized_actors").and_then(|v| v.as_array()) {
+        for item in arr {
+            if let Some(pk) = item.as_str() {
+                if !pk.trim().is_empty() {
+                    authorized_actors.insert(pk.trim().to_string());
+                }
+            }
+        }
+    }
+    let max_executions = rules
+        .get("max_executions")
+        .and_then(|v| v.as_u64());
+    let expires_at_ms = rules
+        .get("expires_at_ms")
+        .and_then(|v| v.as_u64());
+    if let Some(exp) = expires_at_ms {
+        if timestamp_ms >= exp {
+            return Err(VNetworkError::Validation(
+                "contract expires_at_ms must be in the future".to_string(),
+            ));
+        }
+    }
+    let min_auth_ratio_bps = rules
+        .get("min_auth_ratio_bps")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
     let nonce = (state.contracts.len() as u64) + 1;
     let contract_id = derive_contract_id(clean_name, actor_pubkey, nonce);
     let contract = VContractEntity {
@@ -47,6 +81,11 @@ pub fn apply_create_contract(
         creator_pubkey: actor_pubkey.to_string(),
         rules,
         actions,
+        authorized_actors,
+        max_executions,
+        expires_at_ms,
+        min_auth_ratio_bps,
+        execution_history: Vec::new(),
         execution_count: 0,
         active: true,
         created_at_ms: timestamp_ms,
@@ -84,7 +123,13 @@ pub fn apply_execute_contract(
     actor_pubkey: &str,
     timestamp_ms: u64,
 ) -> VResult<(VContractEntity, LedgerEvent)> {
-    require_participant_scope(state, actor_pubkey, ParticipationLevel::Network)?;
+    require_participant_scope_at(
+        state,
+        actor_pubkey,
+        ParticipationLevel::Network,
+        None,
+        timestamp_ms,
+    )?;
 
     let mut contract = state
         .contracts
@@ -101,6 +146,42 @@ pub fn apply_execute_contract(
     if !contract.active {
         return Err(VNetworkError::Validation("contract is inactive".to_string()));
     }
+    if let Some(exp) = contract.expires_at_ms {
+        if timestamp_ms >= exp {
+            return Err(VNetworkError::Validation(format!(
+                "contract `{}` expired at {exp}",
+                contract.name
+            )));
+        }
+    }
+    if let Some(max_exec) = contract.max_executions {
+        if contract.execution_count >= max_exec {
+            return Err(VNetworkError::Validation(format!(
+                "contract `{}` reached max_executions ({max_exec})",
+                contract.name
+            )));
+        }
+    }
+    if !contract.authorized_actors.is_empty()
+        && !contract.authorized_actors.contains(actor_pubkey)
+        && contract.creator_pubkey != actor_pubkey
+    {
+        return Err(VNetworkError::Authorization(format!(
+            "actor `{actor_pubkey}` is not in authorized_actors for contract `{}`",
+            contract.name
+        )));
+    }
+    if contract.min_auth_ratio_bps > 0 {
+        if let Some(reg_id) = &contract.region_id {
+            let reg = verify_region_exists(state, reg_id)?;
+            if reg.auth_ratio_bps < contract.min_auth_ratio_bps {
+                return Err(VNetworkError::Authorization(format!(
+                    "region auth_ratio_bps {} < required {}",
+                    reg.auth_ratio_bps, contract.min_auth_ratio_bps
+                )));
+            }
+        }
+    }
 
     if !contract.actions.is_empty() {
         let declared = contract
@@ -116,8 +197,16 @@ pub fn apply_execute_contract(
     }
 
     let before_hash = blake3_hex(&canonical_json_bytes(&contract)?);
-    contract.execution_count += 1;
-    contract.version += 1;
+    contract.execution_count = contract
+        .execution_count
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("contract execution_count overflow".to_string()))?;
+    let exec_entry = format!("{}:{}@{}", contract.execution_count, action, timestamp_ms);
+    contract.execution_history.push(exec_entry);
+    contract.version = contract
+        .version
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("contract version overflow".to_string()))?;
     state
         .contracts
         .insert(contract.contract_id.clone(), contract.clone());
@@ -142,6 +231,7 @@ pub fn apply_execute_contract(
             "action": action,
             "args": args,
             "execution_count": contract.execution_count,
+            "contract": contract,
         }),
         before_hash,
         after_hash,

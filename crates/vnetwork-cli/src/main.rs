@@ -30,6 +30,8 @@ enum Commands {
     Join {
         #[arg(long = "scope")]
         scopes: Vec<String>,
+        #[arg(long = "auth-file")]
+        auth_file: Option<PathBuf>,
     },
     Participation {
         #[command(subcommand)]
@@ -119,7 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             IdentityCmd::Create { name } => commands::identity::run_identity_create(name)?,
             IdentityCmd::Show => commands::identity::run_identity_show()?,
         },
-        Commands::Join { scopes } => commands::join::run_join(scopes).await?,
+        Commands::Join { scopes, auth_file } => commands::join::run_join(scopes, auth_file).await?,
         Commands::Participation { sub: ParticipationCmd::Status } => {
             commands::status::run_participation_status().await?
         }

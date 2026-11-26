@@ -1,76 +1,36 @@
 import { NextResponse } from "next/server";
-import { getKernel, logServerEvent } from "@/lib/server/kernel";
+import {
+  fetchNetworkExplorerSnapshot,
+  mapNetworkSnapshotToWorkbenchProps,
+  postNetworkApiJson,
+} from "@/lib/server/network-proxy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const kernel = getKernel();
-  const wallets = kernel.listWallets().map((w) => ({
-    ...w,
-    auth_ratio: kernel.computeWalletAuthRatio(w),
-    balances: kernel.store.listTokenBalancesForWallet(w.wallet_id),
-    rewards: kernel.store.listDrainRewardsForWallet(w.wallet_id),
-  }));
-  return NextResponse.json({ wallets });
+  const snapshot = await fetchNetworkExplorerSnapshot();
+  if (!snapshot.reachable) {
+    return NextResponse.json({ wallets: [], error: snapshot.error }, { status: 503 });
+  }
+  const mapped = mapNetworkSnapshotToWorkbenchProps(snapshot);
+  return NextResponse.json({ wallets: mapped.initialWallets });
 }
 
 export async function POST(request: Request) {
-  try {
-    const body = (await request.json().catch(() => ({}))) as {
-      mode?: unknown;
-      label?: unknown;
-      region_id?: unknown;
-      creator_wallet_id?: unknown;
-      public_key_hex?: unknown;
-    };
-    const kernel = getKernel();
-    const label = String(body.label ?? "").trim();
-    const regionId = body.region_id ? String(body.region_id).trim() : null;
-    const creatorWalletId = body.creator_wallet_id ? String(body.creator_wallet_id).trim() : null;
-
-    if (body.mode === "register_pubkey") {
-      const publicKeyHex = String(body.public_key_hex ?? "").trim();
-      const wallet = kernel.registerExternalWallet({
-        public_key_hex: publicKeyHex,
-        label,
-        region_id: regionId,
-        creator_wallet_id: creatorWalletId,
-      });
-      logServerEvent("info", "wallet_registered_external", {
-        wallet_id: wallet.wallet_id,
-        region_id: wallet.region_id,
-        creator_wallet_id: wallet.creator_wallet_id,
-      });
-      return NextResponse.json({
-        wallet: {
-          ...wallet,
-          auth_ratio: kernel.computeWalletAuthRatio(wallet),
-          balances: [],
-          rewards: [],
-        },
-      });
-    }
-
-    const created = kernel.createOpenWallet(label, regionId, creatorWalletId);
-    logServerEvent("info", "wallet_created_open", {
-      wallet_id: created.wallet.wallet_id,
-      region_id: created.wallet.region_id,
-      creator_wallet_id: created.wallet.creator_wallet_id,
-    });
-    return NextResponse.json({
-      wallet: {
-        ...created.wallet,
-        auth_ratio: kernel.computeWalletAuthRatio(created.wallet),
-        balances: [],
-        rewards: [],
-      },
-      private_key_hex: created.private_key_hex,
-    });
-  } catch (err) {
+  const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!body.signature || !body.actor_pubkey || !body.operation) {
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : String(err) },
+      {
+        error:
+          "Wallets are created and authorized via signed CreateWallet/AuthorizeWalletKey transactions on /v1/transactions",
+      },
       { status: 400 },
     );
   }
+  const upstream = await postNetworkApiJson("/v1/transactions", body);
+  return NextResponse.json(
+    upstream.data ?? { error: upstream.error ?? "Wallet operation rejected" },
+    { status: upstream.ok ? 200 : upstream.status },
+  );
 }

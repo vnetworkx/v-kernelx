@@ -74,6 +74,7 @@ export interface QuorumCertificate {
   proposal_id: string;
   height: number;
   epoch: number;
+  validator_set_hash?: string;
   state_root: string;
   event_root: string;
   approved_weight: number;
@@ -136,10 +137,62 @@ export type NetworkOperation =
         ghost: boolean;
       };
     }
-  | { op: "CreateWallet"; payload: { region_id: string; name: string; ghost: boolean } }
+  | {
+      op: "CreateWallet";
+      payload: {
+        region_id: string;
+        name: string;
+        ghost: boolean;
+        approval_threshold?: number | null;
+      };
+    }
   | {
       op: "AuthorizeWalletKey";
-      payload: { wallet_id: string; authorized_pubkey: string; role: string };
+      payload: {
+        wallet_id: string;
+        authorized_pubkey: string;
+        role: string;
+        permissions?: string[];
+        allowed_token_ids?: string[];
+        max_amount_per_op?: number | null;
+        expires_at_ms?: number | null;
+        pop_nonce?: string | null;
+        pop_signature?: string | null;
+        participant_identity?: string | null;
+      };
+    }
+  | {
+      op: "RevokeWalletKey";
+      payload: { wallet_id: string; target_pubkey: string };
+    }
+  | {
+      op: "RotateWalletKey";
+      payload: {
+        wallet_id: string;
+        old_pubkey: string;
+        new_pubkey: string;
+        role?: string | null;
+        pop_nonce?: string | null;
+        pop_signature?: string | null;
+        participant_identity?: string | null;
+      };
+    }
+  | {
+      op: "GrantParticipantScope";
+      payload: {
+        target_participant_id: string;
+        level: string;
+        target_id?: string | null;
+        expires_at_ms?: number | null;
+      };
+    }
+  | {
+      op: "RevokeParticipantScope";
+      payload: {
+        target_participant_id: string;
+        level: string;
+        target_id?: string | null;
+      };
     }
   | {
       op: "CreateToken";
@@ -149,6 +202,7 @@ export type NetworkOperation =
         symbol: string;
         initial_supply: number;
         max_supply: number;
+        unlimited_supply?: boolean;
         auth_ratio_au: number;
         energy: number;
         drain_bps: number;
@@ -165,9 +219,20 @@ export type NetworkOperation =
         to_wallet_id: string;
         amount: number;
         drain_bps?: number | null;
+        cosignatures?: Array<[string, string]>;
       };
     }
   | { op: "DrainToken"; payload: { token_id: string; wallet_id: string; amount: number } }
+  | {
+      op: "AdjustNonTransferableDimensions";
+      payload: {
+        token_id: string;
+        wallet_id: string;
+        new_auth_ratio_au?: number | null;
+        new_energy?: number | null;
+        reason: string;
+      };
+    }
   | {
       op: "CreateContract";
       payload: { name: string; region_id?: string | null; rules: unknown; actions: unknown[] };
@@ -183,6 +248,7 @@ export type NetworkOperation =
         principal: number;
         collateral: number;
         interest_bps: number;
+        maturity_at_ms?: number | null;
       };
     }
   | { op: "ExecuteLoan"; payload: { loan_id: string; action: string; amount: number } };

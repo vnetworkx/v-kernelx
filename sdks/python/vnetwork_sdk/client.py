@@ -11,7 +11,14 @@ from typing import Any, Callable, Dict, List, Optional
 
 from .blake3 import blake3_hex
 from .canonical import canonical_json_bytes
-from .crypto import ClientIdentity
+from .crypto import (
+    PROTOCOL_VERSION,
+    ClientIdentity,
+    KeypairMaterial,
+    canonical_program_submit_object,
+    canonical_transfer_approval_object,
+    canonical_wallet_pop_object,
+)
 from .ws import subscribe_events_thread
 
 _IMPORT_RE = re.compile(
@@ -44,9 +51,9 @@ class VectorNetworkClient:
 
     def connect(self) -> Dict[str, Any]:
         info = self.get_json("/v1/network/info")
-        if info.get("protocol_version") != "vnetwork/1.0":
+        if info.get("protocol_version") != PROTOCOL_VERSION:
             raise VectorNetworkError(
-                f"Protocol mismatch: remote {info.get('protocol_version')} != vnetwork/1.0"
+                f"Protocol mismatch: remote {info.get('protocol_version')} != {PROTOCOL_VERSION}"
             )
         net_id = info.get("network_id")
         if self.expected_network_id and net_id != self.expected_network_id:
@@ -63,7 +70,9 @@ class VectorNetworkClient:
         return net
 
     def join(
-        self, scopes: Optional[List[str]] = None
+        self,
+        scopes: Optional[List[str]] = None,
+        scope_authorizations: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         if not self.connected_network_id:
             self.connect()
@@ -93,6 +102,7 @@ class VectorNetworkClient:
                 "advertised_addresses": [],
                 "participant_signature": participant_sig,
                 "node_signature": node_sig,
+                "scope_authorizations": scope_authorizations or [],
             },
         )
 
@@ -125,33 +135,39 @@ class VectorNetworkClient:
             },
         )
 
-    def submit_vx_file(self, path: str) -> Dict[str, Any]:
+    def submit_vx_file(
+        self, path: str, execution_params: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         p = Path(path).resolve()
         source_bytes = p.read_text(encoding="utf-8")
         modules = self.load_modules_for_source(source_bytes, p.parent)
-        return self.submit_program(p.name, source_bytes, modules)
+        return self.submit_program(p.name, source_bytes, modules, execution_params)
 
     def submit_program(
         self,
         file_name: str,
         source_bytes: str,
         modules: Optional[Dict[str, str]] = None,
+        execution_params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         if not self.connected_network_id:
             self.connect()
         network_id = self._resolved_network_id()
         request_id = f"req_{uuid.uuid4().hex}"
         nonce = self.next_nonce()
-        source_hash = blake3_hex(source_bytes)
+        resolved_modules = modules or {}
+        resolved_params = execution_params or {}
         signing_bytes = canonical_json_bytes(
-            {
-                "actor_pubkey": self.identity.participant_key.public_key_hex,
-                "file_name": file_name,
-                "network_id": network_id,
-                "nonce": nonce,
-                "request_id": request_id,
-                "source_hash": source_hash,
-            }
+            canonical_program_submit_object(
+                actor_pubkey=self.identity.participant_key.public_key_hex,
+                file_name=file_name,
+                source_bytes=source_bytes,
+                modules=resolved_modules,
+                network_id=network_id,
+                request_id=request_id,
+                nonce=nonce,
+                execution_params=resolved_params,
+            )
         )
         signature = self.identity.participant_key.sign(signing_bytes)
         return self.post_json(
@@ -159,15 +175,60 @@ class VectorNetworkClient:
             {
                 "file_name": file_name,
                 "source_bytes": source_bytes,
-                "modules": modules or {},
+                "modules": resolved_modules,
                 "actor_pubkey": self.identity.participant_key.public_key_hex,
                 "network_id": network_id,
                 "request_id": request_id,
                 "nonce": nonce,
                 "signature": signature,
-                "execution_params": {},
+                "execution_params": resolved_params,
             },
         )
+
+    def sign_wallet_pop(
+        self,
+        wallet_id: str,
+        participant_identity: str,
+        purpose: str,
+        pop_nonce: str,
+        authorized_key: KeypairMaterial,
+        expires_at_ms: Optional[int] = None,
+    ) -> str:
+        network_id = self._resolved_network_id()
+        msg = canonical_json_bytes(
+            canonical_wallet_pop_object(
+                network_id=network_id,
+                wallet_id=wallet_id,
+                participant_identity=participant_identity,
+                authorized_pubkey=authorized_key.public_key_hex,
+                purpose=purpose,
+                nonce=pop_nonce,
+                expires_at_ms=expires_at_ms,
+            )
+        )
+        return authorized_key.sign(msg)
+
+    def sign_transfer_approval(
+        self,
+        token_id: str,
+        from_wallet_id: str,
+        to_wallet_id: str,
+        amount: int,
+        cosigner_key: KeypairMaterial,
+        drain_bps: Optional[int] = None,
+    ) -> str:
+        network_id = self._resolved_network_id()
+        msg = canonical_json_bytes(
+            canonical_transfer_approval_object(
+                network_id=network_id,
+                token_id=token_id,
+                from_wallet_id=from_wallet_id,
+                to_wallet_id=to_wallet_id,
+                amount=amount,
+                drain_bps=drain_bps,
+            )
+        )
+        return cosigner_key.sign(msg)
 
     def submit_operation(self, operation: Dict[str, Any]) -> Dict[str, Any]:
         if not self.connected_network_id:

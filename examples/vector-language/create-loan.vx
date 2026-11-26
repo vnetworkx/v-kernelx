@@ -30,6 +30,8 @@ token create LTOK in "LenderWallet" {
     external_monetary_value = "None";
 }
 
+transfer "LTOK" from "LenderWallet" to "BorrowerWallet" amount 6000;
+
 loan create WorkingCapitalLoan {
     token = "LTOK";
     lender = "LenderWallet";
@@ -39,4 +41,5 @@ loan create WorkingCapitalLoan {
     interest_bps = 250;
 }
 
+loan execute "WorkingCapitalLoan".fund(amount=2500);
 loan execute "WorkingCapitalLoan".repay(amount=500);

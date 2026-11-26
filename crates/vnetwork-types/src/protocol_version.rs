@@ -32,7 +32,7 @@ impl NetworkProfile {
 
     pub fn default_network_id(&self) -> &'static str {
         match self {
-            NetworkProfile::Development => "vector-devnet-local",
+            NetworkProfile::Development => "vector-devnet-1",
             NetworkProfile::Testnet => "vector-testnet-1",
             NetworkProfile::Production => "vector-main",
         }

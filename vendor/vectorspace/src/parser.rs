@@ -460,11 +460,19 @@ impl Parser {
                 self.advance();
                 role = Some(self.take_string_like()?);
             }
-            self.expect_semi()?;
+            let fields = if self.kind_eq(&TokenKind::LBrace) {
+                let f = self.parse_property_block()?;
+                self.eat_optional_semi();
+                f
+            } else {
+                self.expect_semi()?;
+                Vec::new()
+            };
             return Ok(Statement::WalletAuthorize(WalletAuthorizeStmt {
                 wallet,
                 public_key,
                 role,
+                fields,
                 span,
             }));
         }

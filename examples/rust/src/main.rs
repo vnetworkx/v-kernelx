@@ -8,7 +8,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let endpoint =
         std::env::var("VNETWORK_ENDPOINT").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
     let network_id =
-        std::env::var("VNETWORK_NETWORK_ID").unwrap_or_else(|_| "vnetwork-devnet-1".to_string());
+        std::env::var("VNETWORK_NETWORK_ID").unwrap_or_else(|_| "vector-devnet-1".to_string());
     let vx_path = std::env::args().nth(1).map(PathBuf::from);
 
     let identity = ClientIdentity::generate("rust-sdk-participant");

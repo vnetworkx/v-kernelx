@@ -3,8 +3,16 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { blake3Hex } from "./blake3.js";
 import { canonicalJsonBytes } from "./canonical.js";
-import { ClientIdentity, signEd25519 } from "./crypto.js";
+import {
+  ClientIdentity,
+  PROTOCOL_VERSION,
+  canonicalProgramSubmitObject,
+  canonicalTransferApprovalObject,
+  canonicalWalletPopObject,
+  signEd25519,
+} from "./crypto.js";
 import type {
+  KeypairMaterial,
   NetworkInfo,
   NetworkOperation,
   NetworkStatus,
@@ -30,8 +38,8 @@ export class VectorNetworkClient {
 
   async connect(): Promise<NetworkInfo> {
     const info = await this.getJson<NetworkInfo>("/v1/network/info");
-    if (info.protocol_version !== "vnetwork/1.0") {
-      throw new Error(`Protocol mismatch: remote ${info.protocol_version} != vnetwork/1.0`);
+    if (info.protocol_version !== PROTOCOL_VERSION) {
+      throw new Error(`Protocol mismatch: remote ${info.protocol_version} != ${PROTOCOL_VERSION}`);
     }
     if (this.expectedNetworkId && info.network_id !== this.expectedNetworkId) {
       throw new Error(`Expected network ${this.expectedNetworkId}, got ${info.network_id}`);
@@ -50,6 +58,7 @@ export class VectorNetworkClient {
 
   async join(
     scopes: ParticipationLevel[] = ["NETWORK", "SPACE", "REGION", "WALLET", "TOKEN"],
+    scopeAuthorizations: Array<Record<string, unknown>> = [],
   ): Promise<Record<string, unknown>> {
     if (!this.connectedNetworkId) await this.connect();
     const challenge = await this.postJson<{
@@ -78,6 +87,7 @@ export class VectorNetworkClient {
       advertised_addresses: [],
       participant_signature: participantSig,
       node_signature: nodeSig,
+      scope_authorizations: scopeAuthorizations,
     });
   }
 
@@ -117,31 +127,38 @@ export class VectorNetworkClient {
     });
   }
 
-  async submitVxFile(filePath: string): Promise<ProgramSubmission> {
+  async submitVxFile(
+    filePath: string,
+    executionParams: Record<string, unknown> = {},
+  ): Promise<ProgramSubmission> {
     const abs = path.resolve(filePath);
     const sourceBytes = await fs.readFile(abs, "utf8");
     const modules = await this.loadModulesForSource(sourceBytes, path.dirname(abs));
-    return this.submitProgram(path.basename(abs), sourceBytes, modules);
+    return this.submitProgram(path.basename(abs), sourceBytes, modules, executionParams);
   }
 
   async submitProgram(
     fileName: string,
     sourceBytes: string,
     modules: Record<string, string> = {},
+    executionParams: Record<string, unknown> = {},
   ): Promise<ProgramSubmission> {
     if (!this.connectedNetworkId) await this.connect();
     const networkId = this.resolvedNetworkId();
     const requestId = `req_${crypto.randomUUID().replace(/-/g, "")}`;
     const nonce = this.nonce++;
-    const sourceHash = blake3Hex(sourceBytes);
-    const signingBytes = canonicalJsonBytes({
-      actor_pubkey: this.identity.participant_key.public_key_hex,
-      file_name: fileName,
-      network_id: networkId,
-      nonce,
-      request_id: requestId,
-      source_hash: sourceHash,
-    });
+    const signingBytes = canonicalJsonBytes(
+      canonicalProgramSubmitObject({
+        actorPubkey: this.identity.participant_key.public_key_hex,
+        fileName,
+        sourceBytes,
+        modules,
+        networkId,
+        requestId,
+        nonce,
+        executionParams,
+      }),
+    );
     const signature = signEd25519(this.identity.participant_key.private_key_hex, signingBytes);
     return this.postJson<ProgramSubmission>("/v1/programs/submit", {
       file_name: fileName,
@@ -152,8 +169,53 @@ export class VectorNetworkClient {
       request_id: requestId,
       nonce,
       signature,
-      execution_params: {},
+      execution_params: executionParams,
     });
+  }
+
+  signWalletPop(
+    walletId: string,
+    participantIdentity: string,
+    purpose: string,
+    popNonce: string,
+    authorizedKey: KeypairMaterial,
+    expiresAtMs: number | null = null,
+  ): string {
+    const networkId = this.resolvedNetworkId();
+    const msg = canonicalJsonBytes(
+      canonicalWalletPopObject({
+        networkId,
+        walletId,
+        participantIdentity,
+        authorizedPubkey: authorizedKey.public_key_hex,
+        purpose,
+        nonce: popNonce,
+        expiresAtMs,
+      }),
+    );
+    return signEd25519(authorizedKey.private_key_hex, msg);
+  }
+
+  signTransferApproval(
+    tokenId: string,
+    fromWalletId: string,
+    toWalletId: string,
+    amount: number | bigint | string,
+    cosignerKey: KeypairMaterial,
+    drainBps: number | null = null,
+  ): string {
+    const networkId = this.resolvedNetworkId();
+    const msg = canonicalJsonBytes(
+      canonicalTransferApprovalObject({
+        networkId,
+        tokenId,
+        fromWalletId,
+        toWalletId,
+        amount,
+        drainBps,
+      }),
+    );
+    return signEd25519(cosignerKey.private_key_hex, msg);
   }
 
   async submitOperation(operation: NetworkOperation): Promise<Record<string, unknown>> {

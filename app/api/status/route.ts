@@ -1,16 +1,20 @@
 import { NextResponse } from "next/server";
-import { getKernel } from "@/lib/server/kernel";
+import {
+  fetchNetworkExplorerSnapshot,
+  mapNetworkSnapshotToWorkbenchProps,
+} from "@/lib/server/network-proxy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  try {
-    return NextResponse.json(getKernel().status());
-  } catch (err) {
+  const snapshot = await fetchNetworkExplorerSnapshot();
+  if (!snapshot.reachable) {
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : String(err) },
-      { status: 500 },
+      { error: snapshot.error ?? `Node unreachable at ${snapshot.endpoint}` },
+      { status: 503 },
     );
   }
+  const mapped = mapNetworkSnapshotToWorkbenchProps(snapshot);
+  return NextResponse.json(mapped.initialStatus);
 }

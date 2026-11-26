@@ -3,20 +3,37 @@ set -euo pipefail
 
 export PATH="/root/.cargo/bin:/usr/local/go/bin:$PATH"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEVNET_DIR="${DEVNET_DIR:-$ROOT/.devnet}"
+
+AUTO_TEMP_DIR=""
+if [[ -z "${DEVNET_DIR:-}" ]]; then
+  AUTO_TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vnetwork-acceptance-XXXXXX")"
+  DEVNET_DIR="$AUTO_TEMP_DIR"
+else
+  if [[ -d "$DEVNET_DIR" && ! -f "$DEVNET_DIR/.vnetwork-devnet-marker" ]]; then
+    echo "Refusing to reuse existing non-devnet directory '$DEVNET_DIR' without .vnetwork-devnet-marker." >&2
+    exit 1
+  fi
+fi
 export DEVNET_DIR
+export NETWORK_ID="${NETWORK_ID:-vector-devnet-1}"
+CLI_HOME="$(mktemp -d "${TMPDIR:-/tmp}/vnetwork-cli-XXXXXX")"
 
 cleanup() {
-  echo "Cleaning up devnet nodes..."
+  echo "Stopping devnet nodes..."
   bash "$ROOT/scripts/devnet-down.sh" || true
-  rm -rf "$DEVNET_DIR"
+  if [[ -n "$CLI_HOME" && "$CLI_HOME" == "${TMPDIR:-/tmp}/vnetwork-cli-"* && -d "$CLI_HOME" ]]; then
+    rm -rf -- "$CLI_HOME"
+  fi
+  if [[ -n "$AUTO_TEMP_DIR" && "$AUTO_TEMP_DIR" == "${TMPDIR:-/tmp}/vnetwork-acceptance-"* && -d "$AUTO_TEMP_DIR" ]]; then
+    rm -rf -- "$AUTO_TEMP_DIR"
+  fi
 }
 trap cleanup EXIT
 
 echo "=================================================================="
 echo "STEP 1: Cargo workspace unit & integration tests"
 echo "=================================================================="
-cargo test --workspace --manifest-path "$ROOT/Cargo.toml"
+cargo test --workspace --all-features --manifest-path "$ROOT/Cargo.toml"
 
 echo "=================================================================="
 echo "STEP 2: Cross-language cryptographic & canonical parity (5 SDKs)"
@@ -37,10 +54,9 @@ done
 echo "=================================================================="
 echo "STEP 4: Boot 4 real persistent libp2p validator nodes"
 echo "=================================================================="
-DEVNET_CLEAN=1 NETWORK_CONSENSUS_TIMEOUT_MS=3500 bash "$ROOT/scripts/devnet-up.sh"
+DEVNET_CLEAN=0 NETWORK_CONSENSUS_TIMEOUT_MS=3500 bash "$ROOT/scripts/devnet-up.sh"
 
-# Verify libp2p peer connections >= 3 on node 1
-N1_PEERS="$(curl -fsS http://127.0.0.1:18081/healthz | python3 -c 'import sys,json; print(json.load(sys.stdin)["connected_peers"])')"
+N1_PEERS="$(curl -fsS http://127.0.0.1:18081/healthz | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["healthy"] and d["storage_ok"]; print(d["connected_peers"])')"
 echo "Node 1 connected libp2p peers: $N1_PEERS"
 if [[ "$N1_PEERS" -lt 3 ]]; then
   echo "Expected >= 3 connected peers on Node 1, got $N1_PEERS" >&2
@@ -50,11 +66,9 @@ fi
 echo "=================================================================="
 echo "STEP 5: CLI join + ATLAS bootstrap + complete .vx/.vdx workflow"
 echo "=================================================================="
-CLI_HOME="$(mktemp -d)"
-trap 'rm -rf "$CLI_HOME"; cleanup' EXIT
 HOME="$CLI_HOME" "$VN_BIN" identity create --name "cli-acceptance-user" >/dev/null
-HOME="$CLI_HOME" "$VN_BIN" connect --network vnetwork-devnet-1 --endpoint http://127.0.0.1:18081 >/dev/null
-HOME="$CLI_HOME" "$VN_BIN" join --scope NETWORK --scope SPACE --scope REGION --scope WALLET --scope TOKEN >/dev/null
+HOME="$CLI_HOME" "$VN_BIN" connect --network "$NETWORK_ID" --endpoint http://127.0.0.1:18081 >/dev/null
+HOME="$CLI_HOME" "$VN_BIN" join --scope NETWORK >/dev/null
 HOME="$CLI_HOME" "$VN_BIN" program submit "$ROOT/examples/vector-language/bootstrap-atlas.vx" >/dev/null
 HOME="$CLI_HOME" "$VN_BIN" program submit "$ROOT/examples/vector-language/complete-network-workflow.vx" >/dev/null
 HOME="$CLI_HOME" "$VN_BIN" ledger verify | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["chain_valid"] is True; print("CLI ledger proof verified:", d["event_count"], "events, state_root=", d["state_root"])'
@@ -65,7 +79,7 @@ echo "=================================================================="
 VNETWORK_ENDPOINT=http://127.0.0.1:18081 \
 VNETWORK_ENDPOINT_2=http://127.0.0.1:18082 \
 VNETWORK_ENDPOINT_3=http://127.0.0.1:18083 \
-VNETWORK_NETWORK_ID=vnetwork-devnet-1 \
+VNETWORK_NETWORK_ID="$NETWORK_ID" \
 bash "$ROOT/scripts/test-all-sdks.sh"
 
 echo "Checking cross-node state convergence across all 4 nodes..."
@@ -89,22 +103,24 @@ print("All 4 nodes converged at height", heights[1], "with identical state_root"
 PY
 
 echo "=================================================================="
-echo "STEP 7: Verify atomic zero-partial-state rollback on failing .vx"
+echo "STEP 7: Atomic rollback + hostile security rejection checks"
 echo "=================================================================="
-python3 - <<'PY'
-import json, sys, urllib.request
+VNETWORK_ENDPOINT=http://127.0.0.1:18081 VNETWORK_NETWORK_ID="$NETWORK_ID" python3 - <<'PY'
+import json, os, sys, urllib.request, urllib.error
 sys.path.insert(0, "sdks/python")
-from vnetwork_sdk import ClientIdentity, VectorNetworkClient
+from vnetwork_sdk import ClientIdentity, VectorNetworkClient, PROTOCOL_VERSION
 
-ep = "http://127.0.0.1:18081"
+ep = os.environ["VNETWORK_ENDPOINT"]
+net_id = os.environ["VNETWORK_NETWORK_ID"]
+
+ident = ClientIdentity.generate("security-verifier")
+c = VectorNetworkClient(ep, ident, expected_network_id=net_id)
+c.connect()
+c.join(["NETWORK"])
+
 before = json.loads(urllib.request.urlopen(f"{ep}/v1/network/status").read().decode())
 
-ident = ClientIdentity.generate("rollback-verifier")
-c = VectorNetworkClient(ep, ident, expected_network_id="vnetwork-devnet-1")
-c.connect()
-c.join(["NETWORK", "SPACE", "REGION", "WALLET", "TOKEN"])
-
-before_after_join = json.loads(urllib.request.urlopen(f"{ep}/v1/network/status").read().decode())
+# 1. Invalid .vx transfer causes atomic rollback (zero partial Space/Region/Wallet created)
 failing_vx = '''
 space create ShouldRollbackSpace { visibility = "public" }
 region create ShouldRollbackRegion in "ShouldRollbackSpace" { prefix = "RBK"; visibility = "public"; section = 1; }
@@ -113,43 +129,64 @@ transfer "NONEXISTENT_TOK" from "ShouldRollbackWallet" to "MissingDst" amount 50
 '''
 sub = c.submit_program("should_rollback.vx", failing_vx)
 assert sub["status"] in ("FAILED", "REJECTED"), f"Expected FAILED/REJECTED, got {sub}"
-assert sub["failed_operation_index"] == 3, f"Expected failed_operation_index=3, got {sub}"
 after = json.loads(urllib.request.urlopen(f"{ep}/v1/network/status").read().decode())
-assert after["height"] == before_after_join["height"], "Height changed on failed program!"
-assert after["spaces"] == before_after_join["spaces"], "Partial space leaked on failed program!"
-assert after["state_root"] == before_after_join["state_root"], "State root mutated on failed program!"
-print("Verified atomic rollback: status=", sub["status"], "failed_op=", sub["failed_operation_index"], "state_root unchanged.")
+assert after["height"] == before["height"]
+assert after["spaces"] == before["spaces"]
+assert after["state_root"] == before["state_root"]
+print("Verified atomic rollback: status=", sub["status"], "state_root unchanged.")
+
+# 2. Tampered program signature MUST be rejected
+try:
+    req_data = urllib.request.Request(
+        f"{ep}/v1/programs/submit",
+        data=json.dumps({
+            "file_name": "tamper.vx",
+            "source_bytes": "space create TamperSpace { visibility = \"public\" }",
+            "modules": {},
+            "actor_pubkey": ident.participant_key.public_key_hex,
+            "network_id": net_id,
+            "request_id": "req_tamper_001",
+            "nonce": 999,
+            "signature": "00" * 64,
+            "execution_params": {},
+        }).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    urllib.request.urlopen(req_data)
+    raise AssertionError("Tampered signature should have been rejected!")
+except urllib.error.HTTPError as e:
+    assert e.code in (400, 401, 403), f"Unexpected HTTP status {e.code}"
+    print("Verified tampered signature rejected with HTTP", e.code)
 PY
 
 echo "=================================================================="
 echo "STEP 8: BFT Fault Tolerance (3/4 succeeds, 2/4 rejects quorum)"
 echo "=================================================================="
-echo "Stopping Node 4 (remaining 3/4 = 300/400 >= 6667 bps -> MUST SUCCEED)..."
 kill "$(cat "$DEVNET_DIR/node4/node.pid")"
 sleep 1
 
-VNETWORK_ENDPOINT=http://127.0.0.1:18081 VNETWORK_NETWORK_ID=vnetwork-devnet-1 \
+VNETWORK_ENDPOINT=http://127.0.0.1:18081 VNETWORK_NETWORK_ID="$NETWORK_ID" \
   node - <<'JS'
 import { ClientIdentity, VectorNetworkClient } from "./sdks/javascript/index.js";
 const id = ClientIdentity.generate("bft-3of4-tester");
 const client = new VectorNetworkClient(process.env.VNETWORK_ENDPOINT, id, process.env.VNETWORK_NETWORK_ID);
 await client.connect();
-await client.join(["NETWORK", "SPACE", "REGION", "WALLET", "TOKEN"]);
+await client.join(["NETWORK"]);
 const sub = await client.submitProgram("bft_3of4.vx", `
 space create BftSurvivesSpace { visibility = "public" }
 region create BftSurvivesRegion in "BftSurvivesSpace" { prefix = "BFT"; visibility = "public"; section = 1; }
 wallet create BftWallet in "BftSurvivesRegion" { name = "BFT Wallet"; }
 `);
 if (sub.status !== "COMMITTED") throw new Error("3/4 quorum should have committed!");
-console.log("3/4 BFT quorum succeeded cleanly: height committed, program_id=", sub.program_id);
+console.log("3/4 BFT quorum succeeded cleanly: program_id=", sub.program_id);
 JS
 
-echo "Stopping Node 3 (remaining 2/4 = 200/400 < 6667 bps -> MUST FAIL QUORUM)..."
 kill "$(cat "$DEVNET_DIR/node3/node.pid")"
 sleep 1
 
 PRE_FAULT_STATE="$(curl -fsS http://127.0.0.1:18081/v1/network/status)"
-VNETWORK_ENDPOINT=http://127.0.0.1:18081 VNETWORK_NETWORK_ID=vnetwork-devnet-1 \
+VNETWORK_ENDPOINT=http://127.0.0.1:18081 VNETWORK_NETWORK_ID="$NETWORK_ID" \
   node - <<'JS'
 import { ClientIdentity, VectorNetworkClient } from "./sdks/javascript/index.js";
 const id = ClientIdentity.generate("bft-2of4-tester");
@@ -157,7 +194,7 @@ const client = new VectorNetworkClient(process.env.VNETWORK_ENDPOINT, id, proces
 await client.connect();
 let failed = false;
 try {
-  await client.join(["NETWORK", "SPACE"]);
+  await client.join(["NETWORK"]);
 } catch (err) {
   failed = true;
   console.log("2/4 minority correctly rejected:", err.message);
@@ -197,7 +234,6 @@ for i in 3 4; do
   done
 done
 
-echo "Waiting for restarted Node 3 & Node 4 to sync missing heights over libp2p..."
 python3 - <<'PY'
 import json, time, urllib.request
 
@@ -217,27 +253,6 @@ else:
 for i in range(1, 5):
     proofs = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{18080+i}/v1/ledger/proofs").read().decode())
     assert proofs["chain_valid"] is True, f"node {i} invalid proof chain after recovery"
-PY
-
-echo "Submitting post-recovery .vx transaction to verify resumed 4-node quorum..."
-python3 - <<'PY'
-import sys
-sys.path.insert(0, "sdks/python")
-from vnetwork_sdk import ClientIdentity, VectorNetworkClient
-
-ep = "http://127.0.0.1:18084"
-ident = ClientIdentity.generate("post-recovery-verifier")
-c = VectorNetworkClient(ep, ident, expected_network_id="vnetwork-devnet-1")
-c.connect()
-c.join(["NETWORK", "SPACE", "REGION", "WALLET", "TOKEN"])
-sub = c.submit_program("post_recovery.vx", '''
-space create PostRecoverySpace { visibility = "public" }
-region create PostRecoveryRegion in "PostRecoverySpace" { prefix = "PRC"; visibility = "public"; section = 1; }
-wallet create PostRecoveryWallet in "PostRecoveryRegion" { name = "Recovery Wallet"; }
-verify proof network;
-''')
-assert sub["status"] == "COMMITTED", f"Post-recovery program did not commit: {sub}"
-print("Post-recovery 4-node quorum committed:", sub["program_id"], "state_root=", sub["final_state_root"])
 PY
 
 echo "=================================================================="

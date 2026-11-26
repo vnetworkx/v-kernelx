@@ -1,13 +1,19 @@
 import { NextResponse } from "next/server";
-import { getKernel } from "@/lib/server/kernel";
+import { fetchNetworkApiJson } from "@/lib/server/network-proxy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const kernel = getKernel();
+  const upstream = await fetchNetworkApiJson<unknown[]>("/v1/tokens");
+  if (!upstream.ok) {
+    return NextResponse.json(
+      { vectors: [], rewards: [], error: upstream.error ?? "Rust node unreachable" },
+      { status: upstream.status },
+    );
+  }
   return NextResponse.json({
-    vectors: kernel.store.listVectors(),
-    rewards: kernel.store.listDrainRewards(500),
+    vectors: upstream.data ?? [],
+    rewards: [],
   });
 }

@@ -53,8 +53,8 @@ func (c *Client) Connect() (NetworkInfo, error) {
 	if err := c.GetJSON("/v1/network/info", &info); err != nil {
 		return info, err
 	}
-	if info.ProtocolVersion != "vnetwork/1.0" {
-		return info, fmt.Errorf("protocol mismatch: %s != vnetwork/1.0", info.ProtocolVersion)
+	if info.ProtocolVersion != ProtocolVersion {
+		return info, fmt.Errorf("protocol mismatch: %s != %s", info.ProtocolVersion, ProtocolVersion)
 	}
 	if c.ExpectedNetworkID != "" && info.NetworkID != c.ExpectedNetworkID {
 		return info, fmt.Errorf("expected network %s, got %s", c.ExpectedNetworkID, info.NetworkID)
@@ -74,6 +74,10 @@ func (c *Client) resolvedNetworkID() (string, error) {
 }
 
 func (c *Client) Join(scopes []string) (map[string]any, error) {
+	return c.JoinWithAuthorizations(scopes, nil)
+}
+
+func (c *Client) JoinWithAuthorizations(scopes []string, scopeAuthorizations []map[string]any) (map[string]any, error) {
 	if c.ConnectedNetworkID == "" {
 		if _, err := c.Connect(); err != nil {
 			return nil, err
@@ -81,6 +85,9 @@ func (c *Client) Join(scopes []string) (map[string]any, error) {
 	}
 	if len(scopes) == 0 {
 		scopes = []string{"NETWORK", "SPACE", "REGION", "WALLET", "TOKEN"}
+	}
+	if scopeAuthorizations == nil {
+		scopeAuthorizations = []map[string]any{}
 	}
 	var ch struct {
 		ChallengeID string `json:"challenge_id"`
@@ -120,6 +127,7 @@ func (c *Client) Join(scopes []string) (map[string]any, error) {
 		"advertised_addresses":  []string{},
 		"participant_signature": pSig,
 		"node_signature":        nSig,
+		"scope_authorizations":  scopeAuthorizations,
 	}, &out)
 	return out, err
 }
@@ -165,6 +173,10 @@ func (c *Client) SubmitVxFile(path string) (ProgramSubmission, error) {
 }
 
 func (c *Client) SubmitProgram(fileName, sourceBytes string, modules map[string]string) (ProgramSubmission, error) {
+	return c.SubmitProgramWithParams(fileName, sourceBytes, modules, nil)
+}
+
+func (c *Client) SubmitProgramWithParams(fileName, sourceBytes string, modules map[string]string, executionParams map[string]any) (ProgramSubmission, error) {
 	var sub ProgramSubmission
 	if c.ConnectedNetworkID == "" {
 		if _, err := c.Connect(); err != nil {
@@ -178,17 +190,21 @@ func (c *Client) SubmitProgram(fileName, sourceBytes string, modules map[string]
 	if modules == nil {
 		modules = map[string]string{}
 	}
+	if executionParams == nil {
+		executionParams = map[string]any{}
+	}
 	requestID := newRequestID()
 	nonce := c.NextNonce()
-	sourceHash := Blake3Hex([]byte(sourceBytes))
-	signingBytes, err := CanonicalJSONBytes(map[string]any{
-		"actor_pubkey": c.Identity.ParticipantKey.PublicKeyHex,
-		"file_name":    fileName,
-		"network_id":   networkID,
-		"nonce":        nonce,
-		"request_id":   requestID,
-		"source_hash":  sourceHash,
-	})
+	signingBytes, err := CanonicalJSONBytes(CanonicalProgramSubmitMap(
+		c.Identity.ParticipantKey.PublicKeyHex,
+		fileName,
+		sourceBytes,
+		modules,
+		networkID,
+		requestID,
+		nonce,
+		executionParams,
+	))
 	if err != nil {
 		return sub, err
 	}
@@ -205,9 +221,56 @@ func (c *Client) SubmitProgram(fileName, sourceBytes string, modules map[string]
 		"request_id":       requestID,
 		"nonce":            nonce,
 		"signature":        sig,
-		"execution_params": map[string]any{},
+		"execution_params": executionParams,
 	}, &sub)
 	return sub, err
+}
+
+func (c *Client) SignWalletPoP(
+	walletID, participantIdentity, purpose, popNonce string,
+	authorizedKey KeypairMaterial,
+	expiresAtMs *uint64,
+) (string, error) {
+	networkID, err := c.resolvedNetworkID()
+	if err != nil {
+		return "", err
+	}
+	msgBytes, err := CanonicalJSONBytes(CanonicalWalletPoPMap(
+		networkID,
+		walletID,
+		participantIdentity,
+		authorizedKey.PublicKeyHex,
+		purpose,
+		popNonce,
+		expiresAtMs,
+	))
+	if err != nil {
+		return "", err
+	}
+	return authorizedKey.Sign(msgBytes)
+}
+
+func (c *Client) SignTransferApproval(
+	tokenID, fromWalletID, toWalletID, amountStr string,
+	cosignerKey KeypairMaterial,
+	drainBps *uint16,
+) (string, error) {
+	networkID, err := c.resolvedNetworkID()
+	if err != nil {
+		return "", err
+	}
+	msgBytes, err := CanonicalJSONBytes(CanonicalTransferApprovalMap(
+		networkID,
+		tokenID,
+		fromWalletID,
+		toWalletID,
+		amountStr,
+		drainBps,
+	))
+	if err != nil {
+		return "", err
+	}
+	return cosignerKey.Sign(msgBytes)
 }
 
 func (c *Client) SubmitOperation(operation map[string]any) (map[string]any, error) {

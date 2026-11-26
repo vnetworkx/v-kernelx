@@ -17,13 +17,13 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "v-kernelx — ATLAS VECTOR NETWORK",
+  title: "Vector Network Explorer",
   description:
-    "Vector Network prototype kernel, protocol state machine, opcode interpreter, and TypeScript SDK workbench.",
+    "Vector Network Explorer connecting to the authoritative Rust node runtime, BFT consensus ledger, and Vector Language verifier.",
   openGraph: {
-    title: "v-kernelx — ATLAS VECTOR NETWORK",
+    title: "Vector Network Explorer",
     description:
-      "Vector Network prototype kernel, protocol state machine, opcode interpreter, and TypeScript SDK workbench.",
+      "Vector Network Explorer connecting to the authoritative Rust node runtime, BFT consensus ledger, and Vector Language verifier.",
   },
 };
 

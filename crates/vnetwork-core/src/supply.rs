@@ -17,5 +17,6 @@ pub fn verify_token_supply_conservation(
                 .ok_or_else(|| VNetworkError::Validation("supply sum overflow".to_string()))?;
         }
     }
-    Ok(sum == token.total_supply && token.total_supply <= token.max_supply)
+    let cap_ok = token.unlimited_supply || token.total_supply <= token.max_supply;
+    Ok(sum == token.total_supply && cap_ok)
 }

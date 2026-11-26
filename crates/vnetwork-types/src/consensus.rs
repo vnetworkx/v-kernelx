@@ -1,8 +1,9 @@
-use crate::canonical::canonical_json_bytes;
+use crate::canonical::{blake3_hex, canonical_json_bytes};
 use crate::error::VResult;
 use crate::event::LedgerEvent;
 use crate::identity::verify_ed25519;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 pub const DEFAULT_BFT_QUORUM_BPS: u16 = 6667; // 2/3+ supermajority (e.g. 3 of 4 validators)
 
@@ -16,6 +17,13 @@ pub struct ConsensusValidator {
     pub joined_epoch: u64,
 }
 
+pub fn compute_validator_set_hash(validators: &[ConsensusValidator]) -> VResult<String> {
+    let mut normalized: Vec<&ConsensusValidator> = validators.iter().collect();
+    normalized.sort_by(|a, b| a.validator_id.cmp(&b.validator_id));
+    let bytes = canonical_json_bytes(&normalized)?;
+    Ok(blake3_hex(&bytes))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConsensusProposal {
     pub proposal_id: String,
@@ -23,6 +31,8 @@ pub struct ConsensusProposal {
     pub height: u64,
     pub round: u64,
     pub epoch: u64,
+    #[serde(default)]
+    pub validator_set_hash: String,
     pub proposer_validator_id: String,
     pub pre_state_root: String,
     pub post_state_root: String,
@@ -42,25 +52,47 @@ pub struct ProgramSourceBundle {
     pub source_bytes: String,
     pub source_hash: String,
     pub compiled_program_hash: String,
-    pub resolved_module_sources: std::collections::BTreeMap<String, String>,
+    pub resolved_module_sources: BTreeMap<String, String>,
+}
+
+impl ProgramSourceBundle {
+    pub fn commitment_digest(&self) -> VResult<serde_json::Value> {
+        let mut module_hashes = BTreeMap::new();
+        for (path, src) in &self.resolved_module_sources {
+            module_hashes.insert(path.clone(), blake3_hex(src.as_bytes()));
+        }
+        Ok(serde_json::json!({
+            "file_name": self.file_name,
+            "source_hash": self.source_hash,
+            "compiled_program_hash": self.compiled_program_hash,
+            "module_hashes": module_hashes,
+        }))
+    }
 }
 
 impl ConsensusProposal {
     pub fn canonical_signing_bytes(&self) -> VResult<Vec<u8>> {
         let event_hashes: Vec<&str> = self.events.iter().map(|e| e.event_hash.as_str()).collect();
+        let source_commitment = match &self.program_source_bundle {
+            Some(bundle) => Some(bundle.commitment_digest()?),
+            None => None,
+        };
         let obj = serde_json::json!({
             "epoch": self.epoch,
             "event_hashes": event_hashes,
             "height": self.height,
             "network_id": self.network_id,
+            "nonce_binding": self.nonce_binding,
             "post_state_root": self.post_state_root,
             "pre_state_root": self.pre_state_root,
             "program_id": self.program_id,
+            "program_source_commitment": source_commitment,
             "proposal_id": self.proposal_id,
             "proposer_validator_id": self.proposer_validator_id,
             "round": self.round,
             "timestamp_ms": self.timestamp_ms,
             "tx_id": self.tx_id,
+            "validator_set_hash": self.validator_set_hash,
         });
         canonical_json_bytes(&obj)
     }
@@ -131,6 +163,8 @@ pub struct QuorumCertificate {
     pub height: u64,
     pub round: u64,
     pub epoch: u64,
+    #[serde(default)]
+    pub validator_set_hash: String,
     pub post_state_root: String,
     pub event_hashes: Vec<String>,
     pub total_weight: u64,

@@ -1,4 +1,4 @@
 // Assert participant scope on target network
-network connect "vnetwork-devnet-1";
+network connect "vector-devnet-1";
 participant join "dev-participant" scope [NETWORK, SPACE, REGION, WALLET, TOKEN];
 query network;

@@ -35,12 +35,18 @@ pub fn validator_verify_program_bundle(
         )));
     }
 
+    let nonce_ref = proposal
+        .nonce_binding
+        .as_ref()
+        .map(|(a, r, n)| (a.as_str(), r.as_str(), *n));
+
     let staged = execute_compiled_program_staged(
         state,
         genesis,
         &compiled,
         actor_pubkey,
         proposal.timestamp_ms,
+        nonce_ref,
     )
     .map_err(|pf| {
         VNetworkError::Consensus(format!(

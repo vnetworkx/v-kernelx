@@ -44,6 +44,7 @@ pub fn build_router(backend: Arc<dyn NetworkNodeBackend>, rate_limit_per_min: us
     };
 
     Router::new()
+        .route("/health", get(routes::network::healthz))
         .route("/healthz", get(routes::network::healthz))
         .route("/readyz", get(routes::network::readyz))
         .route("/metrics", get(routes::network::metrics))
@@ -55,6 +56,7 @@ pub fn build_router(backend: Arc<dyn NetworkNodeBackend>, rate_limit_per_min: us
         .route("/v1/nodes/connect", post(routes::nodes::connect_node))
         .route("/v1/participants/challenge", post(routes::participants::challenge))
         .route("/v1/participants/join", post(routes::participants::join))
+        .route("/v1/participants/scope", post(routes::participants::manage_scope))
         .route(
             "/v1/participants/:participant_id",
             get(routes::participants::get_participant),
@@ -77,6 +79,7 @@ pub fn build_router(backend: Arc<dyn NetworkNodeBackend>, rate_limit_per_min: us
         .route("/v1/regions", get(routes::regions::list_regions))
         .route("/v1/regions/:region_id", get(routes::regions::get_region))
         .route("/v1/wallets", get(routes::wallets::list_wallets))
+        .route("/v1/wallets/keys", post(routes::wallets::manage_wallet_key))
         .route("/v1/wallets/:wallet_id", get(routes::wallets::get_wallet))
         .route("/v1/tokens", get(routes::tokens::list_tokens))
         .route("/v1/tokens/:token_id", get(routes::tokens::get_token))
@@ -140,11 +143,15 @@ pub async fn serve_api(
             .ok_or("tls_enabled=true requires tls_key_path")?;
         let tls_cfg = RustlsConfig::from_pem_file(cert, key).await?;
         axum_server::bind_rustls(addr, tls_cfg)
-            .serve(router.into_make_service())
+            .serve(router.into_make_service_with_connect_info::<SocketAddr>())
             .await?;
     } else {
         let listener = tokio::net::TcpListener::bind(addr).await?;
-        axum::serve(listener, router).await?;
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await?;
     }
     Ok(())
 }

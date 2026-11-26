@@ -166,6 +166,14 @@ impl VectorNetworkClient {
     }
 
     pub async fn join(&mut self, scopes: Vec<ParticipationLevel>) -> VResult<serde_json::Value> {
+        self.join_with_authorizations(scopes, Vec::new()).await
+    }
+
+    pub async fn join_with_authorizations(
+        &mut self,
+        scopes: Vec<ParticipationLevel>,
+        scope_authorizations: Vec<serde_json::Value>,
+    ) -> VResult<serde_json::Value> {
         if self.connected_network_id.is_none() {
             self.connect().await?;
         }
@@ -203,6 +211,7 @@ impl VectorNetworkClient {
             "advertised_addresses": [],
             "participant_signature": participant_sig,
             "node_signature": node_sig,
+            "scope_authorizations": scope_authorizations,
         });
 
         let join_url = format!("{}/v1/participants/join", self.base_url);
@@ -271,6 +280,17 @@ impl VectorNetworkClient {
         source_bytes: &str,
         modules: BTreeMap<String, String>,
     ) -> VResult<ProgramSubmission> {
+        self.submit_program_with_params(file_name, source_bytes, modules, BTreeMap::new())
+            .await
+    }
+
+    pub async fn submit_program_with_params(
+        &mut self,
+        file_name: &str,
+        source_bytes: &str,
+        modules: BTreeMap<String, String>,
+        execution_params: BTreeMap<String, serde_json::Value>,
+    ) -> VResult<ProgramSubmission> {
         if self.connected_network_id.is_none() {
             self.connect().await?;
         }
@@ -278,12 +298,23 @@ impl VectorNetworkClient {
         let request_id = format!("req_{}", uuid::Uuid::new_v4().simple());
         let nonce = self.next_nonce();
         let source_hash = blake3_hex(source_bytes.as_bytes());
+        let file_kind = if file_name.ends_with(".vdx") { "vdx" } else { "vx" };
+        let mut module_hashes = BTreeMap::new();
+        for (path, src) in &modules {
+            module_hashes.insert(path.clone(), blake3_hex(src.as_bytes()));
+        }
 
         let sign_obj = serde_json::json!({
             "actor_pubkey": self.identity.participant_key.public_key_hex,
+            "compiler_version": v_langx::compiler::COMPILER_VERSION,
+            "execution_params": execution_params,
+            "file_kind": file_kind,
             "file_name": file_name,
+            "language_version": v_langx::compiler::LANGUAGE_VERSION,
+            "module_hashes": module_hashes,
             "network_id": network_id,
             "nonce": nonce,
+            "protocol_version": PROTOCOL_VERSION,
             "request_id": request_id,
             "source_hash": source_hash,
         });
@@ -301,7 +332,7 @@ impl VectorNetworkClient {
             "request_id": request_id,
             "nonce": nonce,
             "signature": sig,
-            "execution_params": {},
+            "execution_params": execution_params,
         });
 
         let url = format!("{}/v1/programs/submit", self.base_url);
@@ -314,6 +345,51 @@ impl VectorNetworkClient {
             .map_err(|e| VNetworkError::Storage(e.to_string()))?;
         let val = parse_json_response(resp).await?;
         serde_json::from_value(val).map_err(|e| VNetworkError::Serialization(e.to_string()))
+    }
+
+    pub fn sign_wallet_pop(
+        &self,
+        wallet_id: &str,
+        participant_identity: &str,
+        purpose: &str,
+        pop_nonce: &str,
+        expires_at_ms: Option<u64>,
+        authorized_key: &KeypairMaterial,
+    ) -> VResult<String> {
+        let network_id = self.resolved_network_id()?;
+        let obj = serde_json::json!({
+            "authorized_pubkey": authorized_key.public_key_hex,
+            "expires_at_ms": expires_at_ms,
+            "network_id": network_id,
+            "nonce": pop_nonce,
+            "participant_identity": participant_identity,
+            "protocol_version": PROTOCOL_VERSION,
+            "purpose": purpose,
+            "wallet_id": wallet_id,
+        });
+        authorized_key.sign(&canonical_json_bytes(&obj)?)
+    }
+
+    pub fn sign_transfer_approval(
+        &self,
+        token_id: &str,
+        from_wallet_id: &str,
+        to_wallet_id: &str,
+        amount: u128,
+        drain_bps: Option<u16>,
+        cosigner_key: &KeypairMaterial,
+    ) -> VResult<String> {
+        let network_id = self.resolved_network_id()?;
+        let obj = serde_json::json!({
+            "amount": amount.to_string(),
+            "drain_bps": drain_bps,
+            "from_wallet_id": from_wallet_id,
+            "network_id": network_id,
+            "protocol_version": PROTOCOL_VERSION,
+            "to_wallet_id": to_wallet_id,
+            "token_id": token_id,
+        });
+        cosigner_key.sign(&canonical_json_bytes(&obj)?)
     }
 
     pub async fn submit_operation(&mut self, operation: NetworkOperation) -> VResult<serde_json::Value> {
@@ -440,6 +516,10 @@ impl BlockingVectorNetworkClient {
 
     pub fn submit_vx_file(&mut self, path: impl AsRef<Path>) -> VResult<ProgramSubmission> {
         self.rt.block_on(self.inner.submit_vx_file(path))
+    }
+
+    pub fn submit_operation(&mut self, operation: NetworkOperation) -> VResult<serde_json::Value> {
+        self.rt.block_on(self.inner.submit_operation(operation))
     }
 
     pub fn get_json(&self, path: &str) -> VResult<serde_json::Value> {

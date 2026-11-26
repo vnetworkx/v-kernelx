@@ -52,6 +52,8 @@ pub struct NodeConfig {
     #[serde(default)]
     pub allow_bootstrap_atlas: Option<bool>,
     #[serde(default)]
+    pub genesis_file: Option<PathBuf>,
+    #[serde(default)]
     pub tls: TlsConfig,
 }
 
@@ -85,6 +87,7 @@ impl Default for NodeConfig {
             genesis_validators: Vec::new(),
             quorum_threshold_bps: DEFAULT_BFT_QUORUM_BPS,
             allow_bootstrap_atlas: None,
+            genesis_file: None,
             tls: TlsConfig::default(),
         }
     }
@@ -130,10 +133,10 @@ impl NodeConfig {
                 self.p2p_listen_addresses = list;
             }
         }
-        if let Ok(v) = std::env::var("NETWORK_ADVERTISED_ADDRESSES") {
+        if let Ok(v) = std::env::var("NETWORK_ADVERTISED_ADDRESSES").or_else(|_| std::env::var("NETWORK_ADVERTISED_ADDRS")) {
             self.advertised_addresses = split_csv(&v);
         }
-        if let Ok(v) = std::env::var("NETWORK_PUBLIC_API") {
+        if let Ok(v) = std::env::var("NETWORK_PUBLIC_API").or_else(|_| std::env::var("NETWORK_PUBLIC_API_URL")) {
             if !v.trim().is_empty() {
                 self.public_api_url = v.trim().to_string();
             }
@@ -166,6 +169,16 @@ impl NodeConfig {
         if let Ok(v) = std::env::var("NETWORK_DISCOVERY_MODE") {
             if !v.trim().is_empty() {
                 self.discovery_mode = v.trim().to_string();
+            }
+        }
+        if let Ok(v) = std::env::var("NETWORK_GENESIS_FILE").or_else(|_| std::env::var("NETWORK_GENESIS_PATH")) {
+            if !v.trim().is_empty() {
+                self.genesis_file = Some(PathBuf::from(v.trim()));
+            }
+        }
+        if let Ok(v) = std::env::var("NETWORK_QUORUM_THRESHOLD_BPS") {
+            if let Ok(bps) = v.trim().parse::<u16>() {
+                self.quorum_threshold_bps = bps;
             }
         }
         if let Ok(v) = std::env::var("NETWORK_ENABLE_PUBLIC_API") {
@@ -216,6 +229,12 @@ impl NodeConfig {
             return Err(VNetworkError::ProfileMismatch(format!(
                 "unsupported protocol version `{}`; expected `{PROTOCOL_VERSION}`",
                 self.protocol_version
+            )));
+        }
+        if self.quorum_threshold_bps < DEFAULT_BFT_QUORUM_BPS || self.quorum_threshold_bps > 10_000 {
+            return Err(VNetworkError::Validation(format!(
+                "quorum_threshold_bps `{}` must be between {DEFAULT_BFT_QUORUM_BPS} and 10000",
+                self.quorum_threshold_bps
             )));
         }
         if self.profile == NetworkProfile::Production

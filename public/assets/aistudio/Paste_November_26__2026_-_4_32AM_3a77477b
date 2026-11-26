@@ -1,0 +1,1940 @@
+VECTOR NETWORK
+
+Complete Engineering Audit, Repair, Integration and Final Product Implementation
+
+Primary repository: https://github.com/vnetworkx/v-kernelx
+Vector Language repository: https://github.com/vnetworkx/vectorspace
+Authoritative protocol implementation: Rust
+Required developer languages: Rust, JavaScript, TypeScript, Python and Go.
+
+1. YOUR MISSION
+
+Act as the lead Rust engineer, distributed-systems architect, cryptographic security engineer, protocol engineer, SDK developer, DevOps engineer and quality-assurance engineer responsible for completing Vector Network.
+
+Your mission is to take the actual existing v-kernelx repository, independently audit its entire implementation, identify every error and incomplete component, correct them, integrate its dependencies, and deliver a working, testable Vector Network.
+
+The final system must allow people anywhere in the world to connect to Vector Network using Rust, JavaScript, TypeScript, Python or Go.
+
+They must be able to register as participants, join the Network at their verified participation level, submit Vector Language programs, create and interact with protocol entities, execute authorized Token transfers, inspect verified history and independently verify Network results.
+
+Vector Language must be a native programming interface to the real Rust kernel.
+
+Developers must be able to write .vx and .vdx files, submit them through any supported SDK, and have the authoritative Rust kernel compile, validate, authorize, execute and commit their operations through the actual distributed Network.
+
+The objective is not to produce another prototype or make the repository merely look complete.
+
+The objective is to deliver a working integrated network.
+
+You must perform the actual engineering work. Do not stop after an audit report, proposed architecture, implementation plan or list of recommendations.
+
+Do not simply create missing directories or placeholder files.
+
+Do not claim that anything works without running the appropriate tests.
+
+Do not claim production readiness without the required evidence.
+
+Work through the entire task systematically, resolve all errors that you can reproduce, and leave the repository in its strongest coherent, buildable and tested state.
+
+⸻
+
+2. INDEPENDENTLY INSPECT THE ENTIRE PROJECT
+
+Begin by examining the actual repository as it exists in the current working environment.
+
+Do not assume that any particular implementation, file, branch or dependency is correct.
+
+Do not rely exclusively on README files or architectural descriptions.
+
+Read the source code and inspect the implementations that execute the protocol.
+
+First establish:
+
+* Current Git branch and commit.
+* Working-tree status.
+* Existing uncommitted and untracked files.
+* Cargo workspace and package configuration.
+* Rust toolchain requirements.
+* All workspace crates.
+* All public APIs.
+* All dependencies and their versions.
+* Existing database and persistence mechanisms.
+* Existing consensus and validator implementation.
+* Existing node runtime and networking implementation.
+* Existing cryptographic operations.
+* Existing Vector Language integration.
+* Existing Rust, JavaScript, TypeScript, Python and Go SDKs.
+* Existing CLI.
+* Existing frontend and Explorer.
+* Docker and deployment configuration.
+* All GitHub Actions workflows.
+* All test suites.
+* All examples.
+* All documentation.
+
+Also inspect the actual Vector Language implementation in vnetworkx/vectorspace, including its grammar, lexer, parser, AST, compiler, runtime, examples and tests.
+
+Use commands appropriate to the repository, including:
+
+git status --short
+git branch --show-current
+git log -5 --oneline
+cargo metadata --format-version 1
+cargo tree
+cargo fmt --all --check
+cargo check --workspace --all-targets --all-features
+cargo test --workspace --all-features
+
+Inspect the actual GitHub Actions workflows and available CI results.
+
+Identify every failure, warning, inconsistency, incomplete integration and security-sensitive shortcut.
+
+Create or update:
+
+docs/engineering/BASELINE_AUDIT.md
+docs/engineering/IMPLEMENTATION_ROADMAP.md
+docs/engineering/ARCHITECTURE_DECISIONS.md
+docs/engineering/REPAIR_LOG.md
+
+Record the actual findings.
+
+However, do not stop after writing these documents. Continue with the repairs and implementation.
+
+Repository protection
+
+Preserve existing useful functionality and developer work.
+
+Never use destructive Git commands to make the repository easier to modify.
+
+Do not delete uncommitted work.
+
+Do not delete existing source files before understanding their responsibilities.
+
+Do not push directly to the main branch.
+
+Do not deploy production.
+
+Do not publish registry packages.
+
+Do not expose, request or commit private keys, tokens or production credentials.
+
+⸻
+
+3. PRIORITY ZERO: MAKE THE ENTIRE WORKSPACE BUILD CORRECTLY
+
+Before extending functionality, establish a reliable build.
+
+Inspect and fix:
+
+* Rust formatting errors.
+* Compilation errors.
+* Missing imports.
+* Incorrect feature flags.
+* Dependency version conflicts.
+* Incorrect crate boundaries.
+* Circular dependencies.
+* Invalid workspace members.
+* Incorrect Cargo manifests.
+* Missing build scripts.
+* Unsupported Rust APIs.
+* Platform-specific failures.
+* Invalid examples.
+* Broken tests.
+* Incompatible bindings.
+* Unused dependencies.
+* Incorrect conditional compilation.
+* Compiler warnings.
+* Broken release builds.
+
+Run formatting and linting throughout the workspace.
+
+The quality gates must include:
+
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo check --workspace --all-targets --all-features
+cargo test --workspace --all-features
+cargo build --workspace --release
+
+Resolve every reproducible error.
+
+Do not suppress warnings simply to obtain a green CI result.
+
+Do not remove tests that expose defects.
+
+Do not weaken assertions.
+
+If existing tests are invalid because the protocol has intentionally changed, replace them with correct tests and document the migration.
+
+Ensure all relevant GitHub Actions jobs use valid toolchains, dependencies and commands.
+
+Run the checks on the supported operating systems where the necessary environments are available.
+
+The CI workflow must fail when the actual code is broken.
+
+⸻
+
+4. MAINTAIN A SINGLE SOURCE OF PROTOCOL TRUTH
+
+Rust must remain the only authoritative implementation of Vector Network protocol rules.
+
+The Rust core owns:
+
+* Protocol types.
+* Canonical serialization.
+* State transitions.
+* Entity creation.
+* Authorization.
+* Token operations.
+* Supply accounting.
+* Drain rules.
+* Contract execution.
+* Loan execution.
+* Consensus verification.
+* Ledger commitments.
+* Event validation.
+* Replay.
+* Reconstruction.
+* Protocol error semantics.
+* Vector Language execution authorization.
+* Node participation rules.
+
+JavaScript, TypeScript, Python and Go must not contain independent authoritative implementations of these rules.
+
+They must use the same Rust-backed functionality or communicate with the versioned Network API.
+
+Preserve the existing workspace structure where it is sound.
+
+Do not reorganize everything simply for appearance.
+
+Ensure each crate has a genuine responsibility and avoid duplicate implementations of the same protocol function.
+
+The intended logical architecture is:
+
+vnetwork-types
+       |
+vnetwork-core
+       |
+       +---- vnetwork-consensus
+       |
+       +---- vnetwork-storage
+       |
+       +---- vnetwork-node
+       |
+       +---- vnetwork-api
+       |
+       +---- vnetwork-cli
+       |
+       +---- Rust SDK
+       +---- JavaScript SDK
+       +---- TypeScript SDK
+       +---- Python SDK
+       +---- Go SDK
+
+The node, API and SDK layers must not independently decide whether an operation is valid.
+
+They must submit requests to the authoritative Rust protocol.
+
+⸻
+
+5. CORRECT THE CANONICAL TOKEN MODEL
+
+The exact Token vector is:
+
+[token, authratio(au), energy]
+
+There must be exactly three dimensions.
+
+Implement a strongly typed representation with explicit integer units.
+
+Conceptually:
+
+pub struct TokenVector {
+    pub token: u128,
+    pub auth_ratio_au: u128,
+    pub energy: u128,
+}
+
+Use the actual existing type conventions where appropriate.
+
+Do not use floating-point arithmetic for canonical Token quantities, AuthRatio, Energy, balances, drains or protocol commitments.
+
+Transfer invariant
+
+Only the token dimension is transferable.
+
+AuthRatio is non-transferable.
+
+Energy is non-transferable.
+
+An ordinary Token transfer must preserve the sender’s and receiver’s AuthRatio and Energy values exactly.
+
+Example:
+
+Sender before:
+[1000, 700, 500]
+Receiver before:
+[100, 400, 300]
+Transfer:
+100
+Sender after:
+[900, 700, 500]
+Receiver after:
+[200, 400, 300]
+
+A transfer API must accept a Token amount, not an arbitrary vector.
+
+All possible mutation paths must enforce this invariant, including:
+
+* Rust API.
+* Node API.
+* JavaScript.
+* TypeScript.
+* Python.
+* Go.
+* Vector Language.
+* vContracts.
+* vLoans.
+* Replay.
+* Reconstruction.
+* Snapshot recovery.
+* Internal protocol operations.
+
+AuthRatio and Energy changes must require separate deterministic and authorized protocol operations.
+
+Audit every constructor, mutation function, serialization path and arithmetic operation to ensure there is no alternative way to alter these dimensions through an ordinary transfer.
+
+Supply and arithmetic
+
+Correct:
+
+* Initial supply validation.
+* Maximum supply.
+* Minting.
+* Burning.
+* Draining.
+* Reserves.
+* Transfer accounting.
+* Duplicate issuance prevention.
+* Double-spend protection.
+* Integer overflow.
+* Underflow.
+* Allocation limits.
+
+An explicitly configured maximum must never be silently increased to accommodate an invalid initial supply.
+
+Define the meaning of unlimited or unspecified supply explicitly.
+
+Do not invent economic parameters.
+
+Schema migration
+
+Preserve historical schema versions.
+
+Do not silently reinterpret older two-dimensional records as valid three-dimensional Tokens.
+
+Use an explicit deterministic versioned migration with compatibility tests.
+
+⸻
+
+6. FIX FINALITY, STORAGE ATOMICITY AND CONSENSUS COMMITMENT
+
+Treat this as the highest security priority.
+
+The Network must never announce a transaction as final when its authoritative committed data has not been successfully persisted.
+
+The required logical sequence is:
+
+Receive operation
+       |
+       v
+Validate operation
+       |
+       v
+Verify participant authorization
+       |
+       v
+Verify protocol rules
+       |
+       v
+Construct deterministic proposal
+       |
+       v
+Independently validate proposal
+       |
+       v
+Obtain valid consensus certificate
+       |
+       v
+Prepare durable commit
+       |
+       v
+Verify storage success
+       |
+       v
+Commit authoritative state atomically
+       |
+       v
+Publish committed result
+       |
+       v
+Notify peers
+
+Correct the actual ordering in the code.
+
+Never discard storage errors.
+
+Never use ignored storage results in protocol-critical paths.
+
+Never update externally observable committed state before the required durable commit.
+
+Never broadcast finality before the commit process has succeeded according to the storage and consensus design.
+
+Durable atomic persistence
+
+Introduce a genuine transactional storage design.
+
+It must safely persist all related data, including:
+
+* Proposal.
+* Event history.
+* Consensus certificate.
+* Resulting state.
+* State root.
+* Ledger commitments.
+* Transaction status.
+* Entity indices.
+* Program execution records.
+* Relevant validator metadata.
+
+Use a real transaction or a carefully designed journal with explicit commit records and crash recovery.
+
+Sequential independent writes to several files are not sufficient evidence of an atomic transaction.
+
+A crash between any two persistence steps must not create an ambiguous authoritative state.
+
+Support:
+
+* Transaction IDs.
+* Idempotent retries.
+* Duplicate detection.
+* Durable commit markers.
+* Corruption detection.
+* Recovery.
+* Snapshot verification.
+* Storage migration.
+* Database consistency checks.
+
+Crash-point testing
+
+Add tests that deliberately interrupt or simulate failure at each persistence boundary:
+
+1. Before proposal persistence.
+2. During proposal persistence.
+3. After proposal persistence.
+4. Before consensus certificate persistence.
+5. During certificate persistence.
+6. After certificate persistence.
+7. During state commitment.
+8. During index updates.
+9. Before network notification.
+10. After network notification.
+
+After restart, prove that the node reconstructs exactly the state justified by valid committed certificates.
+
+Never turn an uncommitted or uncertified event into authoritative history simply because it appears in a log.
+
+⸻
+
+7. MAKE RECOVERY AND RECONSTRUCTION CONSENSUS-AWARE
+
+Recovery must distinguish:
+
+PROPOSED
+PENDING
+AUTHORIZED
+CONSENSUS_APPROVED
+COMMITTED
+REJECTED
+ABORTED
+
+Only events belonging to verified committed operations may determine authoritative state.
+
+A recovery process must:
+
+1. Validate the Network identity.
+2. Validate the canonical genesis commitment.
+3. Validate the applicable validator-set information.
+4. Load durable committed records.
+5. Verify the corresponding consensus certificates.
+6. Verify event hashes and ancestry.
+7. Verify state roots.
+8. Reconstruct committed state.
+9. Compare the result with expected commitments.
+10. Reject invalid, incomplete or conflicting history.
+11. Recover pending operations separately without pretending they were committed.
+
+Create explicit tests for events without certificates, invalid certificates, mismatched roots, incomplete commits and interrupted writes.
+
+Snapshots must be cryptographically checked against verified history.
+
+A deserializable snapshot is not automatically trustworthy.
+
+⸻
+
+8. FIX PARTICIPANT IDENTITY AND SCOPE AUTHORIZATION
+
+Implement the actual participation rules.
+
+Everybody participating in Vector Network is a node, but participation level is determined by verified authorization and participation, not by a participant choosing whatever scope they want.
+
+Supported levels:
+
+NETWORK
+SPACE
+REGION
+WALLET
+TOKEN
+
+Participants may have more than one verified scope.
+
+A participant must not automatically receive Network, Space, Region, Wallet and Token privileges merely by requesting them during registration.
+
+Scope-bound permissions
+
+Every participation grant must include:
+
+* participant identity;
+* scope type;
+* specific target entity where applicable;
+* grantor or authorization basis;
+* relevant parent relationships;
+* permissions;
+* validity;
+* registration event;
+* revocation history.
+
+For example, Region participation must identify the actual Region.
+
+Wallet participation must identify the actual Wallet.
+
+Token participation must identify the actual Token.
+
+Validate the relevant parent and authorization relationships.
+
+An invitation, Wallet authorization or other participation proof must be verifiable and tied to the correct entity and Network.
+
+New participants must not automatically become validators.
+
+Separate identity types
+
+Maintain separate:
+
+1. Participant identity.
+2. Wallet participant key.
+3. Node identity key.
+4. Validator key.
+
+They have different responsibilities.
+
+Possessing many keys must not automatically create unlimited consensus power.
+
+Implement automatic node identity and participation registration without granting unauthorized control.
+
+Support:
+
+* Identity creation.
+* Challenge-response registration.
+* Participation requests.
+* Authorization.
+* Revocation.
+* Key rotation.
+* Node rejoining.
+* Scope updates.
+* Participation history.
+
+All changes must be auditable.
+
+⸻
+
+9. IMPLEMENT GENUINE MULTI-KEY WALLET AUTHORIZATION
+
+A Wallet may have thousands of independent participants, each using their own independently generated key pair.
+
+Private keys must remain under each participant’s control.
+
+A public key string alone is not proof of possession.
+
+Key registration
+
+Implement a fresh challenge-response process.
+
+The signed challenge must bind to:
+
+* Network ID.
+* Wallet ID.
+* Participant identity.
+* Public key.
+* Operation purpose.
+* Nonce.
+* Expiry.
+* Protocol version.
+
+The Rust core must verify the signature and prevent replay.
+
+Per-key permissions
+
+Every authorized key must have enforceable permissions.
+
+Support:
+
+* View.
+* Send.
+* Receive.
+* Specific Token ID.
+* Specific Token allocation.
+* Quantity limits.
+* Validity period.
+* Contract interaction.
+* Other explicitly authorized operations.
+
+A key registered as receiving-only must not be able to transfer Tokens.
+
+A key registered as view-only must not be able to perform mutations.
+
+A key assigned to one Token allocation must not control all other holdings.
+
+Actually inspect and enforce the stored role in every authorization function.
+
+Support:
+
+* Revocation.
+* Rotation.
+* Threshold approval.
+* Multisignature.
+* Permission modification.
+* Expiration.
+* Historical authorization queries.
+
+Test every permission separately.
+
+⸻
+
+10. CORRECT VECTOR LANGUAGE AUTHORIZATION AND EXECUTION
+
+Integrate the actual VectorSpace implementation.
+
+Preserve its real:
+
+* Lexer.
+* Parser.
+* Grammar.
+* AST.
+* Compiler.
+* Diagnostics.
+* Language examples.
+* Module model.
+
+Do not create an unrelated replacement language.
+
+Do not treat its local execution state as the authoritative Network.
+
+The Rust core is responsible for actual protocol execution.
+
+Compiler pipeline
+
+.vx / .vdx source
+       |
+       v
+VectorSpace lexer
+       |
+       v
+Parser
+       |
+       v
+AST
+       |
+       v
+Semantic validation
+       |
+       v
+Type checking
+       |
+       v
+Symbol resolution
+       |
+       v
+Deterministic imports
+       |
+       v
+Compiler
+       |
+       v
+Canonical compiled program
+       |
+       v
+Rust kernel validation
+       |
+       v
+Participant authorization
+       |
+       v
+Validator verification
+       |
+       v
+Consensus
+       |
+       v
+Atomic execution commitment
+
+Bind every execution input to the participant signature
+
+The signed submission must bind to the exact complete program and execution context.
+
+Include at least:
+
+* Network ID.
+* Protocol version.
+* Language version.
+* Compiler version.
+* File name.
+* File type.
+* Exact source bytes or canonical source hash.
+* Canonical AST or compiled representation hash.
+* All imported module names.
+* Imported module content hashes.
+* Execution parameters.
+* Actor identity.
+* Nonce.
+* Request ID.
+* Relevant authorization context.
+
+Use deterministic canonical serialization and domain-separated signing.
+
+Do not leave modules or execution parameters outside the signed payload.
+
+Do not use ambiguous serialization as the signing format.
+
+The validator must verify that the same program, dependency set and execution parameters are being authorized and executed.
+
+Deterministic imports
+
+Never allow different validators to retrieve different code under the same module reference.
+
+Use immutable content-addressed module identities or equivalent deterministic dependency resolution.
+
+Bind all dependencies to the program commitment.
+
+Kernel validation
+
+The kernel must independently validate all essential protocol rules, even when the compiler has already performed syntax and semantic validation.
+
+No client may submit an untrusted low-level operation to bypass authorization.
+
+Do not execute unrestricted code or unsafe dynamic evaluation.
+
+⸻
+
+11. COMPLETE VECTOR LANGUAGE NETWORK OPERATIONS
+
+The language must be usable for real Network functionality.
+
+Support the required operations through implemented grammar, AST nodes, compiler mappings and Rust kernel handlers.
+
+These include:
+
+NETWORK CONNECTION
+PARTICIPANT JOINING
+SPACE CREATION
+REGION CREATION
+WALLET CREATION
+WALLET KEY AUTHORIZATION
+TOKEN CREATION
+TOKEN TRANSFER
+TOKEN RECEIPT
+APPROVED TOKEN DRAIN
+vCONTRACT CREATION
+vCONTRACT EXECUTION
+vLOAN CREATION
+vLOAN EXECUTION
+NETWORK QUERIES
+HISTORY QUERIES
+PROOF VERIFICATION
+LEDGER QUERIES
+RECONSTRUCTION
+
+Do not add invented syntax without implementing its full execution path.
+
+Create valid .vx and .vdx examples.
+
+Test every example against the actual parser and compiler.
+
+Required development examples
+
+examples/vector-language/
+    connect.vx
+    participant-join.vx
+    create-space.vx
+    create-region.vx
+    create-wallet.vx
+    create-token.vx
+    transfer-token.vx
+    create-contract.vx
+    execute-contract.vx
+    create-loan.vx
+    query-network.vx
+    reconstruct-entity.vx
+    bootstrap-atlas.vx
+    complete-network-workflow.vx
+    policies.vdx
+    shared-wallet.vdx
+
+Adapt syntax to the actual compiler.
+
+Do not create fake or untested example programs.
+
+⸻
+
+12. CORRECT DISTRIBUTED CONSENSUS
+
+Inspect the real consensus algorithm and determine whether its implementation satisfies the fault assumptions it claims to support.
+
+Implement a genuine multi-node protocol rather than a local collection of signatures.
+
+Correctly implement:
+
+* Validator identity.
+* Membership.
+* Validator eligibility.
+* Validator weights.
+* Membership epochs.
+* Validator-set commitments.
+* Proposal validation.
+* Signed votes.
+* Duplicate vote prevention.
+* Conflicting vote detection.
+* Equivocation evidence.
+* Quorum calculations.
+* Certificate verification.
+* Timeout handling.
+* View changes or leader replacement where required.
+* Validator admission.
+* Validator removal.
+* Key rotation.
+* Recovery.
+* Membership synchronization.
+
+Membership rules
+
+Validator membership must itself be authorized and committed through protocol rules.
+
+A single local method must not allow an operator to insert an arbitrary validator into the authoritative set.
+
+Use canonical validator-set hashes or equivalent cryptographic commitments.
+
+Every proposal and vote must bind to the applicable validator-set epoch.
+
+Do not use a permanently fixed epoch when membership can change.
+
+Ensure that the Network’s canonical genesis hash commits to the actual genesis configuration, including the appropriate initial validator information.
+
+Nodes must reject an unexpected genesis configuration.
+
+Consensus assumptions
+
+Document the precise fault model, safety assumptions, liveness assumptions, quorum thresholds and network-partition behaviour.
+
+A BFT configuration of 3f + 1 validators and 2f + 1 approvals is only justified when the complete protocol and membership assumptions support it.
+
+Do not simply implement a percentage threshold and claim Byzantine fault tolerance.
+
+Independent verification
+
+Every validator participating in a proposal must independently verify:
+
+* Program.
+* Authorization.
+* Network identity.
+* Validator membership.
+* Operation scope.
+* Token invariants.
+* Resulting state.
+* Resulting state root.
+
+A participant signature is not consensus.
+
+A hash is not authorization.
+
+A quorum certificate is not proof of Wallet ownership.
+
+Keep these responsibilities separate.
+
+⸻
+
+13. COMPLETE THE NODE RUNTIME AND GLOBAL NETWORK CONNECTIVITY
+
+Build a functional distributed node runtime.
+
+A node must be able to:
+
+1. Start from configuration.
+2. Establish its persistent identity.
+3. Load and verify genesis.
+4. Connect to bootstrap peers.
+5. Discover other peers.
+6. Authenticate peer identities.
+7. Establish secure connections.
+8. Synchronize verified state.
+9. Synchronize events.
+10. Receive proposals.
+11. Verify operations.
+12. Participate in consensus when eligible.
+13. Persist committed history.
+14. Recover after restart.
+15. Rejoin after disconnection.
+
+Use a maintained Rust P2P framework such as libp2p where appropriate.
+
+Implement real peer discovery, networking and synchronization.
+
+Support suitable NAT traversal, relay and bootstrap infrastructure where necessary.
+
+Node identity and synchronization
+
+Each node must have its own identity and persistent state.
+
+Do not simulate several nodes using shared in-memory objects.
+
+Support distinct:
+
+* full nodes;
+* validator nodes;
+* light participant clients.
+
+A light participant does not automatically need to store the entire Network.
+
+However, it must be able to verify Network identity and relevant proof data.
+
+Public connection
+
+Prepare the implementation for public Internet connectivity.
+
+Support:
+
+* public HTTPS API;
+* secure WebSocket;
+* P2P connections;
+* bootstrap peers;
+* advertised peer addresses;
+* node authentication;
+* synchronization;
+* connection recovery.
+
+A bootstrap node must not control consensus or ledger truth.
+
+Public gateways must not be able to fabricate finality.
+
+Do not claim worldwide reachability until public infrastructure is actually deployed and tested.
+
+⸻
+
+14. CORRECT STORAGE, GENESIS AND STATE ROOT INTEGRITY
+
+Audit every authoritative state structure.
+
+The canonical commitments must cover all state that can influence protocol validity or consensus.
+
+Inspect whether the state root includes or separately commits to:
+
+* Network identity.
+* Spaces.
+* Regions.
+* Wallets.
+* Tokens.
+* Token dimensions.
+* Supply.
+* Contracts.
+* Loans.
+* Participants.
+* Node registry.
+* Participation grants.
+* Validator membership.
+* Validator-set epoch.
+* Authorization state.
+* Other authoritative protocol records.
+
+No consensus-critical state may be omitted from the relevant authenticated commitment.
+
+If separate roots are used, define their relationship in a canonical Network state commitment.
+
+Implement deterministic ordering and canonical serialization.
+
+Reject mismatched roots.
+
+Genesis verification must compare the complete canonical genesis commitment, not just a subset of its configuration.
+
+⸻
+
+15. vCONTRACTS AND vLOANS
+
+Ensure both are fully connected to Vector Language and the Rust kernel.
+
+vContracts
+
+Must support:
+
+* Identity.
+* Participants.
+* Authorized keys.
+* Wallet references.
+* Token references.
+* Conditions.
+* Execution limits.
+* AuthRatio requirements.
+* Deterministic operations.
+* Expiration.
+* Failure conditions.
+* Settlement.
+* Ledger events.
+* Replay.
+* Reconstruction.
+
+vLoans
+
+Must support:
+
+* Lender.
+* Borrower.
+* Principal.
+* Token composition.
+* Interest terms.
+* Repayment schedules.
+* Partial repayment.
+* Collateral.
+* Collateral locking.
+* Automatic execution.
+* Default.
+* Settlement.
+* Liquidation where authorized.
+* Event history.
+* Replay.
+* Reconstruction.
+
+All arithmetic must be deterministic and integer-based.
+
+Contracts and loans must never bypass Wallet authorization, Token invariants or consensus.
+
+Do not invent final economic parameters.
+
+⸻
+
+16. COMPLETE ALL FIVE SDKs
+
+Each SDK must work against the same live Network.
+
+The required interfaces are:
+
+RUST
+JAVASCRIPT
+TYPESCRIPT
+PYTHON
+GO
+
+Every SDK must support:
+
+* Network connection.
+* Network identity verification.
+* Participant identity.
+* Join requests.
+* Participation status.
+* Vector Language submission.
+* Transaction submission.
+* Entity queries.
+* Transaction status.
+* Ledger history.
+* Proof retrieval.
+* WebSocket subscriptions where appropriate.
+
+Rust
+
+Provide a documented, idiomatic Rust library.
+
+JavaScript
+
+Provide a usable Node.js client.
+
+TypeScript
+
+Provide a proper typed SDK.
+
+Browser clients
+
+Use browser-compatible HTTP and WebSocket functionality.
+
+Do not assume Node native addons work directly in browsers.
+
+Python
+
+Use Rust-backed bindings where local compilation is needed, and a network client for normal live usage.
+
+Do not keep an independent Python protocol engine.
+
+Go
+
+Provide a genuine Go module with working connection, authentication, program submission, queries and event subscriptions.
+
+Do not reproduce protocol logic in Go.
+
+Canonical amounts
+
+Use decimal strings or another safe integer representation over JSON.
+
+Never rely on JavaScript floating-point numbers for arbitrary Token quantities.
+
+SDK conformance
+
+Create shared test vectors and run the same requests through every SDK.
+
+Equivalent requests must produce equivalent canonical operations and results.
+
+Test the actual interfaces, not just internal serialization helpers.
+
+⸻
+
+17. FIX THE VERSIONED NETWORK API
+
+Provide consistent, secure APIs for:
+
+* Network information.
+* Nodes.
+* Participants.
+* Participation scopes.
+* Spaces.
+* Regions.
+* Wallets.
+* Tokens.
+* Ghost entities.
+* Vector Language compilation.
+* Program submission.
+* Transaction status.
+* Consensus.
+* Ledger history.
+* Proofs.
+* Contracts.
+* Loans.
+* Reconstruction.
+* Explorer.
+
+Use appropriate authentication.
+
+All mutations must undergo the required authorization and protocol validation.
+
+Enforce:
+
+* Request size limits.
+* Schema validation.
+* Signature verification.
+* Nonce validation.
+* Replay prevention.
+* Rate limits.
+* Access control.
+* Proper TLS for public endpoints.
+* Structured errors.
+
+Do not report pending operations as final.
+
+Provide useful lifecycle states such as:
+
+RECEIVED
+PARSING
+COMPILED
+VALIDATING
+AWAITING_AUTHORIZATION
+AWAITING_CONSENSUS
+COMMITTED
+REJECTED
+FAILED
+
+All statuses must reflect actual execution.
+
+⸻
+
+18. FIX PUBLIC DEPLOYMENT AND CONFIGURATION
+
+Audit all deployment configuration against the actual Rust configuration loader.
+
+Create one documented source of truth for environment variable names.
+
+Do not allow Docker, Kubernetes, systemd, CLI and Rust configuration to use inconsistent names.
+
+Check:
+
+* Network identity.
+* Genesis file path.
+* Node identity path.
+* Storage path.
+* Bootstrap peers.
+* Listen addresses.
+* Advertised addresses.
+* API binding.
+* TLS configuration.
+* Validator configuration.
+* Protocol version.
+* Discovery configuration.
+* Environment profile.
+
+Verify that every deployment environment variable is actually consumed.
+
+Fix reverse-proxy routing so containers connect to the correct service hostnames rather than their own loopback addresses.
+
+Make public deployment configuration internally consistent.
+
+Include:
+
+deploy/Dockerfile.node
+deploy/Dockerfile.api
+deploy/docker-compose.testnet.yml
+deploy/docker-compose.public.yml
+deploy/reverse-proxy/
+deploy/systemd/
+deploy/kubernetes/
+config/
+docs/operations/
+
+Do not deploy production infrastructure or consume cloud resources without authorization.
+
+Provide self-hosting instructions.
+
+Clearly distinguish:
+
+DEVELOPMENT
+TESTNET
+PRODUCTION
+
+Each must use separate Network identities, genesis configurations, storage and keys.
+
+Never automatically include development ATLAS data in a production Network.
+
+⸻
+
+19. FIX HEALTH CHECKS AND OBSERVABILITY
+
+Health information must represent real conditions.
+
+Never hard-code:
+
+healthy: true
+storage_ok: true
+
+Derive these values from actual operational checks.
+
+Monitor:
+
+* Storage health.
+* Disk availability.
+* Peer status.
+* P2P connectivity.
+* Sync progress.
+* Node identity.
+* Participation.
+* Validator eligibility.
+* Consensus rounds.
+* Finality certificates.
+* Pending proposals.
+* Committed events.
+* API status.
+* Runtime errors.
+* Recovery status.
+
+Provide operational endpoints such as:
+
+GET /healthz
+GET /readyz
+GET /metrics
+GET /v1/network/status
+
+A node with failed or unavailable storage must not report itself ready to commit operations.
+
+Never expose fictional Network counters.
+
+⸻
+
+20. MAKE ALL ERROR HANDLING EXPLICIT
+
+Perform an error-handling audit throughout the complete workspace.
+
+Search for:
+
+* let _ =
+* ignored Result values;
+* .unwrap() in production execution paths;
+* .expect() in production execution paths;
+* unchecked conversions;
+* saturating arithmetic in authoritative operations;
+* panicking code;
+* broad error suppression;
+* default-success fallbacks;
+* fabricated health values;
+* empty error handlers;
+* fake transaction results;
+* incomplete error propagation.
+
+Do not ban useful test assertions or safe construction-time invariants without reason.
+
+However, production paths must handle recoverable errors explicitly.
+
+Use typed errors with meaningful context.
+
+Never discard:
+
+* storage errors;
+* signature verification errors;
+* consensus errors;
+* transaction errors;
+* P2P errors;
+* serialization errors;
+* reconstruction errors;
+* API errors.
+
+An error must not silently turn into successful execution.
+
+Failure semantics
+
+Ensure failures are properly classified:
+
+INVALID_INPUT
+INVALID_SIGNATURE
+UNAUTHORIZED
+INVALID_PARTICIPATION
+INVALID_HIERARCHY
+INVALID_PROGRAM
+COMPILATION_ERROR
+VALIDATION_ERROR
+INSUFFICIENT_BALANCE
+SUPPLY_LIMIT_EXCEEDED
+INSUFFICIENT_QUORUM
+CONSENSUS_CONFLICT
+STORAGE_FAILURE
+COMMIT_FAILURE
+RECOVERY_FAILURE
+NETWORK_UNAVAILABLE
+PROTOCOL_INCOMPATIBLE
+
+Adapt the actual error taxonomy as needed.
+
+Errors must be returned consistently through the Rust API and all SDKs.
+
+⸻
+
+21. MAKE THE DEVELOPMENT TEST NETWORK SAFE
+
+Build and execute the real multi-node development network.
+
+Use at least four independent node processes or containers.
+
+Each must have:
+
+* Independent identity.
+* Independent persistent storage.
+* Independent configuration.
+* Actual peer connections.
+* Actual event synchronization.
+* Actual consensus participation where eligible.
+
+The acceptance environment must not use four in-memory objects disguised as four nodes.
+
+Safe test-directory handling
+
+Review every script that deletes or resets network data.
+
+Never delete an existing developer directory by default.
+
+Do not use unrestricted:
+
+rm -rf "$DEVNET_DIR"
+
+without strict validation.
+
+The acceptance test must create a unique temporary directory and only remove directories it created itself after verifying their paths.
+
+If a user-supplied directory already exists, preserve it.
+
+Provide an explicit development reset operation with strict safety checks.
+
+The ordinary test command must be safe to run without risking unrelated data.
+
+⸻
+
+22. BUILD A REAL MULTI-NODE ACCEPTANCE TEST
+
+Create or repair:
+
+scripts/devnet-up.sh
+scripts/devnet-down.sh
+scripts/test-network.sh
+scripts/test-all-sdks.sh
+scripts/health-check.sh
+
+The main acceptance command should be:
+
+./scripts/test-network.sh
+
+It must run in an isolated temporary environment by default.
+
+The test must:
+
+1. Build the Rust workspace.
+2. Verify Vector Language integration.
+3. Start four independent persistent nodes.
+4. Establish authenticated peer connections.
+5. Synchronize Network state.
+6. Start the API.
+7. Connect the Rust SDK.
+8. Connect the JavaScript SDK.
+9. Connect the TypeScript SDK.
+10. Connect the Python SDK.
+11. Connect the Go SDK.
+12. Register independent participants.
+13. Verify Network identity.
+14. Join the Network.
+15. Verify actual participation scopes.
+16. Compile a real .vx program.
+17. Submit that program.
+18. Execute it through the Rust kernel.
+19. Create a Space.
+20. Create a Region under that Space.
+21. Create a Wallet under that Region.
+22. Create a Token under that Wallet.
+23. Verify the three-dimensional Token model.
+24. Create and execute a vContract.
+25. Create and execute a vLoan where supported by the test scenario.
+26. Submit an authorized Token transfer.
+27. Verify AuthRatio remains unchanged.
+28. Verify Energy remains unchanged.
+29. Obtain valid distributed consensus.
+30. Verify durable storage.
+31. Verify matching committed state across eligible replicas.
+32. Stop a node.
+33. Restart it.
+34. Synchronize missing history.
+35. Rejoin the Network.
+36. Reconstruct an entity from verified history.
+37. Verify reconstructed state against the committed root.
+38. Reject an unauthorized request.
+39. Reject an invalid Vector Language program.
+40. Reject an insufficient-quorum operation.
+41. Reject a replayed request.
+42. Reject conflicting or invalid history.
+
+The test must fail if an essential operation fails.
+
+Do not return success just because containers start.
+
+Do not fabricate successful results.
+
+⸻
+
+23. TEST FAILURE AND ATTACK SCENARIOS
+
+In addition to normal functionality, test hostile and failure conditions.
+
+Authorization
+
+* Invalid participant signature.
+* Unknown key.
+* Revoked key.
+* Expired challenge.
+* Replayed nonce.
+* Unauthorized participation scope.
+* Wrong target entity.
+* Receiving-only key attempting to send.
+* View-only key attempting to mutate.
+* Insufficient multisignature threshold.
+
+Vector Language
+
+* Invalid syntax.
+* Invalid module.
+* Changed dependency content.
+* Modified execution parameters.
+* Source alteration after signing.
+* Unsupported language version.
+* Unauthorized entity creation.
+* Missing parent.
+* Invalid hierarchy.
+* Attempted Token AuthRatio modification.
+* Attempted Energy modification.
+* Replayed program submission.
+
+Consensus
+
+* Duplicate votes.
+* Invalid vote signatures.
+* Stale validator epoch.
+* Incorrect membership commitment.
+* Insufficient quorum.
+* Conflicting proposals.
+* Equivocation.
+* Validator restart.
+* Network partition.
+* Rejoining validator with stale state.
+
+Storage
+
+* Interrupted writes.
+* Corrupted WAL.
+* Missing certificate.
+* Invalid certificate.
+* Snapshot tampering.
+* State-root mismatch.
+* Duplicate transaction.
+* Concurrent operation.
+* Insufficient disk space where testable.
+* Recovery failure.
+
+Networking
+
+* Unknown peer.
+* Invalid peer identity.
+* Disconnection.
+* Timeout.
+* Restart.
+* Malformed input.
+* Excessive requests.
+* Unavailable bootstrap node.
+
+Every detected failure must have a defined safe outcome.
+
+⸻
+
+24. CROSS-LANGUAGE END-TO-END PROOF
+
+Run the same real test Network through the five required SDKs.
+
+Each SDK must:
+
+1. Connect to the same Network.
+2. Verify Network identity.
+3. Authenticate an independent test participant.
+4. Join through the participation protocol.
+5. Check its actual permissions.
+6. Submit Vector Language.
+7. Receive compilation feedback.
+8. Submit an authorized operation.
+9. Receive a real transaction ID.
+10. Check the transaction’s lifecycle.
+11. Retrieve the resulting event.
+12. Verify the proof or commitment.
+13. Query the resulting Network state.
+
+Test equivalent operations across Rust, JavaScript, TypeScript, Python and Go.
+
+The SDKs must agree with the Rust kernel.
+
+Do not use independent local implementations to create the expected results.
+
+Do not test only that an SDK can construct a JSON object.
+
+Test real communication with the Network API and actual protocol execution.
+
+⸻
+
+25. ATLAS DEVELOPMENT BOOTSTRAP
+
+Provide a real, tested Vector Language bootstrap program.
+
+Path:
+
+examples/vector-language/bootstrap-atlas.vx
+
+Required development configuration:
+
+Region name: ATLAS
+Region prefix: ATL
+Region title: Atlas Vector Region
+Visibility: Public
+Section: 1
+Token name: ATLAS TOKEN
+Token symbol: ATLAS
+Purpose: Development/bootstrap
+External monetary value: None
+
+The Token uses exactly:
+
+[token, authratio(au), energy]
+
+Its initial values must be explicitly declared in development genesis configuration.
+
+Do not invent final economic parameters.
+
+The bootstrap program must:
+
+* Parse.
+* Compile.
+* Pass semantic validation.
+* Pass authorization.
+* Pass the correct consensus scope.
+* Execute through the Rust kernel.
+* Commit atomically.
+* Produce verifiable event history.
+* Synchronize across nodes.
+* Survive restart.
+* Support reconstruction.
+
+Never create the ATLAS entities through direct database insertion or a hard-coded production shortcut.
+
+⸻
+
+26. VERIFY THE COMPLETE PACKAGE AND RELEASE SYSTEM
+
+Inspect the release pipeline for every supported package ecosystem:
+
+crates.io
+npm
+PyPI
+Go Modules
+Docker / OCI
+GitHub Releases
+
+Correct:
+
+* Version consistency.
+* Package metadata.
+* Build matrices.
+* Platform-specific compilation.
+* Native binding builds.
+* Python wheel generation.
+* Go module tagging.
+* Docker image builds.
+* Checksums.
+* Release manifests.
+* Secure publication permissions.
+* Trusted publishing configuration.
+* Release retries.
+* Immutable version handling.
+
+Add non-publishing release validation.
+
+Do not publish packages as part of this task.
+
+Do not invent registry credentials.
+
+Do not claim a package is published unless it has actually been published through an authorized release process.
+
+⸻
+
+27. UPDATE DOCUMENTATION TO MATCH ACTUAL FUNCTIONALITY
+
+Keep documentation accurate.
+
+At minimum, maintain:
+
+README.md
+ARCHITECTURE.md
+SECURITY.md
+
+Maintain or create:
+
+docs/
+    protocol/
+        TOKEN_MODEL.md
+        NETWORK_HIERARCHY.md
+        AUTHORIZATION.md
+        CONSENSUS.md
+        VECTOR_LANGUAGE.md
+        LEDGERS.md
+        RECONSTRUCTION.md
+        VCONTRACTS.md
+        VLOANS.md
+    architecture/
+        CORE.md
+        STORAGE.md
+        NETWORKING.md
+        NODE_RUNTIME.md
+        API.md
+        SDK_ARCHITECTURE.md
+    sdk/
+        RUST.md
+        JAVASCRIPT.md
+        TYPESCRIPT.md
+        PYTHON.md
+        GO.md
+    language/
+        LANGUAGE_SPECIFICATION.md
+        COMPILER_PIPELINE.md
+        PROGRAM_SUBMISSION.md
+        MODULE_IMPORTS.md
+        EXAMPLES.md
+    engineering/
+        BASELINE_AUDIT.md
+        IMPLEMENTATION_ROADMAP.md
+        ARCHITECTURE_DECISIONS.md
+        REPAIR_LOG.md
+        SECURITY_REVIEW.md
+        TESTING_STRATEGY.md
+    operations/
+        LOCAL_TESTNET.md
+        PUBLIC_TESTNET.md
+        PRODUCTION_DEPLOYMENT.md
+        NODE_SETUP.md
+        NODE_RECOVERY.md
+        MONITORING.md
+
+Provide working examples and commands.
+
+Clearly identify development-only and production functionality.
+
+Do not describe a planned feature as implemented.
+
+Do not describe a local test network as a publicly accessible Network.
+
+⸻
+
+28. REQUIRED EXECUTION ORDER
+
+Follow this sequence, but continue as far as the environment permits without repeatedly stopping for approval.
+
+Stage 1 — Complete audit and build repair
+
+Resolve workspace errors, formatting, dependency problems, CI failures and broken tests.
+
+Stage 2 — Protocol and data integrity
+
+Correct Token invariants, canonical serialization, state roots, supply accounting, genesis verification and schema migration.
+
+Stage 3 — Authorization
+
+Correct participant identity, scope grants, Wallet key registration, proof of possession and permission enforcement.
+
+Stage 4 — Storage and finality
+
+Implement atomic durable commitment, crash-safe recovery and certificate-dependent reconstruction.
+
+Stage 5 — Vector Language
+
+Correct source signing, import commitments, compiler compatibility, deterministic execution and kernel authorization.
+
+Stage 6 — Consensus
+
+Complete validator membership, epochs, quorum, finality, recovery and fault handling.
+
+Stage 7 — Node runtime
+
+Verify real P2P connectivity, peer discovery, synchronization, replication and recovery.
+
+Stage 8 — API and SDKs
+
+Verify all five language interfaces against the same actual Network.
+
+Stage 9 — Contracts, loans and Explorer
+
+Verify full integration with protocol authorization, ledger history and replay.
+
+Stage 10 — Deployment and acceptance
+
+Fix deployment configuration, run the isolated multi-node acceptance suite and validate all supported packages.
+
+Do not move past a blocking security issue merely to claim that all stages have been addressed.
+
+Where a later component depends on an earlier broken invariant, fix the dependency first.
+
+⸻
+
+29. ERROR REPAIR RULES
+
+Treat every reproducible error as something that must be resolved, not hidden.
+
+When a command fails:
+
+1. Capture the complete error.
+2. Identify the actual cause.
+3. Inspect the relevant source and configuration.
+4. Correct the root cause.
+5. Re-run the failing command.
+6. Run affected tests.
+7. Run the broader regression suite.
+8. Record the result.
+
+Do not just retry commands until they happen to pass.
+
+Do not suppress diagnostics.
+
+Do not weaken compiler or CI settings.
+
+Do not silently skip failing tests.
+
+Do not replace actual operations with stubs.
+
+Do not ignore persistence failures.
+
+Do not report success after partial execution.
+
+If a test reveals a race condition, fix the race.
+
+If a platform build fails, fix the platform-specific problem or clearly identify the environment limitation.
+
+If the current environment cannot run a test, do not invent a result.
+
+Implement the code and provide an exact command for the unavailable verification.
+
+No premature completion
+
+Do not declare the repository complete while:
+
+* Cargo formatting fails.
+* The workspace does not compile.
+* Clippy fails for unresolved code issues.
+* Relevant unit tests fail.
+* Core integration tests fail.
+* Any SDK is nonfunctional.
+* Consensus can announce unpersisted finality.
+* Recovery can accept uncertified operations.
+* Participants can grant themselves unauthorized scopes.
+* Wallet role restrictions are not enforced.
+* Signed Vector Language submissions omit execution dependencies or parameters.
+* Genesis or validator membership cannot be independently verified.
+* Production health checks report fabricated success.
+* Public deployment configuration is inconsistent.
+* The acceptance script can delete unrelated developer data.
+
+⸻
+
+30. FINAL COMPLETION REPORT
+
+When the implementation is complete, produce a precise technical report.
+
+Include:
+
+A. Repository audit
+
+What was inspected and what was corrected.
+
+B. Files changed
+
+List significant files added, changed or removed.
+
+Explain the purpose of important changes.
+
+C. Build status
+
+Show exact commands and actual output status.
+
+D. Protocol verification
+
+Provide test evidence for:
+
+* Three-dimensional Token structure.
+* Token-only transfer.
+* AuthRatio immutability during transfer.
+* Energy immutability during transfer.
+* Supply correctness.
+* Participant authorization.
+* Wallet key permissions.
+* Vector Language program signature completeness.
+* Validator-set integrity.
+* Consensus finality.
+* Atomic durable persistence.
+* Safe recovery.
+* State-root integrity.
+
+E. Network functionality
+
+Report actual evidence for:
+
+* Independent nodes.
+* P2P connections.
+* Discovery.
+* Synchronization.
+* Consensus.
+* Persistent storage.
+* Restart.
+* Rejoining.
+* Reconstruction.
+
+F. Vector Language functionality
+
+Show at least one real tested program that creates:
+
+* Space.
+* Region.
+* Wallet.
+* Token.
+* vContract.
+
+Show an authorized Token transfer and its committed result.
+
+G. SDK status
+
+Report actual test evidence for:
+
+* Rust.
+* JavaScript.
+* TypeScript.
+* Python.
+* Go.
+
+H. Acceptance tests
+
+Show the exact full-network command, what it tested and whether it passed.
+
+I. Security
+
+List the remaining risks and any components requiring independent security review.
+
+J. Deployment
+
+Explain how to deploy a public Network, what infrastructure is needed and which features are actually ready.
+
+K. Remaining work
+
+List unresolved tasks honestly, in priority order.
+
+Clearly distinguish:
+
+IMPLEMENTED
+TESTED
+INTEGRATION VERIFIED
+PRODUCTION CANDIDATE
+NOT COMPLETED
+BLOCKED BY ENVIRONMENT
+
+Never use these labels interchangeably.
+
+⸻
+
+FINAL DIRECTIVE
+
+Deliver one integrated Vector Network.
+
+It must have one authoritative Rust protocol engine, one consistent distributed consensus system, durable verifiable ledgers, independently controlled participant identities and genuine global connectivity infrastructure.
+
+Developers must be able to connect through Rust, JavaScript, TypeScript, Python or Go.
+
+They must be able to use Vector Language as the programming interface for creating Spaces, Regions, Wallets, Tokens, vContracts and vLoans and for carrying out authorized Token operations.
+
+The Vector Language compiler must integrate with the Rust kernel.
+
+The Rust kernel must authorize and execute the programs.
+
+Validators must independently verify operations.
+
+Consensus must establish finality.
+
+Storage must durably commit the result.
+
+Other nodes must synchronize and verify it.
+
+The result must survive restart and support reconstruction.
+
+Every SDK must reach the same protocol and produce the same authoritative results.
+
+Do not add more features to compensate for broken foundations. Repair the foundations, integrate the components, eliminate errors and prove the complete system works.
+
+Start with the actual repository. Audit it independently. Fix the code. Run the tests. Fix every failure you can reproduce. Continue until the complete acceptance suite passes or an accurately documented external limitation prevents further verification.
+
+Do not stop at planning.
+
+Do not stop at compilation.
+
+Do not stop at local demonstrations.
+
+Deliver the working Vector Network.

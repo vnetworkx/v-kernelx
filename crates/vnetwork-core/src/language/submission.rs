@@ -19,13 +19,31 @@ pub struct SubmitProgramRequest {
 }
 
 impl SubmitProgramRequest {
+    pub fn file_kind(&self) -> &'static str {
+        if self.file_name.ends_with(".vdx") {
+            "vdx"
+        } else {
+            "vx"
+        }
+    }
+
     pub fn canonical_signing_bytes(&self) -> VResult<Vec<u8>> {
         let source_hash = blake3_hex(self.source_bytes.as_bytes());
+        let mut module_hashes = BTreeMap::new();
+        for (path, src) in &self.modules {
+            module_hashes.insert(path.clone(), blake3_hex(src.as_bytes()));
+        }
         let obj = serde_json::json!({
             "actor_pubkey": self.actor_pubkey,
+            "compiler_version": v_langx::compiler::COMPILER_VERSION,
+            "execution_params": self.execution_params,
+            "file_kind": self.file_kind(),
             "file_name": self.file_name,
+            "language_version": v_langx::compiler::LANGUAGE_VERSION,
+            "module_hashes": module_hashes,
             "network_id": self.network_id,
             "nonce": self.nonce,
+            "protocol_version": PROTOCOL_VERSION,
             "request_id": self.request_id,
             "source_hash": source_hash,
         });
@@ -47,11 +65,7 @@ pub fn build_program_submission(
     let source_hash = blake3_hex(req.source_bytes.as_bytes());
     let program_id = derive_program_id(&source_hash, &req.actor_pubkey, req.nonce);
     let participant_id = derive_participant_id(&req.actor_pubkey);
-    let file_kind = if req.file_name.ends_with(".vdx") {
-        "vdx".to_string()
-    } else {
-        "vx".to_string()
-    };
+    let file_kind = req.file_kind().to_string();
 
     let (lang_ver, comp_ver, imported, compiled_hash) = match compiled {
         Some(c) => (

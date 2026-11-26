@@ -8,7 +8,7 @@ The Go SDK (`sdks/go`) uses pure Go standard library (`crypto/ed25519`, `net/htt
 
 ```bash
 VNETWORK_ENDPOINT=http://127.0.0.1:18082 \
-VNETWORK_NETWORK_ID=vnetwork-devnet-1 \
+VNETWORK_NETWORK_ID=vector-devnet-1 \
 go -C examples/go run .
 ```
 

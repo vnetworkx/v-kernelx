@@ -4,13 +4,33 @@ set -euo pipefail
 export PATH="/root/.cargo/bin:/usr/local/go/bin:$PATH"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEVNET_DIR="${DEVNET_DIR:-$ROOT/.devnet}"
-NETWORK_ID="${NETWORK_ID:-vnetwork-devnet-1}"
+NETWORK_ID="${NETWORK_ID:-vector-devnet-1}"
 CONSENSUS_TIMEOUT_MS="${NETWORK_CONSENSUS_TIMEOUT_MS:-5000}"
 
+safe_clean_devnet_dir() {
+  local target="$1"
+  if [[ -z "$target" || "$target" == "/" || "$target" == "$HOME" || "$target" == "$ROOT" ]]; then
+    echo "Refusing unsafe reset of directory: '$target'" >&2
+    exit 1
+  fi
+  if [[ ! -d "$target" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$target/.vnetwork-devnet-marker" ]]; then
+    echo "Refusing to delete '$target' because .vnetwork-devnet-marker is missing (user data preserved)." >&2
+    exit 1
+  fi
+  rm -rf -- "$target"
+}
+
 if [[ "${DEVNET_CLEAN:-0}" == "1" ]]; then
-  rm -rf "$DEVNET_DIR"
+  safe_clean_devnet_dir "$DEVNET_DIR"
 fi
+
 mkdir -p "$DEVNET_DIR"
+if [[ ! -f "$DEVNET_DIR/.vnetwork-devnet-marker" ]]; then
+  echo "vnetwork-devnet" > "$DEVNET_DIR/.vnetwork-devnet-marker"
+fi
 
 echo "Building vnetwork-node and vn binaries..."
 cargo build -q -p vnetwork-node -p vnetwork-cli --manifest-path "$ROOT/Cargo.toml"
@@ -119,7 +139,6 @@ for i in 1 2 3 4; do
   fi
 done
 
-# Give libp2p mesh a moment to complete identify + gossipsub peering
 for _ in $(seq 1 30); do
   peers_n1="$(curl -fsS "http://127.0.0.1:18081/healthz" | python3 -c 'import sys,json; print(json.load(sys.stdin)["connected_peers"])')"
   if [[ "$peers_n1" -ge 3 ]]; then
@@ -128,7 +147,7 @@ for _ in $(seq 1 30); do
   sleep 0.25
 done
 
-echo "4-node Vector Network devnet is UP:"
+echo "4-node Vector Network devnet is UP (dir=$DEVNET_DIR):"
 for i in 1 2 3 4; do
   api_port=$((18080 + i))
   summary="$(curl -fsS "http://127.0.0.1:$api_port/healthz" | python3 -c "import sys,json; d=json.load(sys.stdin); print('node_id=' + str(d['node_id']) + ' height=' + str(d['height']) + ' peers=' + str(d['connected_peers']))")"

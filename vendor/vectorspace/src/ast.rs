@@ -121,6 +121,7 @@ pub struct WalletAuthorizeStmt {
     pub wallet: String,
     pub public_key: Expr,
     pub role: Option<String>,
+    pub fields: Vec<PropertyField>,
     pub span: Span,
 }
 
