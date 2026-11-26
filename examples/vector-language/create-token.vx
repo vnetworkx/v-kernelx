@@ -1,0 +1,27 @@
+// Create a 3-dimensional Token [token, authratio(au), energy] inside a Wallet
+space create TokenSpace {
+    name = "Token Host Space";
+    visibility = "public";
+}
+
+region create TokenRegion in "TokenSpace" {
+    name = "Token Issuance Region";
+    prefix = "TKN";
+    visibility = "public";
+    section = 1;
+}
+
+wallet create IssuerWallet in "TokenRegion" {
+    name = "Issuer Wallet";
+}
+
+token create VEC in "IssuerWallet" {
+    name = "Vector Test Token";
+    symbol = "VEC";
+    dimensions = 3;
+    vector = [500000, 1000, 10];
+    max_supply = 1000000;
+    drain_bps = 100;
+    purpose = "Application settlement token";
+    external_monetary_value = "None";
+}

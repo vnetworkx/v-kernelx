@@ -1,12 +1,31 @@
 [package]
 name = "vnetworkx"
-version = "0.1.4"
+version = "0.2.0"
 edition = "2021"
+
+[workspace]
+members = [
+    ".",
+    "vendor/vectorspace",
+    "crates/vnetwork-types",
+    "crates/vnetwork-core",
+    "crates/vnetwork-storage",
+    "crates/vnetwork-consensus",
+    "crates/vnetwork-api",
+    "crates/vnetwork-node",
+    "crates/vnetwork-cli",
+    "sdks/rust",
+]
+resolver = "2"
 
 [lib]
 name = "v_kernelx"
 path = "src/lib.rs"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+default = []
+python = ["dep:pyo3"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -18,5 +37,5 @@ blake3 = "1"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 
-# Python bindings
-pyo3 = { version = "0.28.3", features = ["abi3-py38"] }
+# Optional Python bindings (enabled via `python` feature or `bindings/python`)
+pyo3 = { version = "0.28.3", features = ["abi3-py38"], optional = true }

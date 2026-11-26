@@ -1,0 +1,3 @@
+// Query live network state and verify ledger proofs
+query network;
+verify proof network;

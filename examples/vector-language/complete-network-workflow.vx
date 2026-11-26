@@ -1,0 +1,28 @@
+// Complete Multi-Step Vector Language Workflow with Hash-Pinned .vdx Module Imports
+import "policies.vdx" blake3 "966291d89c2ee18ea047ea983f4c8fb18f53bf856b2bed9391224772a985e0d1";
+import "shared-wallet.vdx" blake3 "b4320f1c14ff3c41c180e93e57e8cea2cb9ea7e6d30b8bf6044d0ecb08e3c5ab";
+
+token create VFLOW in "SharedTreasuryWallet" {
+    name = "Vector Workflow Token";
+    symbol = "VFLOW";
+    dimensions = 3;
+    vector = [100000, 1000, 5];
+    max_supply = 100000;
+    drain_bps = 50;
+    purpose = "Full multi-node workflow validation";
+    external_monetary_value = "None";
+}
+
+contract create WorkflowSettlement {
+    region = "SharedTreasuryRegion";
+    action execute_settlement(policy="SettlementPolicy", amount=200);
+}
+
+contract execute "WorkflowSettlement".execute_settlement(policy="SettlementPolicy", amount=200);
+
+transfer "VFLOW" from "SharedTreasuryWallet" to "SharedCounterpartyWallet" amount 1500;
+
+query network;
+verify proof network;
+reconstruct "VFLOW";
+reconstruct "SharedCounterpartyWallet";

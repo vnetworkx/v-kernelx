@@ -1,0 +1,20 @@
+// Create Space -> Region -> Wallets
+space create WalletSpace {
+    name = "Wallet Host Space";
+    visibility = "public";
+}
+
+region create WalletRegion in "WalletSpace" {
+    name = "Wallet Region";
+    prefix = "WLT";
+    visibility = "public";
+    section = 1;
+}
+
+wallet create PrimaryWallet in "WalletRegion" {
+    name = "Primary Wallet";
+}
+
+wallet create SecondaryWallet in "WalletRegion" {
+    name = "Secondary Wallet";
+}

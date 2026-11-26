@@ -1,0 +1,29 @@
+# Vector Network Definition Example (Public / Testnet / Development)
+# Never put private keys in shared network manifests.
+
+network_id = "vector-main"
+network_name = "Vector Network Mainnet"
+profile = "PRODUCTION"
+protocol_version = "vnetwork/0.2.0"
+quorum_threshold_bps = 6667
+allow_bootstrap_atlas = false
+
+# Publicly reachable bootstrap seeds (replace with real DNS/IP + PeerId before production launch)
+bootstrap_peers = [
+  "/dns4/seed-us-east.vectornetwork.example/tcp/7001/p2p/<PEER_ID_1>",
+  "/dns4/seed-eu-west.vectornetwork.example/tcp/7001/p2p/<PEER_ID_2>",
+  "/dns4/seed-ap-south.vectornetwork.example/tcp/7001/p2p/<PEER_ID_3>"
+]
+
+public_api_endpoints = [
+  "https://rpc.vectornetwork.example"
+]
+
+# Validators configured via public keys ONLY
+# [[validators]]
+# validator_id = "val_01"
+# node_id = "nod_..."
+# validator_pubkey_hex = "<64-char-hex-ed25519-pubkey>"
+# weight = 100
+# active = true
+# joined_epoch = 1

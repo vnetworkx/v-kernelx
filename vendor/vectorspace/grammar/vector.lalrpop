@@ -1,0 +1,80 @@
+grammar;
+
+extern {
+    type Location = usize;
+    type Error = String;
+
+    enum Token {
+        "import" => Import,
+        "network" => Network,
+        "connect" => Connect,
+        "target" => Target,
+        "participant" => Participant,
+        "join" => Join,
+        "scope" => Scope,
+        "space" => Space,
+        "region" => Region,
+        "ghost" => Ghost,
+        "wallet" => Wallet,
+        "authorize" => Authorize,
+        "key" => Key,
+        "role" => Role,
+        "token" => Token,
+        "create" => Create,
+        "in" => In,
+        "vector" => Vector,
+        "bind" => Bind,
+        "certify" => Certify,
+        "transfer" => Transfer,
+        "receive" => Receive,
+        "drain" => Drain,
+        "project" => Project,
+        "reconstruct" => Reconstruct,
+        "query" => Query,
+        "history" => History,
+        "verify" => Verify,
+        "proof" => Proof,
+        "record" => Record,
+        "contract" => Contract,
+        "execute" => Execute,
+        "loan" => Loan,
+        "action" => Action,
+        "with" => With,
+        "to" => To,
+        "amount" => Amount,
+        "by" => By,
+        "into" => Into,
+        "from" => From,
+        "policy" => Policy,
+        "ctx" => Ctx,
+        "blake3" => Blake3,
+        "sha256" => Sha256,
+        "as" => As,
+        "public" => Public,
+        "private" => Private,
+        "{" => LBrace,
+        "}" => RBrace,
+        "(" => LParen,
+        ")" => RParen,
+        "[" => LBracket,
+        "]" => RBracket,
+        ":" => Colon,
+        ";" => Semi,
+        "," => Comma,
+        "." => Dot,
+        "=" => Eq,
+        Ident => Ident(String),
+        Integer => Integer(u128),
+        String => String(String),
+        Bool => Bool(bool),
+    }
+}
+
+Program: Vec<Statement> = {
+    <mut stmts:Statements> => stmts,
+};
+
+Statements: Vec<Statement> = {
+    => Vec::new(),
+    <mut stmts:Statements> <stmt:Statement> => { stmts.push(stmt); stmts },
+};

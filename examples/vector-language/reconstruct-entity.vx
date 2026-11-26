@@ -1,0 +1,36 @@
+// Create an asset, transfer it, verify ledger proof, and reconstruct entity state from events
+space create AuditSpace {
+    name = "Audit Space";
+    visibility = "public";
+}
+
+region create AuditRegion in "AuditSpace" {
+    name = "Audit Region";
+    prefix = "AUD";
+    visibility = "public";
+    section = 1;
+}
+
+wallet create AuditSourceWallet in "AuditRegion" {
+    name = "Audit Source";
+}
+
+wallet create AuditSinkWallet in "AuditRegion" {
+    name = "Audit Sink";
+}
+
+token create ATOK in "AuditSourceWallet" {
+    name = "Audit Token";
+    symbol = "ATOK";
+    dimensions = 3;
+    vector = [5000, 1000, 0];
+    max_supply = 5000;
+    drain_bps = 50;
+    purpose = "Entity reconstruction verification";
+    external_monetary_value = "None";
+}
+
+transfer "ATOK" from "AuditSourceWallet" to "AuditSinkWallet" amount 750;
+verify proof network;
+reconstruct "ATOK";
+reconstruct "AuditSinkWallet";

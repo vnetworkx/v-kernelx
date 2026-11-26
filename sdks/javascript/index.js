@@ -1,0 +1,221 @@
+import crypto from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { blake3Hex } from "./blake3.js";
+import { canonicalJsonBytes } from "./canonical.js";
+import { ClientIdentity, signEd25519 } from "./crypto.js";
+
+export * from "./blake3.js";
+export * from "./canonical.js";
+export * from "./crypto.js";
+
+const IMPORT_RE = /^\s*import\s+"([^"]+)"(?:\s+(?:blake3|sha256)\s+"([^"]+)")?(?:\s+as\s+[A-Za-z0-9_]+)?\s*;/gm;
+
+export class VectorNetworkClient {
+  constructor(baseUrl, identity, expectedNetworkId = null) {
+    this.baseUrl = baseUrl.replace(/\/+$/, "");
+    this.identity = identity;
+    this.expectedNetworkId = expectedNetworkId;
+    this.connectedNetworkId = null;
+    this.nonce = 1;
+  }
+
+  async connect() {
+    const info = await this.getJson("/v1/network/info");
+    if (info.protocol_version !== "vnetwork/1.0") {
+      throw new Error(`Protocol mismatch: remote ${info.protocol_version} != vnetwork/1.0`);
+    }
+    if (this.expectedNetworkId && info.network_id !== this.expectedNetworkId) {
+      throw new Error(`Expected network ${this.expectedNetworkId}, got ${info.network_id}`);
+    }
+    this.connectedNetworkId = info.network_id;
+    return info;
+  }
+
+  resolvedNetworkId() {
+    const net = this.connectedNetworkId || this.expectedNetworkId;
+    if (!net) {
+      throw new Error("Client must call connect() before write operations");
+    }
+    return net;
+  }
+
+  async join(scopes = ["NETWORK", "SPACE", "REGION", "WALLET", "TOKEN"]) {
+    if (!this.connectedNetworkId) await this.connect();
+    const challenge = await this.postJson("/v1/participants/challenge", {});
+    const msg = canonicalJsonBytes({
+      challenge_id: challenge.challenge_id,
+      network_id: challenge.network_id,
+      node_pubkey: this.identity.node_key.public_key_hex,
+      nonce: challenge.nonce,
+      participant_pubkey: this.identity.participant_key.public_key_hex,
+      requested_scopes: scopes,
+    });
+    const participantSig = signEd25519(this.identity.participant_key.private_key_hex, msg);
+    const nodeSig = signEd25519(this.identity.node_key.private_key_hex, msg);
+    return this.postJson("/v1/participants/join", {
+      challenge_id: challenge.challenge_id,
+      participant_pubkey: this.identity.participant_key.public_key_hex,
+      node_pubkey: this.identity.node_key.public_key_hex,
+      display_name: this.identity.display_name,
+      node_kind: "FULL_NODE",
+      requested_scopes: scopes,
+      advertised_addresses: [],
+      participant_signature: participantSig,
+      node_signature: nodeSig,
+    });
+  }
+
+  async participantStatus(participantId = this.identity.participant_id) {
+    return this.getJson(`/v1/participants/${participantId}/scope`);
+  }
+
+  async loadModulesForSource(sourceBytes, baseDir) {
+    const modules = {};
+    const queue = [sourceBytes];
+    while (queue.length > 0) {
+      const current = queue.pop();
+      IMPORT_RE.lastIndex = 0;
+      let match;
+      while ((match = IMPORT_RE.exec(current)) !== null) {
+        const importPath = match[1];
+        if (!modules[importPath]) {
+          const full = path.resolve(baseDir, importPath);
+          const content = await fs.readFile(full, "utf8");
+          modules[importPath] = content;
+          queue.push(content);
+        }
+      }
+    }
+    return modules;
+  }
+
+  async compileSource(fileName, sourceBytes, modules = {}) {
+    return this.postJson("/v1/language/compile", {
+      file_name: fileName,
+      source_bytes: sourceBytes,
+      modules,
+    });
+  }
+
+  async submitVxFile(filePath) {
+    const abs = path.resolve(filePath);
+    const sourceBytes = await fs.readFile(abs, "utf8");
+    const modules = await this.loadModulesForSource(sourceBytes, path.dirname(abs));
+    return this.submitProgram(path.basename(abs), sourceBytes, modules);
+  }
+
+  async submitProgram(fileName, sourceBytes, modules = {}) {
+    if (!this.connectedNetworkId) await this.connect();
+    const networkId = this.resolvedNetworkId();
+    const requestId = `req_${crypto.randomUUID().replace(/-/g, "")}`;
+    const nonce = this.nonce++;
+    const sourceHash = blake3Hex(sourceBytes);
+    const signingBytes = canonicalJsonBytes({
+      actor_pubkey: this.identity.participant_key.public_key_hex,
+      file_name: fileName,
+      network_id: networkId,
+      nonce,
+      request_id: requestId,
+      source_hash: sourceHash,
+    });
+    const signature = signEd25519(this.identity.participant_key.private_key_hex, signingBytes);
+    return this.postJson("/v1/programs/submit", {
+      file_name: fileName,
+      source_bytes: sourceBytes,
+      modules,
+      actor_pubkey: this.identity.participant_key.public_key_hex,
+      network_id: networkId,
+      request_id: requestId,
+      nonce,
+      signature,
+      execution_params: {},
+    });
+  }
+
+  async submitOperation(operation) {
+    if (!this.connectedNetworkId) await this.connect();
+    const networkId = this.resolvedNetworkId();
+    const requestId = `req_${crypto.randomUUID().replace(/-/g, "")}`;
+    const nonce = this.nonce++;
+    const timestampMs = Date.now();
+    const payloadHash = blake3Hex(canonicalJsonBytes(operation));
+    const signingBytes = canonicalJsonBytes({
+      actor_pubkey: this.identity.participant_key.public_key_hex,
+      network_id: networkId,
+      nonce,
+      payload_hash: payloadHash,
+      request_id: requestId,
+      timestamp_ms: timestampMs,
+    });
+    const signature = signEd25519(this.identity.participant_key.private_key_hex, signingBytes);
+    return this.postJson("/v1/transactions", {
+      request_id: requestId,
+      network_id: networkId,
+      actor_pubkey: this.identity.participant_key.public_key_hex,
+      nonce,
+      timestamp_ms: timestampMs,
+      signature,
+      operation,
+    });
+  }
+
+  getNetworkInfo() { return this.getJson("/v1/network/info"); }
+  getNetworkStatus() { return this.getJson("/v1/network/status"); }
+  listNodes() { return this.getJson("/v1/nodes"); }
+  getProgram(programId) { return this.getJson(`/v1/programs/${programId}`); }
+  getTransaction(txId) { return this.getJson(`/v1/transactions/${txId}`); }
+  listSpaces() { return this.getJson("/v1/spaces"); }
+  listRegions() { return this.getJson("/v1/regions"); }
+  listWallets() { return this.getJson("/v1/wallets"); }
+  listTokens() { return this.getJson("/v1/tokens"); }
+  listContracts() { return this.getJson("/v1/contracts"); }
+  listLoans() { return this.getJson("/v1/loans"); }
+  getLedgerEvents() { return this.getJson("/v1/ledger/events"); }
+  getLedgerProofs() { return this.getJson("/v1/ledger/proofs"); }
+  getConsensusStatus() { return this.getJson("/v1/consensus/status"); }
+
+  verifyReconstruction(entityKind, entityId) {
+    return this.postJson("/v1/reconstruction/verify", {
+      entity_kind: entityKind,
+      entity_id: entityId,
+    });
+  }
+
+  subscribeEvents(onEvent) {
+    const wsUrl = this.baseUrl.replace(/^https:\/\//, "wss://").replace(/^http:\/\//, "ws://") + "/v1/ws";
+    const ws = new WebSocket(wsUrl);
+    ws.addEventListener("message", (evt) => {
+      try {
+        onEvent(JSON.parse(String(evt.data)));
+      } catch {
+        // ignore non-json frames
+      }
+    });
+    return ws;
+  }
+
+  async getJson(endpointPath) {
+    const res = await fetch(`${this.baseUrl}${endpointPath}`);
+    const body = await res.json();
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${body.error ?? JSON.stringify(body)}`);
+    }
+    return body;
+  }
+
+  async postJson(endpointPath, payload) {
+    const res = await fetch(`${this.baseUrl}${endpointPath}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${body.error ?? JSON.stringify(body)}`);
+    }
+    return body;
+  }
+}
+
+export { ClientIdentity };

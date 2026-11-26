@@ -1,0 +1,120 @@
+services:
+  node-1:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.node
+    container_name: vnetwork-testnet-node-1
+    environment:
+      NETWORK_PROFILE: TESTNET
+      NETWORK_ID: vnetwork-testnet-1
+      NETWORK_NAME: Vector Network Testnet
+      NETWORK_NODE_ID: nod_val_1
+      NETWORK_VALIDATOR_ID: val_1
+      NETWORK_NODE_KIND: VALIDATOR_NODE
+      NETWORK_ENABLE_VALIDATOR: "true"
+      NETWORK_ENABLE_PUBLIC_API: "true"
+      NETWORK_API_LISTEN_ADDR: 0.0.0.0:8080
+      NETWORK_P2P_LISTEN_ADDRS: /ip4/0.0.0.0/tcp/9001
+      NETWORK_STORAGE_PATH: /var/lib/vnetwork/node1
+      NETWORK_IDENTITY_PATH: /var/lib/vnetwork/node1-identity.json
+      NETWORK_VALIDATOR_KEY_PATH: /var/lib/vnetwork/node1-validator.json
+    ports:
+      - "8080:8080"
+      - "9001:9001"
+    volumes:
+      - node1_data:/var/lib/vnetwork
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  node-2:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.node
+    container_name: vnetwork-testnet-node-2
+    depends_on:
+      node-1:
+        condition: service_healthy
+    environment:
+      NETWORK_PROFILE: TESTNET
+      NETWORK_ID: vnetwork-testnet-1
+      NETWORK_NODE_ID: nod_val_2
+      NETWORK_VALIDATOR_ID: val_2
+      NETWORK_NODE_KIND: VALIDATOR_NODE
+      NETWORK_ENABLE_VALIDATOR: "true"
+      NETWORK_ENABLE_PUBLIC_API: "true"
+      NETWORK_API_LISTEN_ADDR: 0.0.0.0:8080
+      NETWORK_P2P_LISTEN_ADDRS: /ip4/0.0.0.0/tcp/9002
+      NETWORK_BOOTSTRAP_PEERS: /dns4/node-1/tcp/9001
+      NETWORK_STORAGE_PATH: /var/lib/vnetwork/node2
+      NETWORK_IDENTITY_PATH: /var/lib/vnetwork/node2-identity.json
+      NETWORK_VALIDATOR_KEY_PATH: /var/lib/vnetwork/node2-validator.json
+    ports:
+      - "8081:8080"
+      - "9002:9002"
+    volumes:
+      - node2_data:/var/lib/vnetwork
+
+  node-3:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.node
+    container_name: vnetwork-testnet-node-3
+    depends_on:
+      node-1:
+        condition: service_healthy
+    environment:
+      NETWORK_PROFILE: TESTNET
+      NETWORK_ID: vnetwork-testnet-1
+      NETWORK_NODE_ID: nod_val_3
+      NETWORK_VALIDATOR_ID: val_3
+      NETWORK_NODE_KIND: VALIDATOR_NODE
+      NETWORK_ENABLE_VALIDATOR: "true"
+      NETWORK_ENABLE_PUBLIC_API: "true"
+      NETWORK_API_LISTEN_ADDR: 0.0.0.0:8080
+      NETWORK_P2P_LISTEN_ADDRS: /ip4/0.0.0.0/tcp/9003
+      NETWORK_BOOTSTRAP_PEERS: /dns4/node-1/tcp/9001
+      NETWORK_STORAGE_PATH: /var/lib/vnetwork/node3
+      NETWORK_IDENTITY_PATH: /var/lib/vnetwork/node3-identity.json
+      NETWORK_VALIDATOR_KEY_PATH: /var/lib/vnetwork/node3-validator.json
+    ports:
+      - "8082:8080"
+      - "9003:9003"
+    volumes:
+      - node3_data:/var/lib/vnetwork
+
+  node-4:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.node
+    container_name: vnetwork-testnet-node-4
+    depends_on:
+      node-1:
+        condition: service_healthy
+    environment:
+      NETWORK_PROFILE: TESTNET
+      NETWORK_ID: vnetwork-testnet-1
+      NETWORK_NODE_ID: nod_val_4
+      NETWORK_VALIDATOR_ID: val_4
+      NETWORK_NODE_KIND: VALIDATOR_NODE
+      NETWORK_ENABLE_VALIDATOR: "true"
+      NETWORK_ENABLE_PUBLIC_API: "true"
+      NETWORK_API_LISTEN_ADDR: 0.0.0.0:8080
+      NETWORK_P2P_LISTEN_ADDRS: /ip4/0.0.0.0/tcp/9004
+      NETWORK_BOOTSTRAP_PEERS: /dns4/node-1/tcp/9001
+      NETWORK_STORAGE_PATH: /var/lib/vnetwork/node4
+      NETWORK_IDENTITY_PATH: /var/lib/vnetwork/node4-identity.json
+      NETWORK_VALIDATOR_KEY_PATH: /var/lib/vnetwork/node4-validator.json
+    ports:
+      - "8083:8080"
+      - "9004:9004"
+    volumes:
+      - node4_data:/var/lib/vnetwork
+
+volumes:
+  node1_data:
+  node2_data:
+  node3_data:
+  node4_data:

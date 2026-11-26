@@ -1,0 +1,20 @@
+[Unit]
+Description=Vector Network Node Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vnetwork
+Group=vnetwork
+EnvironmentFile=/etc/vnetwork/node.env
+ExecStart=/usr/local/bin/vnetwork-node --config /etc/vnetwork/node.toml
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/vnetwork
+
+[Install]
+WantedBy=multi-user.target

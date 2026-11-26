@@ -1,0 +1,42 @@
+// Create and fund/repay a Loan inside the Wallet -> Region hierarchy
+space create LoanSpace {
+    name = "Loan Space";
+    visibility = "public";
+}
+
+region create LoanRegion in "LoanSpace" {
+    name = "Loan Region";
+    prefix = "LOAN";
+    visibility = "public";
+    section = 1;
+}
+
+wallet create LenderWallet in "LoanRegion" {
+    name = "Lender Wallet";
+}
+
+wallet create BorrowerWallet in "LoanRegion" {
+    name = "Borrower Wallet";
+}
+
+token create LTOK in "LenderWallet" {
+    name = "Loan Token";
+    symbol = "LTOK";
+    dimensions = 3;
+    vector = [20000, 1000, 0];
+    max_supply = 20000;
+    drain_bps = 100;
+    purpose = "Deterministic loan demonstration";
+    external_monetary_value = "None";
+}
+
+loan create WorkingCapitalLoan {
+    token = "LTOK";
+    lender = "LenderWallet";
+    borrower = "BorrowerWallet";
+    principal = 2500;
+    collateral = 5000;
+    interest_bps = 250;
+}
+
+loan execute "WorkingCapitalLoan".repay(amount=500);

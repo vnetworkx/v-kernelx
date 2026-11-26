@@ -1,0 +1,15 @@
+[package]
+name = "vnetwork-node-binding"
+version = "0.2.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Native C-ABI/FFI bridge exposing Vector Network compiler and canonical signing primitives for Node.js/JS/TS."
+
+[lib]
+name = "vnetwork_node_binding"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+vnetwork-types = { path = "../../crates/vnetwork-types" }
+vnetwork-core = { path = "../../crates/vnetwork-core" }
+serde_json = "1"

@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vnetwork-bootstrap
+  namespace: vnetwork
+spec:
+  serviceName: vnetwork-bootstrap
+  replicas: 2
+  selector:
+    matchLabels:
+      app: vnetwork-bootstrap
+  template:
+    metadata:
+      labels:
+        app: vnetwork-bootstrap
+    spec:
+      containers:
+        - name: vnetwork-node
+          image: ghcr.io/vnetworkx/vnetwork-node:0.2.0
+          env:
+            - name: NETWORK_PROFILE
+              value: TESTNET
+            - name: NETWORK_NODE_KIND
+              value: BOOTSTRAP_SEED
+            - name: NETWORK_ENABLE_VALIDATOR
+              value: "false"
+            - name: NETWORK_P2P_LISTEN_ADDRS
+              value: /ip4/0.0.0.0/tcp/9000
+            - name: NETWORK_API_LISTEN_ADDR
+              value: 0.0.0.0:8080
+          ports:
+            - containerPort: 9000
+              name: p2p
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/vnetwork
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi

@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: vnetwork-api
+  namespace: vnetwork
+spec:
+  selector:
+    app: vnetwork-validator
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vnetwork-p2p
+  namespace: vnetwork
+spec:
+  type: LoadBalancer
+  selector:
+    app: vnetwork-bootstrap
+  ports:
+    - name: p2p
+      port: 9000
+      targetPort: 9000

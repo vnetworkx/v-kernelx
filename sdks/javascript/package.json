@@ -1,0 +1,15 @@
+{
+  "name": "@vnetwork/sdk",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "Official JavaScript SDK for Vector Network and Vector Language (.vx / .vdx) execution.",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./browser": "./browser.js"
+  },
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

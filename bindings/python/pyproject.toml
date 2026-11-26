@@ -1,0 +1,9 @@
+[build-system]
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "vnetwork-native"
+version = "0.2.0"
+description = "Optional native Rust acceleration binding for vnetwork-sdk Python client."
+requires-python = ">=3.8"

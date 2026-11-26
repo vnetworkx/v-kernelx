@@ -1,0 +1,5 @@
+// Create a sovereign Space on Vector Network
+space create ResearchSpace {
+    name = "Research Space";
+    visibility = "public";
+}

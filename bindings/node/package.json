@@ -1,0 +1,8 @@
+{
+  "name": "@vnetwork/native-binding",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "Optional native library metadata and thin wrapper bridging @vnetwork/sdk with compiled Rust FFI or node HTTP API.",
+  "main": "index.js",
+  "license": "MIT OR Apache-2.0"
+}

@@ -1,0 +1,8 @@
+vector alpha: position = (12, 8, 1);
+wallet alpha_owner = bind(pk_alpha);
+certify alpha with ctx(space="main", op="project", risk="low");
+contract risk_gate {
+    action enter(amount=3, region="north");
+    action exit(amount=3, region="north");
+}
+query alpha.vector;

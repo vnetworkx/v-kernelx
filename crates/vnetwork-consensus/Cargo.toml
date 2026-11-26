@@ -1,0 +1,13 @@
+[package]
+name = "vnetwork-consensus"
+version = "0.2.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Byzantine Fault Tolerant quorum consensus engine, validator membership, equivocation detection, finality certificates, and verified sync."
+
+[dependencies]
+vnetwork-types = { path = "../vnetwork-types" }
+vnetwork-core = { path = "../vnetwork-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+blake3 = "1"

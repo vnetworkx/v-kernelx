@@ -1,0 +1,17 @@
+FROM rust:1.82-bookworm AS builder
+WORKDIR /app
+COPY . .
+RUN cargo build --release -p vnetwork-node -p vnetwork-cli
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/target/release/vnetwork-node /usr/local/bin/vnetwork-node
+COPY --from=builder /app/target/release/vn /usr/local/bin/vn
+COPY config /etc/vnetwork/config
+RUN mkdir -p /var/lib/vnetwork
+ENV NETWORK_STORAGE_PATH=/var/lib/vnetwork/data \
+    NETWORK_IDENTITY_PATH=/var/lib/vnetwork/node-identity.json \
+    NETWORK_API_LISTEN_ADDR=0.0.0.0:8080 \
+    RUST_LOG=info
+EXPOSE 8080 9000
+ENTRYPOINT ["/usr/local/bin/vnetwork-node"]

@@ -1,0 +1,8 @@
+// Reusable Vector Language Declaration Module (.vdx): Network Settlement Policies
+contract SettlementPolicy {
+    max_transfer_bps = 10000;
+    drain_floor_bps = 50;
+    visibility = "public";
+    action validate_settlement(max_bps=10000, min_drain_bps=50);
+    action enforce_three_dim(dimensions=3);
+}

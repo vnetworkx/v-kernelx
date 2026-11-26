@@ -1,0 +1,38 @@
+// ATLAS Development/Bootstrap Token Definition (3-Dimensional Token Vector [token, authratio(au), energy])
+// Only permitted in DEVELOPMENT / TESTNET profiles (or explicitly genesis-authorized PRODUCTION).
+// Purpose: Development/bootstrap. External monetary value: None.
+space create AtlasCoreSpace {
+    name = "Atlas Core Space";
+    visibility = "public";
+}
+
+region create AtlasGenesisRegion in "AtlasCoreSpace" {
+    name = "Atlas Genesis Region";
+    prefix = "ATLAS";
+    title = "Atlas Protocol Reserve";
+    visibility = "public";
+    section = 1;
+}
+
+wallet create AtlasTreasuryWallet in "AtlasGenesisRegion" {
+    name = "Atlas Treasury Wallet";
+}
+
+wallet create AtlasDistributionWallet in "AtlasGenesisRegion" {
+    name = "Atlas Distribution Wallet";
+}
+
+token create ATLAS in "AtlasTreasuryWallet" {
+    name = "ATLAS";
+    symbol = "ATLAS";
+    dimensions = 3;
+    vector = [1000000, 1000, 0];
+    max_supply = 1000000;
+    drain_bps = 100;
+    purpose = "Development/bootstrap";
+    external_monetary_value = "None";
+}
+
+transfer "ATLAS" from "AtlasTreasuryWallet" to "AtlasDistributionWallet" amount 10000;
+verify proof network;
+reconstruct "ATLAS";

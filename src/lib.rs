@@ -11,6 +11,7 @@ pub mod hash;
 pub mod interpreter;
 pub mod origin;
 pub mod projection;
+#[cfg(feature = "python")]
 pub mod python_api;
 pub mod query;
 pub mod reconstruction;
@@ -40,6 +41,7 @@ pub use hash::*;
 pub use interpreter::*;
 pub use origin::*;
 pub use projection::*;
+#[cfg(feature = "python")]
 pub use python_api::*;
 pub use query::*;
 pub use reconstruction::*;
@@ -60,19 +62,24 @@ pub use wallet::{
 pub use state::compute_state_root as replay_compute_state_root;
 pub use wallet::verifying_key_from_hex as wallet_verifying_key_from_hex;
 
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
+#[cfg(feature = "python")]
 use pyo3::types::PyModule;
 
+#[cfg(feature = "python")]
 #[pyfunction]
 fn kernel_name() -> &'static str {
     "v-kernelx"
 }
 
+#[cfg(feature = "python")]
 #[pyfunction]
 fn kernel_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+#[cfg(feature = "python")]
 #[pyfunction]
 fn exposed_modules() -> Vec<&'static str> {
     vec![
@@ -107,6 +114,7 @@ fn exposed_modules() -> Vec<&'static str> {
     ]
 }
 
+#[cfg(feature = "python")]
 #[pymodule]
 fn v_kernelx(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(kernel_name, m)?)?;

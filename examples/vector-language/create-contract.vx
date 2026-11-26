@@ -1,0 +1,19 @@
+// Deploy a vContract bound to a Region
+space create ContractSpace {
+    name = "Contract Space";
+    visibility = "public";
+}
+
+region create ContractRegion in "ContractSpace" {
+    name = "Contract Region";
+    prefix = "CNT";
+    visibility = "public";
+    section = 1;
+}
+
+contract create EscrowContract {
+    region = "ContractRegion";
+    escrow_mode = "deterministic";
+    action settle(recipient="BeneficiaryWallet", amount=100);
+    action release(memo="released");
+}

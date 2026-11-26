@@ -93,6 +93,7 @@ desktop.ini
 # Local Node Data & Keystore
 # =========================
 data/
+.devnet/
 *.db
 *.db-wal
 *.db-shm

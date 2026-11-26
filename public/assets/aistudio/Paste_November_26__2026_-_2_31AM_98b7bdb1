@@ -1,0 +1,1787 @@
+FINAL PRODUCT IMPLEMENTATION DIRECTIVE
+
+Turn v-kernelx into a Working Network That Anyone Can Join and Use
+
+Existing kernel repository: https://github.com/vnetworkx/v-kernelx
+
+Required language repository: https://github.com/vnetworkx/vectorspace
+
+Language: Vector Language (.vx and .vdx)
+
+Authoritative execution environment: Rust
+
+Required client ecosystems:
+
+* Rust
+* JavaScript
+* TypeScript
+* Python
+* Go
+
+Final objective:
+
+Deliver a working, deployable Vector Network in which a developer anywhere in the world can connect to the Network using any supported language, register as a participant, join at an appropriate participation scope, submit Vector Language programs, and create or interact with verified Network entities.
+
+A developer must be able to write Vector Language, submit that source to the actual network, and have the Rust kernel parse, validate, compile, authorize, execute, verify and commit the resulting operations.
+
+The final product must not be a collection of disconnected prototypes.
+
+It must be one integrated network.
+
+⸻
+
+1. THE FINAL PRODUCT MUST HAVE ONE CONNECTED ARCHITECTURE
+
+Build the following complete architecture:
+
+                    VECTOR NETWORK
+                          |
+            +-------------+-------------+
+            |                           |
+       PUBLIC ENTRY                 P2P NETWORK
+         POINTS                    AND DISCOVERY
+            |                           |
+            +-------------+-------------+
+                          |
+                    NETWORK NODES
+                          |
+              +-----------+-----------+
+              |                       |
+          PARTICIPANTS             VALIDATORS
+              |                       |
+         PARTICIPATION              CONSENSUS
+              |                       |
+              +-----------+-----------+
+                          |
+                    RUST CORE
+                          |
+             +------------+-------------+
+             |            |             |
+         PROTOCOL       VECTOR       PERSISTENT
+          ENGINE        LANGUAGE       STORAGE
+             |          COMPILER          |
+             |            |               |
+             +------------+---------------+
+                          |
+                VERIFIED OPERATIONS
+                          |
+                AUTHORITATIVE LEDGER
+                          |
+          +---------------+---------------+
+          |               |               |
+        SPACES          REGIONS          GHOSTS
+          |               |
+        REGIONS         WALLETS
+          |               |
+        WALLETS         TOKENS
+          |
+        TOKENS
+                          |
+                    vCONTRACTS
+                    vLOANS
+                          |
+                    NETWORK API
+                          |
+       +------------------+------------------+
+       |                  |                  |
+    RUST SDK           JS/TS SDK          PYTHON SDK
+       |                  |                  |
+       +------------------+------------------+
+                          |
+                       GO SDK
+                          |
+                 EXTERNAL APPLICATIONS
+
+The architecture must have one authoritative execution path.
+
+A request must never receive different protocol outcomes depending on whether it originated from Rust, JavaScript, TypeScript, Python, Go or a Vector Language program.
+
+Every interface must ultimately reach the same Rust protocol engine and the same distributed network.
+
+⸻
+
+2. INSPECT AND INTEGRATE BOTH GITHUB REPOSITORIES
+
+Do not work on v-kernelx without inspecting VectorSpace.
+
+Inspect:
+
+https://github.com/vnetworkx/v-kernelx
+https://github.com/vnetworkx/vectorspace
+
+Inspect the complete source trees, manifests, tests, examples, language grammar, parser, AST, compiler, runtime and documentation.
+
+Particularly inspect these VectorSpace files:
+
+vectorspace/
+    Cargo.toml
+    src/
+        lib.rs
+        ast.rs
+        compiler.rs
+        error.rs
+        event.rs
+        kernel.rs
+        lexer.rs
+        parser.rs
+        runtime.rs
+        state.rs
+        token.rs
+        value.rs
+    grammar/
+        vector.lalrpop
+    examples/
+        treasury.vx
+        policy.vdx
+        contracts.vx
+    tree-sitter-vx/
+    python/
+
+The actual source may change. Use the current files rather than assuming this exact list remains unchanged.
+
+Critical integration rule
+
+Do not build an unrelated second Vector Language implementation inside v-kernelx.
+
+Do not discard the existing VectorSpace implementation.
+
+Do not independently reproduce the parser, grammar, AST or compiler merely because it is easier than integrating the actual language repository.
+
+Use the existing Rust Vector Language implementation as the language frontend.
+
+Integrate it with v-kernelx using a pinned, reproducible dependency or a properly maintained workspace/vendor integration.
+
+If using a Git dependency:
+
+* inspect the exact upstream commit;
+* pin an immutable commit or release;
+* do not depend on an unpinned main branch;
+* commit the resulting Cargo.lock;
+* document the VectorSpace version and commit;
+* establish a reliable upgrade procedure.
+
+If workspace or vendored integration is preferable, preserve the upstream origin and establish how changes are synchronized.
+
+Do not use an unstable dependency configuration that only happens to compile on one development machine.
+
+⸻
+
+3. SEPARATE THE VECTOR LANGUAGE COMPILER FROM AUTHORITATIVE EXECUTION
+
+The current VectorSpace implementation has its own parser, compiler, KernelOp, runtime and local NetworkState.
+
+Preserve useful language functionality, but establish the following distinction.
+
+VectorSpace is responsible for:
+
+* .vx source files;
+* .vdx declaration files;
+* tokenization;
+* parsing;
+* AST generation;
+* language-level semantic analysis;
+* type checking;
+* deterministic compilation;
+* compiler diagnostics;
+* source locations;
+* imports and declarations;
+* language versioning;
+* producing a compiled program representation.
+
+v-kernelx is responsible for:
+
+* authoritative protocol validation;
+* participant authorization;
+* identity verification;
+* hierarchy verification;
+* entity creation;
+* Token operations;
+* contract execution;
+* loan execution;
+* consensus;
+* ledger commitment;
+* persistent state;
+* event history;
+* replay;
+* reconstruction.
+
+Absolutely prohibited
+
+The local VectorSpace runtime must not become a second authoritative network.
+
+Do not allow a client to execute a .vx file locally and then claim the resulting local state is the Network’s authoritative state.
+
+Do not trust a client-supplied KernelOp merely because the Vector Language compiler generated it.
+
+Do not trust an unverified client-supplied result.
+
+Instead:
+
+Developer writes .vx / .vdx
+           |
+           v
+VectorSpace Rust frontend
+           |
+           v
+Tokenization
+           |
+           v
+Parsing
+           |
+           v
+AST
+           |
+           v
+Semantic validation
+           |
+           v
+Deterministic compiler
+           |
+           v
+Versioned compiled-program representation
+           |
+           v
+Authenticated network submission
+           |
+           v
+Rust kernel revalidation
+           |
+           v
+Actor authorization
+           |
+           v
+Hierarchy validation
+           |
+           v
+Protocol validation
+           |
+           v
+Distributed validator verification
+           |
+           v
+Consensus
+           |
+           v
+Atomic commitment
+           |
+           v
+Authoritative ledger
+           |
+           v
+Queryable verified Network state
+
+The Network must retain enough information to independently verify the source and its resulting execution.
+
+A program submission should bind together:
+
+* exact source bytes;
+* source file name;
+* .vx or .vdx file type;
+* language version;
+* imported module hashes;
+* compiler version;
+* compiled program hash;
+* protocol version;
+* Network identity;
+* submitting participant identity;
+* authorization evidence;
+* execution parameters;
+* resulting event IDs;
+* consensus certificate;
+* final state root.
+
+A validator must never need to trust the submitter’s claim that their program was compiled correctly.
+
+Where validators receive compiled operations, they must be able to verify the canonical program representation against the agreed language/compiler version and source commitment.
+
+The program must be deterministic and replayable.
+
+⸻
+
+4. ADD THE MISSING NETWORK AND DEVELOPER PACKAGES
+
+Preserve the existing repository layout and existing application.
+
+Add the following package architecture where appropriate.
+
+Map existing modules into these packages instead of creating empty duplicate modules.
+
+v-kernelx/
+│
+├── Cargo.toml
+├── Cargo.lock
+├── rust-toolchain.toml
+├── README.md
+├── ARCHITECTURE.md
+├── SECURITY.md
+│
+├── crates/
+│   │
+│   ├── vnetwork-types/
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── lib.rs
+│   │       ├── ids.rs
+│   │       ├── identity.rs
+│   │       ├── amount.rs
+│   │       ├── token.rs
+│   │       ├── entity.rs
+│   │       ├── hierarchy.rs
+│   │       ├── operation.rs
+│   │       ├── authorization.rs
+│   │       ├── event.rs
+│   │       ├── commitments.rs
+│   │       ├── consensus.rs
+│   │       ├── protocol_version.rs
+│   │       ├── canonical.rs
+│   │       └── error.rs
+│   │
+│   ├── vnetwork-core/
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── lib.rs
+│   │       ├── engine.rs
+│   │       ├── state.rs
+│   │       ├── validation.rs
+│   │       ├── transition.rs
+│   │       ├── authorization.rs
+│   │       ├── identity.rs
+│   │       ├── hierarchy.rs
+│   │       ├── token.rs
+│   │       ├── wallet.rs
+│   │       ├── space.rs
+│   │       ├── region.rs
+│   │       ├── ghost.rs
+│   │       ├── supply.rs
+│   │       ├── drain.rs
+│   │       ├── contracts.rs
+│   │       ├── loans.rs
+│   │       ├── events.rs
+│   │       ├── ledger.rs
+│   │       ├── replay.rs
+│   │       ├── reconstruction.rs
+│   │       ├── snapshot.rs
+│   │       ├── consensus_gate.rs
+│   │       └── language/
+│   │           ├── mod.rs
+│   │           ├── adapter.rs
+│   │           ├── program.rs
+│   │           ├── verification.rs
+│   │           └── submission.rs
+│   │
+│   ├── vnetwork-storage/
+│   │   ├── Cargo.toml
+│   │   ├── migrations/
+│   │   │   └── ...
+│   │   └── src/
+│   │       ├── lib.rs
+│   │       ├── database.rs
+│   │       ├── migrations.rs
+│   │       ├── transactions.rs
+│   │       ├── events.rs
+│   │       ├── entities.rs
+│   │       ├── snapshots.rs
+│   │       ├── indexes.rs
+│   │       └── recovery.rs
+│   │
+│   ├── vnetwork-consensus/
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── lib.rs
+│   │       ├── membership.rs
+│   │       ├── eligibility.rs
+│   │       ├── proposal.rs
+│   │       ├── vote.rs
+│   │       ├── quorum.rs
+│   │       ├── finality.rs
+│   │       ├── certificate.rs
+│   │       ├── equivocation.rs
+│   │       ├── epochs.rs
+│   │       ├── synchronization.rs
+│   │       └── recovery.rs
+│   │
+│   ├── vnetwork-node/
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── lib.rs
+│   │       ├── main.rs
+│   │       ├── config.rs
+│   │       ├── identity.rs
+│   │       ├── lifecycle.rs
+│   │       ├── participation.rs
+│   │       ├── peer.rs
+│   │       ├── discovery.rs
+│   │       ├── transport.rs
+│   │       ├── networking.rs
+│   │       ├── synchronization.rs
+│   │       ├── replication.rs
+│   │       ├── validator.rs
+│   │       ├── bootstrap.rs
+│   │       ├── health.rs
+│   │       ├── metrics.rs
+│   │       └── shutdown.rs
+│   │
+│   ├── vnetwork-api/
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── lib.rs
+│   │       ├── main.rs
+│   │       ├── server.rs
+│   │       ├── state.rs
+│   │       ├── errors.rs
+│   │       ├── middleware.rs
+│   │       ├── authentication.rs
+│   │       ├── rate_limits.rs
+│   │       ├── websocket.rs
+│   │       └── routes/
+│   │           ├── mod.rs
+│   │           ├── network.rs
+│   │           ├── nodes.rs
+│   │           ├── participants.rs
+│   │           ├── language.rs
+│   │           ├── programs.rs
+│   │           ├── spaces.rs
+│   │           ├── regions.rs
+│   │           ├── wallets.rs
+│   │           ├── tokens.rs
+│   │           ├── transactions.rs
+│   │           ├── contracts.rs
+│   │           ├── loans.rs
+│   │           ├── ledgers.rs
+│   │           ├── consensus.rs
+│   │           ├── reconstruction.rs
+│   │           └── explorer.rs
+│   │
+│   └── vnetwork-cli/
+│       ├── Cargo.toml
+│       └── src/
+│           ├── main.rs
+│           ├── commands/
+│           │   ├── connect.rs
+│           │   ├── join.rs
+│           │   ├── identity.rs
+│           │   ├── node.rs
+│           │   ├── compile.rs
+│           │   ├── submit.rs
+│           │   ├── query.rs
+│           │   ├── transaction.rs
+│           │   └── status.rs
+│           └── config.rs
+│
+├── bindings/
+│   ├── node/
+│   │   ├── Cargo.toml
+│   │   └── src/lib.rs
+│   │
+│   └── python/
+│       ├── Cargo.toml
+│       └── pyproject.toml
+│
+├── sdks/
+│   ├── rust/
+│   ├── javascript/
+│   ├── typescript/
+│   ├── python/
+│   └── go/
+│
+├── examples/
+│   ├── rust/
+│   ├── javascript/
+│   ├── typescript/
+│   ├── python/
+│   ├── go/
+│   └── vector-language/
+│
+├── config/
+│   ├── node.example.toml
+│   ├── network.example.toml
+│   └── bootstrap.example.toml
+│
+├── deploy/
+│   ├── Dockerfile.node
+│   ├── Dockerfile.api
+│   ├── docker-compose.testnet.yml
+│   ├── docker-compose.public.yml
+│   ├── reverse-proxy/
+│   ├── systemd/
+│   └── kubernetes/
+│
+├── tests/
+│   ├── integration/
+│   ├── multi_node/
+│   ├── language_conformance/
+│   ├── cross_language/
+│   └── e2e/
+│
+├── scripts/
+│   ├── devnet-up.sh
+│   ├── devnet-down.sh
+│   ├── health-check.sh
+│   ├── test-network.sh
+│   ├── test-all-sdks.sh
+│   └── release-check.sh
+│
+└── docs/
+    ├── protocol/
+    ├── architecture/
+    ├── sdk/
+    ├── language/
+    ├── operations/
+    └── engineering/
+
+This is the target architecture, not an instruction to create empty files.
+
+Each file must contain implemented functionality or be represented by a genuine integrated module in an existing location.
+
+Preserve existing src, app, components, lib, include, python, ts, scripts, tests and configuration where possible.
+
+Because the current repository also has an existing application and web frontend, do not destroy or unnecessarily replace those components during the Rust architecture migration.
+
+Preserve the existing top-level Rust crate as a compatibility facade when appropriate.
+
+The core must be buildable as a Rust workspace without breaking its existing supported public interfaces unnecessarily.
+
+⸻
+
+5. MAKE THE NETWORK ACTUALLY JOINABLE FROM ANYWHERE
+
+This is a mandatory final-product feature.
+
+A developer must not need access to the repository, source code or a manually configured private development environment merely to connect to an operational public Vector Network.
+
+The software must provide a real network connection and participation protocol.
+
+Network entry points
+
+Implement configurable public Network entry points.
+
+Support:
+
+* public bootstrap nodes;
+* peer discovery;
+* advertised external peer addresses;
+* network identity verification;
+* authenticated handshakes;
+* client connections;
+* participant registration;
+* node participation;
+* synchronization;
+* health checking;
+* rejoining after disconnection.
+
+Bootstrap nodes help a new participant discover the network.
+
+Bootstrap nodes must not possess unilateral authority over the Network.
+
+A participant must independently verify the Network identity and protocol state.
+
+Public connection architecture
+
+Implement the following paths:
+
+Internet participant
+       |
+       v
+Public Network endpoint
+       |
+       v
+Authenticated API connection
+       |
+       v
+Participant identity verification
+       |
+       v
+Network join request
+       |
+       v
+Participation verification
+       |
+       v
+Node/participant registration
+       |
+       v
+Network synchronization
+       |
+       v
+Connected Vector Network participant
+
+Provide authenticated P2P node connections and suitable client-facing HTTP/WebSocket connections.
+
+Use a well-maintained Rust networking framework, such as libp2p where appropriate, rather than implementing an unreviewed custom P2P protocol.
+
+Use suitable transport security.
+
+Node-to-node connections must authenticate peer identities.
+
+Client-to-network connections must be secure and must protect all signed operation submissions.
+
+Global connectivity
+
+Support participants connecting through:
+
+* a publicly advertised HTTPS endpoint;
+* configured bootstrap peer addresses;
+* direct P2P addresses when available;
+* application SDKs;
+* the Vector Network CLI;
+* full nodes run by participants.
+
+Support NAT and restrictive-network situations through suitable transport, relay and bootstrap infrastructure.
+
+Do not pretend a peer can always accept direct inbound connections.
+
+Do not make one API gateway the owner of consensus or ledger truth.
+
+Public endpoint configuration
+
+Create documented variables or equivalent configuration for:
+
+NETWORK_ID
+NETWORK_NAME
+NETWORK_BOOTSTRAP_PEERS
+NETWORK_PUBLIC_API
+NETWORK_LISTEN_ADDRESSES
+NETWORK_ADVERTISED_ADDRESSES
+NETWORK_PROTOCOL_VERSION
+NETWORK_NODE_IDENTITY
+NETWORK_STORAGE_PATH
+NETWORK_DISCOVERY_MODE
+NETWORK_ENABLE_PUBLIC_API
+NETWORK_ENABLE_P2P
+NETWORK_ENABLE_VALIDATOR
+NETWORK_TLS_CONFIGURATION
+
+Do not put private keys into example configuration.
+
+Separate public configuration from secrets.
+
+Final connectivity requirement
+
+Prepare the code and deployment infrastructure so a person in any country can:
+
+1. Install an SDK.
+2. Configure a public Network endpoint.
+3. Connect to Vector Network.
+4. Verify the Network identity.
+5. Generate or load their own independent key.
+6. Join as a participant.
+7. Receive their actual participation scope.
+8. Query the Network.
+9. Submit Vector Language programs.
+10. Send or receive authorized Tokens.
+
+The public software must not depend on access to a central application server for finality.
+
+⸻
+
+6. EVERY PARTICIPANT MUST HAVE A NETWORK IDENTITY AND NODE SCOPE
+
+Implement the established participation principle:
+
+Everyone who participates in Vector Network is a node. Node scope is determined by verified participation. Nodes are not manually created by an administrator.
+
+A connection must not simply create an unrestricted validator.
+
+Implement explicit participation levels:
+
+NETWORK
+SPACE
+REGION
+WALLET
+TOKEN
+
+A participant can have more than one scope.
+
+Automatic participation lifecycle
+
+CONNECT
+   |
+   v
+VERIFY NETWORK IDENTITY
+   |
+   v
+PROVE PARTICIPANT KEY POSSESSION
+   |
+   v
+SUBMIT PARTICIPATION REQUEST
+   |
+   v
+VERIFY REQUESTED SCOPE
+   |
+   v
+DETERMINE PARTICIPATION LEVEL
+   |
+   v
+ASSIGN NODE SCOPE
+   |
+   v
+REGISTER PARTICIPATION EVENT
+   |
+   v
+SYNCHRONIZE AUTHORIZED STATE
+   |
+   v
+ACTIVE PARTICIPANT NODE
+
+Support light participant nodes as well as full nodes.
+
+A participant using a mobile app or browser must not automatically be required to run a complete validator.
+
+However, their network participation must have a real identity and verifiable scope.
+
+Validator eligibility remains a separate protocol decision.
+
+Implement:
+
+* unique node identities;
+* participant identities;
+* participation scopes;
+* peer health;
+* synchronization status;
+* data availability;
+* recovery;
+* rejoining;
+* revocation;
+* validator eligibility.
+
+Do not confuse a participant’s Wallet keys, node identity key and validator key.
+
+⸻
+
+7. MAKE VECTOR LANGUAGE A FIRST-CLASS NETWORK PROGRAMMING INTERFACE
+
+This is one of the defining requirements of the final Vector Network.
+
+The existing Vector Language repository must become the actual programming language for expressing operations on Vector Network.
+
+A developer must be able to write a .vx program and submit it to the Network from any supported SDK.
+
+The Rust core must be capable of compiling and executing it under protocol rules.
+
+Required language functionality
+
+Preserve existing language operations where they are valid.
+
+Extend the language with proper AST nodes, tokens, parsing rules, compilation and execution mappings for all required protocol operations.
+
+The language must support at least:
+
+NETWORK CONNECTION AND NETWORK TARGETING
+SPACE DECLARATION AND CREATION
+REGION DECLARATION AND CREATION
+WALLET DECLARATION AND CREATION
+WALLET KEY ASSOCIATION AND AUTHORIZATION
+TOKEN DECLARATION AND CREATION
+TOKEN TRANSFER
+TOKEN RECEIPT
+TOKEN DRAIN UNDER APPROVED POLICY
+vCONTRACT DECLARATION AND CREATION
+vCONTRACT EXECUTION
+vLOAN DECLARATION AND CREATION
+vLOAN EXECUTION
+QUERY
+HISTORY INSPECTION
+PROOF VERIFICATION
+EVENT RECORDING
+RECONSTRUCTION
+
+Only include operations that have real, validated kernel implementations.
+
+Required Vector Language compiler stages
+
+Implement:
+
+1. Source loading.
+2. Lexer.
+3. Parser.
+4. AST construction.
+5. Syntax validation.
+6. Semantic validation.
+7. Symbol resolution.
+8. Type checking.
+9. Import and module resolution.
+10. Permission analysis.
+11. Deterministic compilation.
+12. Versioned compiled-program output.
+13. Kernel operation mapping.
+14. Kernel validation.
+15. Authorized execution.
+16. Event generation.
+17. Consensus submission.
+18. Commitment.
+19. Execution report.
+
+Provide source locations and useful compilation errors.
+
+.vx and .vdx
+
+Preserve the existing two-file distinction.
+
+.vx is executable program source.
+
+.vdx is reusable declarations, policy fragments and contract payloads.
+
+Implement safe module imports.
+
+Imported modules must be resolved deterministically.
+
+Bind imports to immutable content hashes or an equivalent verified module identity.
+
+Do not allow a node to execute different external code merely because a remote URL returned different content at a later time.
+
+Include all required dependencies and their hashes in the program commitment.
+
+Language examples
+
+Create real, tested files under:
+
+examples/vector-language/
+    connect.vx
+    participant-join.vx
+    create-space.vx
+    create-region.vx
+    create-wallet.vx
+    create-token.vx
+    transfer-token.vx
+    create-contract.vx
+    execute-contract.vx
+    create-loan.vx
+    query-network.vx
+    reconstruct-entity.vx
+    complete-network-workflow.vx
+    policies.vdx
+    shared-wallet.vdx
+
+These must be valid programs supported by the actual parser and compiler.
+
+Do not merely add files with invented syntax.
+
+Each example must have automated parser and compiler tests.
+
+⸻
+
+8. REQUIRED END-TO-END VECTOR LANGUAGE WORKFLOW
+
+The final implementation must demonstrate the complete workflow below.
+
+A developer writes a program.
+
+For example, the following is an illustrative target workflow. Adapt the exact syntax to the actual Vector Language grammar and document its final form.
+
+network connect "vector-main";
+space create atlas_space {
+    name = "Atlas Space";
+    visibility = public;
+};
+region create atl_region in atlas_space {
+    name = "ATLAS";
+    prefix = "ATL";
+    title = "Atlas Vector Region";
+    visibility = public;
+    section = 1;
+};
+wallet create treasury_wallet in atl_region;
+token create atlas_token in treasury_wallet {
+    name = "ATLAS TOKEN";
+    symbol = "ATLAS";
+    dimensions = 3;
+};
+contract create settlement_contract {
+    ...
+};
+transfer atlas_token
+    from treasury_wallet
+    to destination_wallet
+    amount 100;
+
+The illustrative program must not be accepted until its operations have been implemented in the grammar, parser, compiler and Rust kernel.
+
+Execution
+
+When the developer submits the program:
+
+* Rust receives the exact source;
+* the Vector Language compiler parses it;
+* the AST is validated;
+* symbols and references are resolved;
+* types and permissions are checked;
+* the kernel verifies the requested hierarchy;
+* creation operations require the relevant authorization and validator scope;
+* transfer requests enforce the Token-only dimension rule;
+* required validators independently verify the proposal;
+* the operation enters consensus;
+* commitment occurs atomically;
+* event history and resulting state roots are recorded;
+* the developer receives a verifiable execution report.
+
+Failed execution
+
+If any required operation fails:
+
+* do not leave partial authoritative state;
+* identify the exact failed operation;
+* identify the validation or authorization error;
+* preserve appropriate submission status;
+* do not label the program committed.
+
+Program lifecycle statuses
+
+Provide actual states such as:
+
+RECEIVED
+PARSING
+COMPILED
+VALIDATING
+AWAITING_AUTHORIZATION
+AWAITING_CONSENSUS
+COMMITTED
+REJECTED
+FAILED
+
+Do not fabricate successful completion results.
+
+⸻
+
+9. VECTOR LANGUAGE CREATION MUST USE THE ACTUAL NETWORK
+
+The Vector Language must support actual entity creation.
+
+Spaces
+
+A valid program must be able to request creation of a Space through the Network protocol.
+
+The Space must be committed only after Network-level authorization and consensus.
+
+Regions
+
+A valid program must be able to request creation of a Region under an existing verified Space.
+
+The Region must be committed under the parent Space’s authorization and validator scope.
+
+Wallets
+
+A valid program must be able to request creation of a Wallet under an existing verified Region.
+
+Wallet participant registrations and key associations must use the independent authorization protocol.
+
+Tokens
+
+A valid program must be able to create a Token under an existing verified Wallet.
+
+Token creation must enforce supply and vector rules.
+
+Ghost entities
+
+If the language exposes Ghost Region, Ghost Wallet or Ghost Token creation, it must route through Network-level authorization and verification.
+
+vContracts
+
+A valid program must be able to define and create a vContract that becomes a real protocol object.
+
+Its executable rules must be deterministic and stored in the verified event history.
+
+vLoans
+
+A valid program must be able to define and create a vLoan using the actual vLoan protocol implementation.
+
+Loan principal, collateral and repayment operations must follow the existing Token and authorization invariants.
+
+Transfers
+
+A valid program must be able to transfer Tokens between eligible entities, with real source and destination authorization, correct routing, applicable drain rules and final consensus.
+
+Never reduce Vector Language to a text editor that merely generates API request strings.
+
+It is the human-readable programming interface to the actual Rust protocol.
+
+⸻
+
+10. CREATE A SINGLE NETWORK API THAT EVERY SDK USES
+
+All languages must connect to the same Network API and protocol.
+
+Implement a versioned HTTP and WebSocket interface.
+
+Use suitable Rust async networking components.
+
+Required API routes
+
+Provide equivalent endpoints to the following:
+
+GET  /healthz
+GET  /readyz
+GET  /v1/network/info
+GET  /v1/network/status
+GET  /v1/nodes
+GET  /v1/nodes/{node_id}
+POST /v1/nodes/connect
+POST /v1/participants/challenge
+POST /v1/participants/join
+GET  /v1/participants/{participant_id}
+GET  /v1/participants/{participant_id}/scope
+POST /v1/language/parse
+POST /v1/language/compile
+POST /v1/language/validate
+POST /v1/programs/submit
+GET  /v1/programs/{program_id}
+GET  /v1/programs/{program_id}/status
+GET  /v1/spaces
+GET  /v1/spaces/{space_id}
+GET  /v1/regions
+GET  /v1/regions/{region_id}
+GET  /v1/wallets
+GET  /v1/wallets/{wallet_id}
+GET  /v1/tokens
+GET  /v1/tokens/{token_id}
+POST /v1/transactions
+GET  /v1/transactions/{transaction_id}
+GET  /v1/contracts
+POST /v1/contracts
+GET  /v1/contracts/{contract_id}
+GET  /v1/loans
+POST /v1/loans
+GET  /v1/loans/{loan_id}
+GET  /v1/ledger/events
+GET  /v1/ledger/proofs
+GET  /v1/consensus/status
+GET  /v1/consensus/certificates
+POST /v1/reconstruction/verify
+GET  /v1/explorer/network
+
+Implement WebSocket subscriptions for appropriate live events.
+
+The exact URL names may evolve, but the capabilities must exist.
+
+Security
+
+Write operations must require applicable participant authorization.
+
+Read operations must follow the Network’s configured access rules.
+
+Validate request sizes, schemas, signatures, nonces, replay protection and rate limits.
+
+TLS must be supported for publicly exposed interfaces.
+
+Return structured errors and protocol-defined statuses.
+
+⸻
+
+11. ALL SUPPORTED LANGUAGES MUST BE ABLE TO CONNECT AND JOIN
+
+This is a final acceptance requirement.
+
+Provide real SDK functionality, not merely examples that construct unsigned JSON.
+
+Each language must be able to:
+
+* configure a Network endpoint;
+* connect;
+* verify Network identity;
+* register or load its local participant identity;
+* sign authorization challenges;
+* join the Network;
+* inspect its participation scope;
+* submit a Vector Language program;
+* inspect compilation results;
+* submit authorized transactions;
+* query entity information;
+* read transaction status;
+* verify proof information;
+* subscribe to permitted network events.
+
+Rust SDK
+
+Provide idiomatic async and synchronous access where appropriate.
+
+The Rust SDK should make it easy to connect and submit .vx files.
+
+JavaScript SDK
+
+Provide a usable Node.js SDK.
+
+Use Rust-backed functionality where local native execution is required.
+
+Otherwise use the shared network API.
+
+TypeScript SDK
+
+Provide typed requests, responses, identifiers, amounts, operation results and errors.
+
+The SDK must be suitable for real application development.
+
+Browser JavaScript/TypeScript
+
+Provide browser-compatible HTTP and WebSocket functionality.
+
+Do not require native Node.js bindings in browsers.
+
+Python SDK
+
+Provide a Python package using the actual Network API and optional PyO3 bindings.
+
+Do not maintain an independent authoritative Python protocol engine.
+
+Go SDK
+
+Provide a complete Go module using the same Network API.
+
+Do not independently implement consensus, Token accounting or transaction rules in Go.
+
+Common conformance
+
+Use identical canonical test cases.
+
+A transfer submitted from Go must have the same meaning as one submitted from Rust.
+
+A program submitted from Python must be validated according to the same Vector Language compiler and Rust protocol.
+
+A TypeScript application must not be able to bypass Wallet permissions because of a different SDK implementation.
+
+⸻
+
+12. PROVIDE A SIMPLE DEVELOPER EXPERIENCE
+
+A developer must not have to understand the internal Rust workspace just to connect.
+
+Provide a straightforward CLI.
+
+A developer should be able to perform the following kinds of operations:
+
+vn network info
+vn connect --network vector-main
+vn identity create
+vn join
+vn participation status
+vn node status
+vn language check examples/vector-language/create-space.vx
+vn language compile examples/vector-language/create-space.vx
+vn program submit examples/vector-language/create-space.vx
+vn transaction status <TRANSACTION_ID>
+vn ledger verify
+
+Use the final CLI syntax consistently.
+
+Document installation options for:
+
+* binary downloads;
+* Cargo;
+* Docker;
+* supported package managers where available.
+
+Provide environment-independent configuration.
+
+The CLI must never silently use a simulated local network.
+
+Provide an explicit development network selection when running test infrastructure.
+
+⸻
+
+13. ADD A REAL MULTI-NODE TEST NETWORK
+
+Do not conclude that Vector Network works because one process can execute a transfer.
+
+Build a genuine development test network.
+
+Create:
+
+deploy/docker-compose.testnet.yml
+deploy/Dockerfile.node
+deploy/Dockerfile.api
+scripts/devnet-up.sh
+scripts/devnet-down.sh
+scripts/test-network.sh
+tests/e2e/full-network.test.*
+tests/e2e/sdk-join.test.*
+tests/e2e/vector-language.test.*
+tests/e2e/consensus-recovery.test.*
+
+Adapt the exact test framework to the implementation.
+
+Required development network
+
+Start at least four independent node processes.
+
+Each node must have:
+
+* an independent node identity;
+* its own persistent storage;
+* independent network configuration;
+* its own listening addresses;
+* independently generated test keys;
+* actual peer connections;
+* actual protocol validation;
+* actual ledger replication;
+* actual consensus participation.
+
+Do not use four objects inside one in-memory process and call them four nodes.
+
+Use separate processes or separate containers with independent state and storage.
+
+Required integration tests
+
+Test:
+
+1. Four nodes start.
+2. Nodes discover one another.
+3. Peers authenticate.
+4. Nodes join the same Network.
+5. State synchronizes.
+6. A client joins from an external process.
+7. A participant registers independently.
+8. A Vector Language program is compiled and submitted.
+9. A Space is created.
+10. A Region is created under the Space.
+11. A Wallet is created under the Region.
+12. A Token is created under the Wallet.
+13. A vContract is created.
+14. An authorized Token transfer is executed.
+15. Consensus finality is established.
+16. Event histories converge.
+17. State roots match across eligible replicas.
+18. A node restarts using its durable database.
+19. A disconnected node rejoins.
+20. A node synchronizes missing verified events.
+21. Reconstruction succeeds.
+22. A conflicting or invalid transaction is rejected.
+
+Consensus fault tests
+
+For a four-validator BFT configuration, test the actual fault assumptions of the chosen protocol.
+
+Demonstrate what happens when one node is unavailable.
+
+Demonstrate insufficient quorum.
+
+Demonstrate that an isolated minority cannot create finality.
+
+Demonstrate that a rejoining validator verifies history before accepting new state.
+
+Do not claim Byzantine fault tolerance unless the algorithm and membership assumptions actually justify it.
+
+⸻
+
+14. RUN THE SAME VECTOR LANGUAGE WORKFLOW THROUGH ALL LANGUAGES
+
+Create automated integration tests using all supported languages.
+
+The test must use one shared test Network.
+
+Test participants should connect through:
+
+* Rust;
+* Node.js/JavaScript;
+* TypeScript;
+* Python;
+* Go.
+
+Each client must successfully:
+
+1. Connect to the test Network.
+2. Verify Network identity.
+3. Join with its own participant identity.
+4. Retrieve actual participation status.
+5. Load a .vx source file.
+6. Submit the source.
+7. Receive a real compilation result.
+8. Receive a real Network submission ID.
+9. Wait for its actual transaction status.
+10. Verify the final event and proof.
+11. Query the resulting entity or state.
+
+The Vector Language source must be compiled and validated by the actual Rust-backed language and kernel implementation.
+
+Do not use separate fake runtime implementations for each test.
+
+Required test programme
+
+Create at least one end-to-end program that creates a test Space, Region, Wallet, Token and vContract, then submits a valid Token transfer.
+
+Execute the programme through more than one language interface.
+
+Verify that every interface produces the same canonical program hash and protocol result for equivalent source and authorization inputs.
+
+All nodes must eventually agree on the committed state and its verification evidence.
+
+⸻
+
+15. MAKE PUBLIC NETWORK DEPLOYMENT POSSIBLE
+
+Local development tests alone do not demonstrate that people worldwide can join.
+
+Build the production deployment capability.
+
+Add:
+
+deploy/docker-compose.public.yml
+deploy/kubernetes/
+deploy/systemd/
+deploy/reverse-proxy/
+config/network.example.toml
+config/bootstrap.example.toml
+docs/operations/public-network-deployment.md
+docs/operations/public-bootstrap-nodes.md
+docs/operations/network-security.md
+docs/operations/network-monitoring.md
+docs/operations/network-recovery.md
+docs/operations/participant-onboarding.md
+
+The actual structure may be adapted.
+
+Deployment requirements
+
+Support:
+
+* publicly reachable seed/bootstrap nodes;
+* advertised P2P addresses;
+* secure public API endpoints;
+* TLS;
+* health checks;
+* monitoring;
+* structured logs;
+* storage volumes;
+* backup and recovery;
+* node restart;
+* peer synchronization;
+* validator configuration;
+* network version configuration;
+* network upgrade procedures;
+* resource limits;
+* firewall requirements.
+
+A deployment must use genuine persistent data.
+
+Do not use test keys in public network examples.
+
+Infrastructure honesty
+
+Implement the software, deployment templates, documentation and scripts.
+
+Do not pretend that a public network is reachable until public nodes have actually been deployed with reachable DNS names, addresses, certificates, firewall rules and appropriate infrastructure.
+
+Do not deploy anything or consume cloud resources without authorization.
+
+Provide a production deployment checklist that explains exactly what external infrastructure is required.
+
+The system should be self-hostable.
+
+Anyone with the right hardware and permissions should be able to run a full node and participate at an eligible scope.
+
+⸻
+
+16. PUBLIC NETWORK AND DEVELOPMENT NETWORK MUST BE DISTINCT
+
+Provide explicit network profiles.
+
+At minimum:
+
+DEVELOPMENT
+TESTNET
+PRODUCTION
+
+Each must have its own:
+
+* Network identity;
+* genesis information;
+* protocol parameters;
+* storage directory;
+* bootstrap peers;
+* validator membership;
+* keys;
+* connection configuration.
+
+Never accidentally connect a development client to production.
+
+Never allow a development ATLAS fixture to appear in a production genesis state unless the production genesis explicitly authorizes it.
+
+Do not ship a production node with development keys or simulated data.
+
+A production client must never mistake a local in-memory test network for the live Network.
+
+⸻
+
+17. REQUIRED VECTOR LANGUAGE COMPILER AND KERNEL CONFORMANCE
+
+Create a dedicated integration test suite proving that VectorSpace and v-kernelx agree.
+
+Add or extend:
+
+tests/language_conformance/
+examples/vector-language/
+docs/language/
+
+Test:
+
+* tokenization;
+* parsing;
+* AST determinism;
+* semantic validation;
+* compiler output;
+* source hashing;
+* module hashing;
+* version compatibility;
+* invalid operations;
+* authorization requirements;
+* parent-child relationships;
+* Token dimensions;
+* transfer invariants;
+* contract compilation;
+* loan compilation;
+* replay;
+* deterministic execution.
+
+Required security properties
+
+A malicious developer must not be able to:
+
+* change Token AuthRatio using ordinary transfer syntax;
+* change Energy using ordinary transfer syntax;
+* create a Space without required Network authorization and consensus;
+* create a Region under a nonexistent Space;
+* create a Wallet under an invalid Region;
+* create a Token under an invalid Wallet;
+* transfer a Token from a Wallet they cannot authorize;
+* exceed their registered Token allocation permissions;
+* use a vContract to bypass consensus;
+* import different code on different validators;
+* replay an old program submission;
+* alter the source code after compilation without changing its commitment;
+* submit arbitrary low-level kernel operations that bypass language and kernel validation.
+
+The Rust kernel must repeat essential authorization and protocol validation even when the language compiler already checked the request.
+
+⸻
+
+18. CREATE A REAL ATLAS BOOTSTRAP PROGRAM
+
+Create a tested ATLAS .vx bootstrap program under:
+
+examples/vector-language/bootstrap-atlas.vx
+
+It must request the initial development Region and Token through the actual Vector Language submission pipeline.
+
+Required properties:
+
+Region name: ATLAS
+Prefix: ATL
+Title: Atlas Vector Region
+Visibility: Public
+Section: 1
+Token name: ATLAS TOKEN
+Symbol: ATLAS
+Purpose: Development/bootstrap
+External monetary value: None
+
+Its vector must use the exact three dimensions:
+
+[token, authratio(au), energy]
+
+The initial numeric configuration must be explicitly declared as development genesis configuration, not silently invented or hard-coded in the production kernel.
+
+The bootstrap program must:
+
+* compile;
+* parse;
+* pass semantic validation;
+* submit to the development Network;
+* receive required authorization;
+* pass the correct consensus scope;
+* create the event history;
+* commit atomically;
+* be queryable from all connected nodes;
+* survive a node restart;
+* be reconstructable.
+
+Never implement a separate hard-coded database creation route for ATLAS.
+
+⸻
+
+19. MONITORING AND NETWORK OPERATIONS
+
+A working network must be observable.
+
+Implement node health and status information.
+
+Track actual:
+
+* peer connections;
+* node identity;
+* participation level;
+* synchronization height or equivalent state position;
+* committed events;
+* pending transactions;
+* validator availability;
+* consensus rounds;
+* finality certificates;
+* rejected proposals;
+* reconstruction status;
+* storage status;
+* API status;
+* network protocol compatibility.
+
+Provide:
+
+GET /healthz
+GET /readyz
+GET /metrics
+GET /v1/network/status
+GET /v1/nodes/{node_id}/status
+
+Only expose metrics that are actually measured.
+
+Do not display fictional node counts or simulated validator data.
+
+If an Explorer UI already exists in the repository, connect it to these actual APIs rather than replacing its frontend with dummy data.
+
+⸻
+
+20. REQUIRED NEW DOCUMENTATION
+
+Add:
+
+docs/final-product/
+    FINAL_ARCHITECTURE.md
+    NETWORK_CONNECTIVITY.md
+    PARTICIPANT_JOINING.md
+    NODE_PARTICIPATION.md
+    GLOBAL_DEPLOYMENT.md
+    VECTOR_LANGUAGE_INTEGRATION.md
+    VECTOR_PROGRAM_EXECUTION.md
+    LANGUAGE_SDK_CONFORMANCE.md
+    FULL_NETWORK_ACCEPTANCE_TEST.md
+docs/sdk/
+    RUST.md
+    JAVASCRIPT.md
+    TYPESCRIPT.md
+    PYTHON.md
+    GO.md
+docs/language/
+    LANGUAGE_SPECIFICATION.md
+    COMPILER_PIPELINE.md
+    PROGRAM_SUBMISSION.md
+    MODULE_IMPORTS.md
+    EXAMPLES.md
+docs/operations/
+    LOCAL_TESTNET.md
+    PUBLIC_TESTNET.md
+    PRODUCTION_DEPLOYMENT.md
+    NODE_CONFIGURATION.md
+    NODE_MONITORING.md
+    NODE_RECOVERY.md
+
+Include commands that developers can actually run.
+
+Include complete minimal examples in every supported language.
+
+Ensure every documented language example compiles or passes the relevant tests.
+
+Do not document a hypothetical feature as operational.
+
+⸻
+
+21. FINAL PRODUCT ACCEPTANCE TEST
+
+This is the most important part of this directive.
+
+Do not declare the task complete until the complete integration test has been executed successfully in the available development environment.
+
+Create one command that runs the integrated development Network and acceptance test:
+
+./scripts/test-network.sh
+
+Or provide an equally simple documented command.
+
+The command must:
+
+1. Build the Rust workspace.
+2. Build the Vector Language integration.
+3. Start four independent persistent nodes.
+4. Establish authenticated P2P connections.
+5. Synchronize the test Network.
+6. Start the public development API.
+7. Connect Rust SDK.
+8. Connect JavaScript SDK.
+9. Connect TypeScript SDK.
+10. Connect Python SDK.
+11. Connect Go SDK.
+12. Register independent test participants.
+13. Join the Network through each SDK.
+14. Compile a real .vx programme.
+15. Submit it through a language SDK.
+16. Execute the programme through the Rust kernel.
+17. Create an authorized Space.
+18. Create a Region in that Space.
+19. Create a Wallet in that Region.
+20. Create a Token in that Wallet.
+21. Create and verify a vContract.
+22. Transfer Tokens between authorized Wallets.
+23. Verify Token-only dimension changes.
+24. Verify validator signatures and finality.
+25. Verify identical committed history across replicas.
+26. Stop one node.
+27. Restart it.
+28. Verify synchronization and recovery.
+29. Reconstruct the relevant entity from verified history.
+30. Verify that the reconstructed state matches the original committed state.
+
+The suite must fail when any essential condition fails.
+
+It must not return success just because a container is running.
+
+Cross-language acceptance
+
+All SDK clients must be tested against the same actual Network.
+
+All must receive consistent operation results and proof data.
+
+No mocks
+
+Do not use mocked API responses, fake validators, fake transactions, fake committed events or fabricated Network counters in this acceptance suite.
+
+Unit tests may use controlled test fixtures.
+
+The final multi-node acceptance test must exercise the real implemented networking, storage, validation, API and consensus components.
+
+⸻
+
+22. EXACT DEFINITION OF DONE
+
+The final product is complete only when all the following are demonstrated.
+
+Network
+
+* Multiple independent node processes operate.
+* Nodes authenticate one another.
+* Nodes discover peers.
+* Nodes synchronize verified history.
+* Nodes use durable persistent storage.
+* Nodes recover after restart.
+* Nodes can rejoin after disconnection.
+* Consensus is genuinely distributed.
+* Finality requires valid protocol evidence.
+* No central signer controls the Network.
+
+Participants
+
+* Any supported SDK can connect.
+* Any supported SDK can authenticate a participant.
+* Participants can join.
+* Participation scope is verified.
+* Participant keys remain independently controlled.
+* Multiple participants can associate keys with a shared Wallet.
+* Participation and authorization are auditable.
+
+Vector Language
+
+* The actual VectorSpace Rust language frontend is integrated.
+* .vx programs compile through the Rust language frontend.
+* .vdx modules resolve deterministically.
+* Space creation works.
+* Region creation works.
+* Wallet creation works.
+* Token creation works.
+* vContract creation and execution work.
+* vLoan creation and execution work.
+* Token transfers work.
+* Language operations are authorized.
+* Failed programs cannot partially commit state.
+* Program execution is replayable and verifiable.
+
+Developer access
+
+* Rust SDK works.
+* JavaScript SDK works.
+* TypeScript SDK works.
+* Python SDK works.
+* Go SDK works.
+* Each SDK can submit Vector Language source.
+* No SDK independently reimplements protocol truth.
+* All SDKs pass common conformance tests.
+
+Data integrity
+
+* Token dimensions are exactly three.
+* Only Token is transferable.
+* AuthRatio is non-transferable.
+* Energy is non-transferable.
+* Event histories are immutable and verifiable.
+* Ledger commitments are consistent.
+* Replay works.
+* Reconstruction works.
+* Consensus certificates can be independently verified.
+
+Deployment
+
+* Local multi-node development network starts reliably.
+* Public deployment templates exist.
+* Bootstrap configuration works.
+* Public API deployment is documented.
+* P2P addresses can be advertised.
+* TLS and secure peer authentication work.
+* Monitoring works.
+* Recovery procedures are documented.
+
+⸻
+
+23. HOW TO COMPLETE THE TASK
+
+Implement the final product systematically.
+
+Do not stop after creating the proposed directory structure.
+
+Do not stop after compiling Vector Language.
+
+Do not stop after creating SDK package folders.
+
+Do not stop after starting four containers.
+
+Do not claim completion based on a local mock.
+
+Complete each architectural integration and prove it works through tests.
+
+When the work is complete, report:
+
+1. The final repository structure.
+2. All important files created and modified.
+3. How VectorSpace is integrated.
+4. How a .vx programme reaches the Rust core.
+5. How entities are created through the language.
+6. How the network accepts new participants.
+7. How each SDK connects.
+8. How P2P discovery and synchronization work.
+9. How consensus reaches finality.
+10. How durable storage and recovery work.
+11. How to start the development Network.
+12. How to connect with every SDK.
+13. How to submit a Vector Language program.
+14. The exact final acceptance command and its results.
+15. Anything that still requires public infrastructure or independent security review.
+
+Never invent a passed test.
+
+Never represent a local-only network as publicly accessible.
+
+Never call a network production-ready just because the source code compiles.
+
+⸻
+
+FINAL PRODUCT INSTRUCTION
+
+We are not building five separate ways of using Vector Network.
+
+We are building one Network with five supported developer interfaces.
+
+We are not building a language that merely describes what a developer wants.
+
+We are building a language that the Rust kernel can actually compile, authorize, validate, execute and commit into the live Vector Network.
+
+We are not building an application that pretends to contain a network.
+
+We are building the network itself.
+
+A developer anywhere should be able to connect using Rust, JavaScript, TypeScript, Python or Go, join through verified participation, submit Vector Language and interact with the same decentralized protocol.
+
+A .vx program must be able to create a Space, create Regions, establish Wallets, define vContracts and vLoans, create Tokens, and transport authorized Tokens through the Network.
+
+All resulting state must be real, persisted, independently verified, replicated and reconstructable.
+
+The final deliverable is a working Vector Network with native Vector Language execution and universal developer connectivity, not another prototype of these capabilities.

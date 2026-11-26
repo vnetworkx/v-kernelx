@@ -1,0 +1,280 @@
+"""Official Python client for Vector Network HTTP & WebSocket API."""
+
+import json
+import re
+import time
+import urllib.error
+import urllib.request
+import uuid
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
+
+from .blake3 import blake3_hex
+from .canonical import canonical_json_bytes
+from .crypto import ClientIdentity
+from .ws import subscribe_events_thread
+
+_IMPORT_RE = re.compile(
+    r'^\s*import\s+"([^"]+)"(?:\s+(?:blake3|sha256)\s+"([^"]+)")?(?:\s+as\s+[A-Za-z0-9_]+)?\s*;',
+    re.MULTILINE,
+)
+
+
+class VectorNetworkError(RuntimeError):
+    pass
+
+
+class VectorNetworkClient:
+    def __init__(
+        self,
+        base_url: str,
+        identity: ClientIdentity,
+        expected_network_id: Optional[str] = None,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.identity = identity
+        self.expected_network_id = expected_network_id
+        self.connected_network_id: Optional[str] = None
+        self._nonce = 1
+
+    def next_nonce(self) -> int:
+        n = self._nonce
+        self._nonce += 1
+        return n
+
+    def connect(self) -> Dict[str, Any]:
+        info = self.get_json("/v1/network/info")
+        if info.get("protocol_version") != "vnetwork/1.0":
+            raise VectorNetworkError(
+                f"Protocol mismatch: remote {info.get('protocol_version')} != vnetwork/1.0"
+            )
+        net_id = info.get("network_id")
+        if self.expected_network_id and net_id != self.expected_network_id:
+            raise VectorNetworkError(
+                f"Expected network {self.expected_network_id}, got {net_id}"
+            )
+        self.connected_network_id = net_id
+        return info
+
+    def _resolved_network_id(self) -> str:
+        net = self.connected_network_id or self.expected_network_id
+        if not net:
+            raise VectorNetworkError("Client must call connect() before write operations")
+        return net
+
+    def join(
+        self, scopes: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        if not self.connected_network_id:
+            self.connect()
+        req_scopes = scopes or ["NETWORK", "SPACE", "REGION", "WALLET", "TOKEN"]
+        challenge = self.post_json("/v1/participants/challenge", {})
+        msg = canonical_json_bytes(
+            {
+                "challenge_id": challenge["challenge_id"],
+                "network_id": challenge["network_id"],
+                "node_pubkey": self.identity.node_key.public_key_hex,
+                "nonce": challenge["nonce"],
+                "participant_pubkey": self.identity.participant_key.public_key_hex,
+                "requested_scopes": req_scopes,
+            }
+        )
+        participant_sig = self.identity.participant_key.sign(msg)
+        node_sig = self.identity.node_key.sign(msg)
+        return self.post_json(
+            "/v1/participants/join",
+            {
+                "challenge_id": challenge["challenge_id"],
+                "participant_pubkey": self.identity.participant_key.public_key_hex,
+                "node_pubkey": self.identity.node_key.public_key_hex,
+                "display_name": self.identity.display_name,
+                "node_kind": "FULL_NODE",
+                "requested_scopes": req_scopes,
+                "advertised_addresses": [],
+                "participant_signature": participant_sig,
+                "node_signature": node_sig,
+            },
+        )
+
+    def participant_status(self, participant_id: Optional[str] = None) -> Dict[str, Any]:
+        pid = participant_id or self.identity.participant_id
+        return self.get_json(f"/v1/participants/{pid}/scope")
+
+    def load_modules_for_source(self, source_bytes: str, base_dir: Path) -> Dict[str, str]:
+        modules: Dict[str, str] = {}
+        queue = [source_bytes]
+        while queue:
+            current = queue.pop()
+            for match in _IMPORT_RE.finditer(current):
+                imp = match.group(1)
+                if imp not in modules:
+                    content = (base_dir / imp).read_text(encoding="utf-8")
+                    modules[imp] = content
+                    queue.append(content)
+        return modules
+
+    def compile_source(
+        self, file_name: str, source_bytes: str, modules: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
+        return self.post_json(
+            "/v1/language/compile",
+            {
+                "file_name": file_name,
+                "source_bytes": source_bytes,
+                "modules": modules or {},
+            },
+        )
+
+    def submit_vx_file(self, path: str) -> Dict[str, Any]:
+        p = Path(path).resolve()
+        source_bytes = p.read_text(encoding="utf-8")
+        modules = self.load_modules_for_source(source_bytes, p.parent)
+        return self.submit_program(p.name, source_bytes, modules)
+
+    def submit_program(
+        self,
+        file_name: str,
+        source_bytes: str,
+        modules: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        if not self.connected_network_id:
+            self.connect()
+        network_id = self._resolved_network_id()
+        request_id = f"req_{uuid.uuid4().hex}"
+        nonce = self.next_nonce()
+        source_hash = blake3_hex(source_bytes)
+        signing_bytes = canonical_json_bytes(
+            {
+                "actor_pubkey": self.identity.participant_key.public_key_hex,
+                "file_name": file_name,
+                "network_id": network_id,
+                "nonce": nonce,
+                "request_id": request_id,
+                "source_hash": source_hash,
+            }
+        )
+        signature = self.identity.participant_key.sign(signing_bytes)
+        return self.post_json(
+            "/v1/programs/submit",
+            {
+                "file_name": file_name,
+                "source_bytes": source_bytes,
+                "modules": modules or {},
+                "actor_pubkey": self.identity.participant_key.public_key_hex,
+                "network_id": network_id,
+                "request_id": request_id,
+                "nonce": nonce,
+                "signature": signature,
+                "execution_params": {},
+            },
+        )
+
+    def submit_operation(self, operation: Dict[str, Any]) -> Dict[str, Any]:
+        if not self.connected_network_id:
+            self.connect()
+        network_id = self._resolved_network_id()
+        request_id = f"req_{uuid.uuid4().hex}"
+        nonce = self.next_nonce()
+        timestamp_ms = int(time.time() * 1000)
+        payload_hash = blake3_hex(canonical_json_bytes(operation))
+        signing_bytes = canonical_json_bytes(
+            {
+                "actor_pubkey": self.identity.participant_key.public_key_hex,
+                "network_id": network_id,
+                "nonce": nonce,
+                "payload_hash": payload_hash,
+                "request_id": request_id,
+                "timestamp_ms": timestamp_ms,
+            }
+        )
+        signature = self.identity.participant_key.sign(signing_bytes)
+        return self.post_json(
+            "/v1/transactions",
+            {
+                "request_id": request_id,
+                "network_id": network_id,
+                "actor_pubkey": self.identity.participant_key.public_key_hex,
+                "nonce": nonce,
+                "timestamp_ms": timestamp_ms,
+                "signature": signature,
+                "operation": operation,
+            },
+        )
+
+    def get_network_info(self) -> Dict[str, Any]:
+        return self.get_json("/v1/network/info")
+
+    def get_network_status(self) -> Dict[str, Any]:
+        return self.get_json("/v1/network/status")
+
+    def list_nodes(self) -> Dict[str, Any]:
+        return self.get_json("/v1/nodes")
+
+    def get_program(self, program_id: str) -> Dict[str, Any]:
+        return self.get_json(f"/v1/programs/{program_id}")
+
+    def get_transaction(self, tx_id: str) -> Dict[str, Any]:
+        return self.get_json(f"/v1/transactions/{tx_id}")
+
+    def list_spaces(self) -> Any:
+        return self.get_json("/v1/spaces")
+
+    def list_regions(self) -> Any:
+        return self.get_json("/v1/regions")
+
+    def list_wallets(self) -> Any:
+        return self.get_json("/v1/wallets")
+
+    def list_tokens(self) -> Any:
+        return self.get_json("/v1/tokens")
+
+    def list_contracts(self) -> Any:
+        return self.get_json("/v1/contracts")
+
+    def list_loans(self) -> Any:
+        return self.get_json("/v1/loans")
+
+    def get_ledger_events(self) -> Any:
+        return self.get_json("/v1/ledger/events")
+
+    def get_ledger_proofs(self) -> Dict[str, Any]:
+        return self.get_json("/v1/ledger/proofs")
+
+    def get_consensus_status(self) -> Dict[str, Any]:
+        return self.get_json("/v1/consensus/status")
+
+    def verify_reconstruction(self, entity_kind: str, entity_id: str) -> Dict[str, Any]:
+        return self.post_json(
+            "/v1/reconstruction/verify",
+            {"entity_kind": entity_kind, "entity_id": entity_id},
+        )
+
+    def subscribe_events(self, on_event: Callable[[Dict[str, Any]], None]) -> Any:
+        return subscribe_events_thread(self.base_url, on_event)
+
+    def get_json(self, path: str) -> Any:
+        req = urllib.request.Request(f"{self.base_url}{path}", method="GET")
+        return self._do_json(req)
+
+    def post_json(self, path: str, payload: Any) -> Any:
+        raw = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self.base_url}{path}",
+            data=raw,
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        return self._do_json(req)
+
+    def _do_json(self, req: urllib.request.Request) -> Any:
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            body_txt = e.read().decode("utf-8", errors="replace")
+            try:
+                body = json.loads(body_txt)
+                msg = body.get("error", body_txt)
+            except Exception:
+                msg = body_txt
+            raise VectorNetworkError(f"HTTP {e.code}: {msg}") from e

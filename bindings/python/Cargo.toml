@@ -1,0 +1,16 @@
+[package]
+name = "vnetwork-python-binding"
+version = "0.2.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "PyO3 native binding exposing Vector Network canonical hashing, keypairs, and Vector Language compilation to Python."
+
+[lib]
+name = "vnetwork_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+vnetwork-types = { path = "../../crates/vnetwork-types" }
+vnetwork-core = { path = "../../crates/vnetwork-core" }
+pyo3 = { version = "0.28.3", features = ["extension-module"] }
+serde_json = "1"

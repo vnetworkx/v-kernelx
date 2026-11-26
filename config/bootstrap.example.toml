@@ -1,0 +1,21 @@
+# Public Bootstrap / Seed Node Configuration Example
+# Seed nodes assist peer discovery and relay but hold zero unilateral ledger authority.
+
+network_id = "vector-main"
+network_name = "Vector Network Mainnet"
+profile = "PRODUCTION"
+protocol_version = "vnetwork/0.2.0"
+
+node_name = "vn-bootstrap-seed-1"
+node_kind = "FULL_NODE"
+enable_p2p = true
+enable_public_api = true
+enable_validator = false
+enable_relay_server = true
+
+p2p_listen_addresses = ["/ip4/0.0.0.0/tcp/7001"]
+advertised_addresses = ["/dns4/seed1.vectornetwork.example/tcp/7001"]
+public_api_bind = "0.0.0.0:8080"
+storage_path = "/var/lib/vnetwork/bootstrap-seed"
+node_identity_path = "/var/lib/vnetwork/bootstrap-seed/node.key.json"
+discovery_mode = "kademlia"

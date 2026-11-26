@@ -1,0 +1,21 @@
+// Reusable Vector Language Declaration Module (.vdx): Shared Treasury Space/Region/Wallets
+space create SharedTreasurySpace {
+    name = "Shared Treasury Space";
+    visibility = "public";
+}
+
+region create SharedTreasuryRegion in "SharedTreasurySpace" {
+    name = "Shared Treasury Region";
+    prefix = "SHRD";
+    title = "Shared Multi-Participant Treasury";
+    visibility = "public";
+    section = 1;
+}
+
+wallet create SharedTreasuryWallet in "SharedTreasuryRegion" {
+    name = "Shared Treasury Wallet";
+}
+
+wallet create SharedCounterpartyWallet in "SharedTreasuryRegion" {
+    name = "Shared Counterparty Wallet";
+}

@@ -1,0 +1,20 @@
+[package]
+name = "vnetwork-cli"
+version = "0.2.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Vector Network developer CLI (`vn`) for connecting, joining, compiling, submitting .vx programs, and querying the network."
+
+[[bin]]
+name = "vn"
+path = "src/main.rs"
+
+[dependencies]
+vnetwork-types = { path = "../vnetwork-types" }
+vnetwork-sdk = { path = "../../sdks/rust" }
+v-langx = { path = "../../vendor/vectorspace" }
+clap = { version = "4", features = ["derive", "env"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

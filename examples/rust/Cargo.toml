@@ -1,0 +1,12 @@
+[package]
+name = "vnetwork-rust-example"
+version = "0.2.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+vnetwork-sdk = { path = "../../sdks/rust" }
+vnetwork-types = { path = "../../crates/vnetwork-types" }
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"

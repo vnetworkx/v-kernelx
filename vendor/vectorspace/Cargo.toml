@@ -1,0 +1,20 @@
+[package]
+name = "v-langx"
+version = "1.2.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Vector Language (v-langx): deterministic front-end compiler for Vector Network kernel operations."
+readme = "README.md"
+
+[lib]
+name = "v_langx"
+path = "src/lib.rs"
+
+[[bin]]
+name = "v-langx"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+blake3 = "1"

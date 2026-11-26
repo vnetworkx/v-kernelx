@@ -1,0 +1,19 @@
+// Create and execute a deterministic vContract
+space create ExecContractSpace {
+    name = "Exec Contract Space";
+    visibility = "public";
+}
+
+region create ExecContractRegion in "ExecContractSpace" {
+    name = "Exec Contract Region";
+    prefix = "ECNT";
+    visibility = "public";
+    section = 1;
+}
+
+contract create ServiceContract {
+    region = "ExecContractRegion";
+    action approve(tier="standard", limit=1000);
+}
+
+contract execute "ServiceContract".approve(tier="standard", limit=1000);

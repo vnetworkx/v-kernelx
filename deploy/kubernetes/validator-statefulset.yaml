@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vnetwork-validator
+  namespace: vnetwork
+spec:
+  serviceName: vnetwork-validator
+  replicas: 4
+  selector:
+    matchLabels:
+      app: vnetwork-validator
+  template:
+    metadata:
+      labels:
+        app: vnetwork-validator
+    spec:
+      containers:
+        - name: vnetwork-node
+          image: ghcr.io/vnetworkx/vnetwork-node:0.2.0
+          env:
+            - name: NETWORK_PROFILE
+              value: TESTNET
+            - name: NETWORK_NODE_KIND
+              value: VALIDATOR_NODE
+            - name: NETWORK_ENABLE_VALIDATOR
+              value: "true"
+            - name: NETWORK_BOOTSTRAP_PEERS
+              value: /dns4/vnetwork-bootstrap-0.vnetwork-bootstrap.vnetwork.svc.cluster.local/tcp/9000
+            - name: NETWORK_P2P_LISTEN_ADDRS
+              value: /ip4/0.0.0.0/tcp/9000
+            - name: NETWORK_API_LISTEN_ADDR
+              value: 0.0.0.0:8080
+          ports:
+            - containerPort: 9000
+              name: p2p
+            - containerPort: 8080
+              name: http
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/vnetwork
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 50Gi

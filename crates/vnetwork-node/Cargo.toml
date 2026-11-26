@@ -1,0 +1,25 @@
+[package]
+name = "vnetwork-node"
+version = "0.2.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Vector Network P2P node runtime, libp2p discovery & transport, validator consensus coordination, sync, and lifecycle."
+
+[dependencies]
+vnetwork-types = { path = "../vnetwork-types" }
+vnetwork-core = { path = "../vnetwork-core" }
+vnetwork-storage = { path = "../vnetwork-storage" }
+vnetwork-consensus = { path = "../vnetwork-consensus" }
+vnetwork-api = { path = "../vnetwork-api" }
+tokio = { version = "1", features = ["full"] }
+libp2p = { version = "0.54", features = ["tokio", "tcp", "noise", "yamux", "gossipsub", "identify", "kad", "request-response", "relay", "autonat", "macros", "serde", "dns"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+clap = { version = "4", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures = "0.3"
+async-trait = "0.1"
+blake3 = "1"
+hex = "0.4"

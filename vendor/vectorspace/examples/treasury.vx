@@ -1,0 +1,8 @@
+vector treasury: free = (100, 25, 0);
+wallet treasury_owner = bind(pk_treasury);
+certify treasury with ctx(space="global", op="transfer", risk="normal", threshold_version="1.1");
+transfer treasury to reserve amount 10 drain 1;
+project treasury into staking_pool amount 20 policy staking_v1;
+reconstruct treasury from proj_001;
+query treasury.certification;
+record last_event;

@@ -1,0 +1,34 @@
+// End-to-end token transfer (ONLY Dimension 0 [token] transfers; authratio & energy are never transferred)
+space create TransferSpace {
+    name = "Transfer Demo Space";
+    visibility = "public";
+}
+
+region create TransferRegion in "TransferSpace" {
+    name = "Transfer Demo Region";
+    prefix = "XFER";
+    visibility = "public";
+    section = 1;
+}
+
+wallet create SenderWallet in "TransferRegion" {
+    name = "Sender Wallet";
+}
+
+wallet create ReceiverWallet in "TransferRegion" {
+    name = "Receiver Wallet";
+}
+
+token create XTOK in "SenderWallet" {
+    name = "Transfer Token";
+    symbol = "XTOK";
+    dimensions = 3;
+    vector = [10000, 1000, 0];
+    max_supply = 10000;
+    drain_bps = 100;
+    purpose = "Transfer demonstration";
+    external_monetary_value = "None";
+}
+
+transfer "XTOK" from "SenderWallet" to "ReceiverWallet" amount 500;
+query network;

@@ -1,0 +1,37 @@
+# Vector Network Node Configuration Example
+# Separate secrets (keys) from public configuration; pass secret key files or env vars securely.
+
+network_id = "vector-testnet-1"
+network_name = "Vector Testnet"
+profile = "TESTNET" # DEVELOPMENT | TESTNET | PRODUCTION
+protocol_version = "vnetwork/0.2.0"
+
+node_name = "vn-node-1"
+node_kind = "FULL_NODE" # LIGHT_NODE | FULL_NODE | VALIDATOR_NODE
+enable_p2p = true
+enable_public_api = true
+enable_validator = false
+
+# Public & P2P addresses
+p2p_listen_addresses = ["/ip4/0.0.0.0/tcp/7001"]
+advertised_addresses = ["/dns4/node1.example.org/tcp/7001"]
+bootstrap_peers = [
+  "/dns4/seed1.example.org/tcp/7001/p2p/<SEED_PEER_ID>",
+  "/dns4/seed2.example.org/tcp/7001/p2p/<SEED_PEER_ID>"
+]
+discovery_mode = "kademlia" # kademlia | bootstrap | hybrid
+
+public_api_bind = "0.0.0.0:8080"
+public_api_url = "https://api.example.org"
+storage_path = "/var/lib/vnetwork/node1"
+node_identity_path = "/var/lib/vnetwork/node1/node.key.json"
+validator_key_path = "/var/lib/vnetwork/node1/validator.key.json"
+
+[tls]
+enabled = false
+cert_path = ""
+key_path = ""
+
+[rate_limits]
+requests_per_minute = 600
+max_body_bytes = 2097152

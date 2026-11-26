@@ -1,0 +1,13 @@
+// Create a Space and child Region
+space create AppSpace {
+    name = "Application Space";
+    visibility = "public";
+}
+
+region create CoreRegion in "AppSpace" {
+    name = "Core Region";
+    prefix = "CORE";
+    title = "Primary Application Region";
+    visibility = "public";
+    section = 1;
+}

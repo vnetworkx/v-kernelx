@@ -1,0 +1,7 @@
+vector reserve: bound = (0, 0, 0);
+vector staking_pool: bound = (0, 0, 0);
+wallet reserve_owner = bind(pk_reserve);
+contract staking_policy {
+    action lock(amount=20, target=staking_pool, mode="project");
+    action settle(projection=proj_001, outcome="gain", delta=2);
+}

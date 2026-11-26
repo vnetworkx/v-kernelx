@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vnetwork-sdk"
+version = "0.2.0"
+description = "Official Python SDK for Vector Network and Vector Language (.vx / .vdx)."
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+native = ["vnetwork-native>=0.2.0"]
