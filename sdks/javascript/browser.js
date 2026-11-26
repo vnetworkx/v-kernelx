@@ -47,6 +47,7 @@ export async function signBrowserEd25519(privateKeyHex, messageBytes) {
 export const PROTOCOL_VERSION = "vector-network/1.0.0";
 export const LANGUAGE_VERSION = "v-langx/1.2.0";
 export const COMPILER_VERSION = "vectorspace-compiler/1.2.0";
+export const DOM_TRANSFER_APPROVAL_V1 = "vnetwork/transfer-approval/v1";
 
 export class BrowserVectorNetworkClient {
   constructor(baseUrl, identity, expectedNetworkId = null) {
@@ -148,6 +149,20 @@ export class BrowserVectorNetworkClient {
       wallet_id: walletId,
     });
     return signBrowserEd25519(authorizedKey.private_key_hex, msg);
+  }
+
+  async signTransferApproval(tokenId, fromWalletId, toWalletId, amount, cosignerKey) {
+    if (!this.connectedNetworkId) await this.connect();
+    const msg = canonicalJsonBytes({
+      amount: String(amount),
+      domain: DOM_TRANSFER_APPROVAL_V1,
+      from_wallet_id: fromWalletId,
+      network_id: this.connectedNetworkId,
+      protocol_version: PROTOCOL_VERSION,
+      to_wallet_id: toWalletId,
+      token_id: tokenId,
+    });
+    return signBrowserEd25519(cosignerKey.private_key_hex, msg);
   }
 
   async submitOperation(operation) {

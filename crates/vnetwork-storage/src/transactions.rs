@@ -21,6 +21,8 @@ pub enum PersistFailpoint {
 pub struct PendingCommitRecord {
     pub height: u64,
     pub proposal_id: String,
+    #[serde(default)]
+    pub proposal_digest: String,
     pub certificate_id: String,
     pub post_state_root: String,
     pub prior_event_count: usize,
@@ -31,6 +33,8 @@ pub struct PendingCommitRecord {
 pub struct CommittedCommitMarker {
     pub height: u64,
     pub proposal_id: String,
+    #[serde(default)]
+    pub proposal_digest: String,
     pub certificate_id: String,
     pub post_state_root: String,
     pub event_count: usize,
@@ -108,6 +112,11 @@ impl ConsensusWal {
             file.sync_all().map_err(|e| VNetworkError::Storage(e.to_string()))?;
         }
         fs::rename(&tmp, &self.path).map_err(|e| VNetworkError::Storage(e.to_string()))?;
+        if let Some(parent) = self.path.parent() {
+            if let Ok(dir) = File::open(parent) {
+                let _ = dir.sync_all();
+            }
+        }
         Ok(())
     }
 }
@@ -130,6 +139,11 @@ pub fn atomic_write_json<T: Serialize>(path: &Path, value: &T) -> VResult<()> {
     }
     fs::rename(&tmp, path)
         .map_err(|e| VNetworkError::Storage(format!("rename {:?} failed: {e}", path)))?;
+    if let Some(parent) = path.parent() {
+        if let Ok(dir) = File::open(parent) {
+            let _ = dir.sync_all();
+        }
+    }
     Ok(())
 }
 

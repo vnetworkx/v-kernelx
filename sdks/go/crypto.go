@@ -79,17 +79,43 @@ func (k KeypairMaterial) Sign(message []byte) (string, error) {
 }
 
 const (
-	ProtocolVersion = "vector-network/1.0.0"
-	LanguageVersion = "v-langx/1.2.0"
-	CompilerVersion = "vectorspace-compiler/1.2.0"
+	ProtocolVersion       = "vector-network/1.0.0"
+	LanguageVersion       = "v-langx/1.2.0"
+	CompilerVersion       = "vectorspace-compiler/1.2.0"
+	DomTransferApprovalV1 = "vnetwork/transfer-approval/v1"
 )
 
+func isWeakEd25519Pubkey(pub []byte) bool {
+	if len(pub) != ed25519.PublicKeySize {
+		return true
+	}
+	allZero := true
+	smallOrderOne := pub[0] == 1
+	for i, b := range pub {
+		if b != 0 {
+			allZero = false
+			if i > 0 {
+				smallOrderOne = false
+			}
+		}
+	}
+	return allZero || smallOrderOne
+}
+
 func VerifyEd25519(publicKeyHex string, message []byte, signatureHex string) (bool, error) {
-	pub, err := hex.DecodeString(strings.TrimSpace(publicKeyHex))
-	if err != nil || len(pub) != ed25519.PublicKeySize {
+	pubClean := strings.TrimSpace(publicKeyHex)
+	sigClean := strings.TrimSpace(signatureHex)
+	if len(pubClean) != 64 {
+		return false, fmt.Errorf("invalid 64-char Ed25519 public key hex")
+	}
+	if len(sigClean) != 128 {
+		return false, fmt.Errorf("invalid 128-char Ed25519 signature hex")
+	}
+	pub, err := hex.DecodeString(pubClean)
+	if err != nil || len(pub) != ed25519.PublicKeySize || isWeakEd25519Pubkey(pub) {
 		return false, fmt.Errorf("invalid 32-byte Ed25519 public key")
 	}
-	sig, err := hex.DecodeString(strings.TrimSpace(signatureHex))
+	sig, err := hex.DecodeString(sigClean)
 	if err != nil || len(sig) != ed25519.SignatureSize {
 		return false, fmt.Errorf("invalid 64-byte Ed25519 signature")
 	}
@@ -152,15 +178,10 @@ func CanonicalWalletPoPMap(
 
 func CanonicalTransferApprovalMap(
 	networkID, tokenID, fromWalletID, toWalletID, amountStr string,
-	drainBps *uint16,
 ) map[string]any {
-	var drain any = nil
-	if drainBps != nil {
-		drain = *drainBps
-	}
 	return map[string]any{
 		"amount":           amountStr,
-		"drain_bps":        drain,
+		"domain":           DomTransferApprovalV1,
 		"from_wallet_id":   fromWalletID,
 		"network_id":       networkID,
 		"protocol_version": ProtocolVersion,

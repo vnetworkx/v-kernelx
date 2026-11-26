@@ -1,21 +1,35 @@
 use std::fs;
 use vnetwork_core::engine::ProtocolEngine;
 use vnetwork_core::identity::{canonical_join_signing_bytes, JoinNetworkRequest};
+use vnetwork_core::snapshot::CertifiedCheckpoint;
 use vnetwork_core::state::GenesisConfig;
-use vnetwork_storage::{PersistFailpoint, StorageDatabase};
+use vnetwork_storage::{save_certified_checkpoint, PersistFailpoint, StorageDatabase};
 use vnetwork_types::*;
 
-fn single_val_qc(prop: &ConsensusProposal, val_kp: &KeypairMaterial, qc_id: &str, ts: u64) -> QuorumCertificate {
+fn single_val_qc(
+    prop: &ConsensusProposal,
+    val_kp: &KeypairMaterial,
+    qc_id: &str,
+    ts: u64,
+) -> QuorumCertificate {
     let mut vote = ConsensusVote {
         proposal_id: prop.proposal_id.clone(),
+        proposal_digest: prop.proposal_digest.clone(),
         network_id: prop.network_id.clone(),
+        genesis_commitment: prop.genesis_commitment.clone(),
+        protocol_version: prop.protocol_version.clone(),
         height: prop.height,
         round: prop.round,
         epoch: prop.epoch,
+        validator_set_hash: prop.validator_set_hash.clone(),
+        parent_commitment: prop.parent_commitment.clone(),
+        pre_state_root: prop.pre_state_root.clone(),
+        post_state_root: prop.post_state_root.clone(),
+        operation_scope: prop.operation_scope.clone(),
+        vote_phase: VotePhase::Commit,
         validator_id: "val_1".to_string(),
         validator_pubkey_hex: val_kp.public_key_hex.clone(),
         approve: true,
-        post_state_root: prop.post_state_root.clone(),
         timestamp_ms: ts,
         signature: String::new(),
     };
@@ -23,13 +37,21 @@ fn single_val_qc(prop: &ConsensusProposal, val_kp: &KeypairMaterial, qc_id: &str
     QuorumCertificate {
         certificate_id: qc_id.to_string(),
         proposal_id: prop.proposal_id.clone(),
+        proposal_digest: prop.proposal_digest.clone(),
         network_id: prop.network_id.clone(),
+        genesis_commitment: prop.genesis_commitment.clone(),
+        protocol_version: prop.protocol_version.clone(),
         height: prop.height,
         round: prop.round,
         epoch: prop.epoch,
         validator_set_hash: prop.validator_set_hash.clone(),
+        parent_commitment: prop.parent_commitment.clone(),
+        pre_state_root: prop.pre_state_root.clone(),
         post_state_root: prop.post_state_root.clone(),
-        event_hashes: prop.events.iter().map(|e| e.event_hash.clone()).collect(),
+        operation_scope: prop.operation_scope.clone(),
+        vote_phase: VotePhase::Commit,
+        ordered_event_ids: prop.ordered_event_ids(),
+        event_hashes: prop.ordered_event_hashes(),
         total_weight: 100,
         approving_weight: 100,
         quorum_threshold_bps: 6667,
@@ -145,10 +167,18 @@ fn test_wal_persistence_crash_recovery_and_profile_guard() {
     assert_eq!(state4.height, 1);
     assert_eq!(state4.events.len(), 1);
 
-    // Snapshot tampering detection
-    let mut tampered = state4.clone();
-    tampered.logical_clock = 9999;
-    vnetwork_storage::save_full_state_snapshot(&dir, &tampered).unwrap();
+    // CertifiedCheckpoint tampering detection
+    let mut tampered_state = state4.clone();
+    tampered_state.logical_clock = 9999;
+    let ckpt = CertifiedCheckpoint::build(
+        &tampered_state,
+        &qc,
+        &prop.proposal_digest,
+        &prop.parent_commitment,
+        102,
+    )
+    .unwrap();
+    save_certified_checkpoint(&dir, &ckpt).unwrap();
     assert!(StorageDatabase::open_and_recover(&dir, &genesis).is_err());
 
     let _ = fs::remove_dir_all(&dir);

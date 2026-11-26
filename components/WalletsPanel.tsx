@@ -223,6 +223,7 @@ export function WalletsPanel({
                         <div className="font-semibold text-slate-900">{w.label}</div>
                         <div className="font-mono text-[11px] text-slate-400">
                           {w.region_id ? shortenHash(w.region_id, 10, 6) : "global"}
+                          {` · rx=${w.receive_policy?.mode ?? "OPEN"}`}
                           {w.creator_wallet_id ? ` · creator=${shortenHash(w.creator_wallet_id, 8, 4)}` : ""}
                         </div>
                       </td>
@@ -232,7 +233,7 @@ export function WalletsPanel({
                           {w.auth_ratio} / 1000
                         </span>
                         <div className="text-[10px] text-slate-400">
-                          {w.auth_ratio >= 700 ? "1% drain fee rate" : "2% base drain fee rate"}
+                          {w.auth_ratio >= 700 ? "Discount tier (>=700)" : "Standard tier (<700)"}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-right font-mono tabular-nums text-emerald-700 font-semibold">

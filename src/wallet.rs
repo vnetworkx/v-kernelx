@@ -9,11 +9,34 @@ pub struct WalletIdentity {
     pub metadata: std::collections::BTreeMap<String, String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WalletKeypair {
     pub wallet_id: String,
     pub public_key_hex: String,
     pub private_key_hex: String,
+}
+
+impl std::fmt::Debug for WalletKeypair {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WalletKeypair")
+            .field("wallet_id", &self.wallet_id)
+            .field("public_key_hex", &self.public_key_hex)
+            .field("private_key_hex", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl Drop for WalletKeypair {
+    fn drop(&mut self) {
+        unsafe {
+            let bytes = self.private_key_hex.as_bytes_mut();
+            for b in bytes.iter_mut() {
+                std::ptr::write_volatile(b, 0);
+            }
+        }
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        self.private_key_hex.clear();
+    }
 }
 
 pub struct WalletContext {
@@ -92,9 +115,25 @@ impl WalletContext {
 }
 
 pub fn verifying_key_from_hex(public_key_hex: &str) -> Result<VerifyingKey, KernelXError> {
-    let pk_bytes = hex::decode(public_key_hex).map_err(|_| KernelXError::Signature)?;
+    let trimmed = public_key_hex.trim();
+    if trimmed.len() != 64 {
+        return Err(KernelXError::Signature);
+    }
+    let pk_bytes = hex::decode(trimmed).map_err(|_| KernelXError::Signature)?;
     let pk_array: [u8; 32] = pk_bytes.try_into().map_err(|_| KernelXError::Signature)?;
-    VerifyingKey::from_bytes(&pk_array).map_err(|_| KernelXError::Signature)
+    let vk = VerifyingKey::from_bytes(&pk_array).map_err(|_| KernelXError::Signature)?;
+    let canonical = vk.to_bytes();
+    if canonical != pk_array
+        || canonical == [0u8; 32]
+        || canonical
+            == [
+                1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0,
+            ]
+    {
+        return Err(KernelXError::Signature);
+    }
+    Ok(vk)
 }
 
 pub fn verify_signature(
@@ -103,9 +142,13 @@ pub fn verify_signature(
     signature_hex: &str,
 ) -> Result<(), KernelXError> {
     let verifying_key = verifying_key_from_hex(public_key_hex)?;
-    let sig_bytes = hex::decode(signature_hex).map_err(|_| KernelXError::Signature)?;
+    let sig_trimmed = signature_hex.trim();
+    if sig_trimmed.len() != 128 {
+        return Err(KernelXError::Signature);
+    }
+    let sig_bytes = hex::decode(sig_trimmed).map_err(|_| KernelXError::Signature)?;
     let signature = Signature::from_slice(&sig_bytes).map_err(|_| KernelXError::Signature)?;
     verifying_key
-        .verify(message, &signature)
+        .verify_strict(message, &signature)
         .map_err(|_| KernelXError::Signature)
 }

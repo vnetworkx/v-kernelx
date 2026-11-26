@@ -253,7 +253,6 @@ func (c *Client) SignWalletPoP(
 func (c *Client) SignTransferApproval(
 	tokenID, fromWalletID, toWalletID, amountStr string,
 	cosignerKey KeypairMaterial,
-	drainBps *uint16,
 ) (string, error) {
 	networkID, err := c.resolvedNetworkID()
 	if err != nil {
@@ -265,12 +264,25 @@ func (c *Client) SignTransferApproval(
 		fromWalletID,
 		toWalletID,
 		amountStr,
-		drainBps,
 	))
 	if err != nil {
 		return "", err
 	}
 	return cosignerKey.Sign(msgBytes)
+}
+
+func (c *Client) UpdateWalletReceivePolicy(walletID, mode string, allowedSenders []string) (map[string]any, error) {
+	if allowedSenders == nil {
+		allowedSenders = []string{}
+	}
+	return c.SubmitOperation(map[string]any{
+		"op": "UpdateWalletReceivePolicy",
+		"payload": map[string]any{
+			"wallet_id":       walletID,
+			"mode":            mode,
+			"allowed_senders": allowedSenders,
+		},
+	})
 }
 
 func (c *Client) SubmitOperation(operation map[string]any) (map[string]any, error) {
@@ -326,6 +338,24 @@ func (c *Client) VerifyReconstruction(entityKind, entityID string) (Reconstructi
 		"entity_id":   entityID,
 	}, &rep)
 	return rep, err
+}
+
+func (c *Client) VerifyLedgerReplay() (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/ledger/replay", &out)
+	return out, err
+}
+
+func (c *Client) VerifyTokenSupply(tokenID string) (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/tokens/"+tokenID+"/supply", &out)
+	return out, err
+}
+
+func (c *Client) GetEquivocations() (map[string]any, error) {
+	var out map[string]any
+	err := c.GetJSON("/v1/consensus/equivocations", &out)
+	return out, err
 }
 
 func (c *Client) GetJSON(path string, out any) error {

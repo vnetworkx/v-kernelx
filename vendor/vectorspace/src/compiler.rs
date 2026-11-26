@@ -623,20 +623,26 @@ fn compile_statement_to_op(
                 span: None,
             }
         }
-        Statement::Transfer(t) => CompiledOp {
-            index,
-            op_kind: "TOKEN_TRANSFER".to_string(),
-            params: serde_json::json!({
-                "token": t.token,
-                "from": t.source,
-                "to": t.destination,
-                "amount": expr_to_string(&t.amount),
-                "drain": t.drain.as_ref().map(expr_to_string),
-                "policy": t.policy.as_ref().map(expr_to_string),
-            }),
-            required_scope: "TOKEN".to_string(),
-            span: None,
-        },
+        Statement::Transfer(t) => {
+            if t.drain.is_some() {
+                return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation(
+                    "sender-supplied `drain` override on `transfer` is forbidden; transfer drain rate is strictly protocol-determined from transfer scope".to_string(),
+                )));
+            }
+            CompiledOp {
+                index,
+                op_kind: "TOKEN_TRANSFER".to_string(),
+                params: serde_json::json!({
+                    "token": t.token,
+                    "from": t.source,
+                    "to": t.destination,
+                    "amount": expr_to_string(&t.amount),
+                    "policy": t.policy.as_ref().map(expr_to_string),
+                }),
+                required_scope: "TOKEN".to_string(),
+                span: None,
+            }
+        }
         Statement::Receive(r) => CompiledOp {
             index,
             op_kind: "TOKEN_RECEIVE".to_string(),

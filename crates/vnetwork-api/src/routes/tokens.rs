@@ -31,8 +31,18 @@ pub async fn get_token(
         .filter(|b| b.token_id == t.token_id)
         .cloned()
         .collect();
+    let supply_breakdown = app.backend.verify_token_supply(&t.token_id).await.ok();
     Ok(Json(serde_json::json!({
         "token": t,
         "balances": balances,
+        "supply_breakdown": supply_breakdown,
     })))
+}
+
+pub async fn token_supply(
+    State(app): State<ApiAppState>,
+    Path(token_id): Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let breakdown = app.backend.verify_token_supply(&token_id).await?;
+    Ok(Json(serde_json::to_value(breakdown).unwrap_or_default()))
 }

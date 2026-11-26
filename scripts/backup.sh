@@ -14,7 +14,7 @@ fi
 
 ARCHIVE="${OUT_DIR}/vnetwork-backup-${STAMP}.tar.gz"
 INCLUDE_FILES=()
-for f in genesis.json events.wal consensus_commits.wal state.snapshot.json programs.json transactions.json indexes.json migrations.json; do
+for f in genesis.json events.wal consensus_commits.wal certified.checkpoint.json equivocation_votes.wal equivocation_evidence.wal programs.json transactions.json indexes.json migrations.json; do
   if [[ -f "${STORAGE_DIR}/${f}" ]]; then
     INCLUDE_FILES+=("${f}")
   fi

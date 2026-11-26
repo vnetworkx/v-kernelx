@@ -67,11 +67,25 @@ export function signEd25519(privateKeyHex, messageBytes) {
   return sig.toString("hex");
 }
 
+const WEAK_PUBKEY_HEXES = new Set([
+  "0".repeat(64),
+  "01" + "0".repeat(62),
+]);
+
 export function verifyEd25519(publicKeyHex, messageBytes, signatureHex) {
-  const pubRaw = Buffer.from(publicKeyHex.trim(), "hex");
+  const pkClean = publicKeyHex.trim().toLowerCase();
+  const sigClean = signatureHex.trim();
+  if (pkClean.length !== 64 || WEAK_PUBKEY_HEXES.has(pkClean) || sigClean.length !== 128) {
+    return false;
+  }
+  const pubRaw = Buffer.from(pkClean, "hex");
+  const sigRaw = Buffer.from(sigClean, "hex");
+  if (pubRaw.length !== 32 || sigRaw.length !== 64) {
+    return false;
+  }
   const spki = Buffer.concat([ED25519_SPKI_PREFIX, pubRaw]);
   const key = crypto.createPublicKey({ key: spki, format: "der", type: "spki" });
-  return crypto.verify(null, Buffer.from(messageBytes), key, Buffer.from(signatureHex.trim(), "hex"));
+  return crypto.verify(null, Buffer.from(messageBytes), key, sigRaw);
 }
 
 export class ClientIdentity {
@@ -103,6 +117,7 @@ export class ClientIdentity {
 export const PROTOCOL_VERSION = "vector-network/1.0.0";
 export const LANGUAGE_VERSION = "v-langx/1.2.0";
 export const COMPILER_VERSION = "vectorspace-compiler/1.2.0";
+export const DOM_TRANSFER_APPROVAL_V1 = "vnetwork/transfer-approval/v1";
 
 export function canonicalProgramSubmitObject({
   actorPubkey,
@@ -163,11 +178,10 @@ export function canonicalTransferApprovalObject({
   fromWalletId,
   toWalletId,
   amount,
-  drainBps = null,
 }) {
   return {
     amount: String(amount),
-    drain_bps: drainBps,
+    domain: DOM_TRANSFER_APPROVAL_V1,
     from_wallet_id: fromWalletId,
     network_id: networkId,
     protocol_version: PROTOCOL_VERSION,

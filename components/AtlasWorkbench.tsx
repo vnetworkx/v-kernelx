@@ -21,6 +21,7 @@ import type {
   BrowserSignerKey,
   CanonicalEventDto,
   ConsensusRoundDto,
+  DrainPolicyDto,
   DrainRewardDto,
   NodeStatusDto,
   RegionDto,
@@ -54,6 +55,7 @@ interface AtlasWorkbenchProps {
   initialEvents: CanonicalEventDto[];
   initialRecords: VectorRecordDto[];
   initialSnapshots: SnapshotDto[];
+  drainPolicy?: DrainPolicyDto | null;
   coreEventHash: string;
 }
 
@@ -79,6 +81,7 @@ export function AtlasWorkbench({
   initialEvents,
   initialRecords,
   initialSnapshots,
+  drainPolicy,
   coreEventHash,
 }: AtlasWorkbenchProps) {
   const [activeTab, setActiveTab] = useState<NavTab>("overview");
@@ -207,7 +210,7 @@ export function AtlasWorkbench({
       notify("error", data.error ?? "Backup failed");
       return;
     }
-    notify("success", `SQLite hot backup written to ${data.backup_path}`);
+    notify("success", `Storage backup prepared at ${data.backup_path}`);
   }
 
   const activeSigner = activeSignerId ? signerKeys[activeSignerId] : null;
@@ -354,8 +357,16 @@ export function AtlasWorkbench({
             <span>·</span>
             <span>{status.event_count} events</span>
             <span>·</span>
-            <span className={status.replay_verified ? "text-emerald-700" : "text-red-700"}>
-              {status.replay_verified ? "replay verified" : "replay mismatch"}
+            <span
+              className={
+                status.replay_status === "VERIFIED"
+                  ? "text-emerald-700"
+                  : status.replay_status === "INVALID"
+                    ? "text-red-700"
+                    : "text-amber-700"
+              }
+            >
+              replay {status.replay_status.toLowerCase()}
             </span>
           </div>
 
@@ -449,6 +460,7 @@ export function AtlasWorkbench({
               wallets={wallets}
               regions={regions}
               rewards={rewards}
+              drainPolicy={drainPolicy}
               signerKeys={signerKeys}
               activeSignerId={activeSignerId}
               onOpenWallets={() => setActiveTab("wallets")}

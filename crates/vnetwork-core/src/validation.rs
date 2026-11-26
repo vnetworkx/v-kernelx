@@ -209,7 +209,6 @@ pub fn validate_operation_preconditions_with_policy(
             from_wallet_id,
             to_wallet_id,
             amount,
-            drain_bps,
             ..
         } => {
             if token_id.trim().is_empty()
@@ -225,12 +224,28 @@ pub fn validate_operation_preconditions_with_policy(
                     "transfer amount must be positive".to_string(),
                 ));
             }
-            if let Some(d) = drain_bps {
-                if *d > 10_000 {
-                    return Err(VNetworkError::Validation(
-                        "drain_bps cannot exceed 10000".to_string(),
-                    ));
-                }
+            Ok(())
+        }
+        NetworkOperation::UpdateWalletReceivePolicy {
+            wallet_id,
+            mode,
+            allowed_senders,
+        } => {
+            if wallet_id.trim().is_empty() || mode.trim().is_empty() {
+                return Err(VNetworkError::Validation(
+                    "wallet_id and mode are required".to_string(),
+                ));
+            }
+            let norm = mode.trim().to_ascii_uppercase();
+            if !matches!(norm.as_str(), "OPEN" | "RESTRICTED" | "FROZEN") {
+                return Err(VNetworkError::Validation(format!(
+                    "unsupported receive policy mode `{mode}`"
+                )));
+            }
+            if norm == "RESTRICTED" && allowed_senders.iter().all(|s| s.trim().is_empty()) {
+                return Err(VNetworkError::Validation(
+                    "RESTRICTED receive policy requires at least one allowed sender".to_string(),
+                ));
             }
             Ok(())
         }

@@ -3,22 +3,33 @@
 import { useState, type FormEvent } from "react";
 import { ArrowRightLeft, Coins, Flame, Plus, ShieldCheck } from "lucide-react";
 import {
+  deriveTransferScopeClient,
+  formatTimestampMs,
   formatTokenUnitsClient,
   parseDecimalToAtomic,
   previewDrainClient,
+  resolveScopeDrainBps,
   shortenHash,
 } from "@/lib/format";
 import {
   canonicalTokenRequestSigningBytes,
   signBytesWithPrivateKey,
 } from "@/lib/client-crypto";
-import type { BrowserSignerKey, DrainRewardDto, RegionDto, TokenDto, WalletDto } from "@/lib/types";
+import type {
+  BrowserSignerKey,
+  DrainPolicyDto,
+  DrainRewardDto,
+  RegionDto,
+  TokenDto,
+  WalletDto,
+} from "@/lib/types";
 
 interface TokensPanelProps {
   tokens: TokenDto[];
   wallets: WalletDto[];
   regions: RegionDto[];
   rewards: DrainRewardDto[];
+  drainPolicy?: DrainPolicyDto | null;
   signerKeys: Record<string, BrowserSignerKey>;
   activeSignerId: string | null;
   onOpenWallets: () => void;
@@ -33,6 +44,7 @@ export function TokensPanel({
   wallets,
   regions,
   rewards,
+  drainPolicy,
   signerKeys,
   activeSignerId,
   onOpenWallets,
@@ -55,17 +67,20 @@ export function TokensPanel({
   const [newTokenDecimals, setNewTokenDecimals] = useState("8");
   const [newTokenMaxSupply, setNewTokenMaxSupply] = useState("100000000000000000");
   const [newTokenPolicy, setNewTokenPolicy] = useState("bounded-reserve-transport-supply");
-  const [newTokenDrainBps, setNewTokenDrainBps] = useState("200");
+  const [newTokenDrainBps, setNewTokenDrainBps] = useState("");
 
   const activeToken =
     tokens.find((t) => t.token_id === selectedTokenId) ?? tokens[0] ?? null;
 
   const activeSigner = activeSignerId ? signerKeys[activeSignerId] : null;
   const activeSignerWallet = activeSigner ? wallets.find((w) => w.wallet_id === activeSigner.wallet_id) : null;
+  const toWalletObj = wallets.find((w) => w.wallet_id === toWallet) ?? null;
+  const transferScope = deriveTransferScopeClient(activeSignerWallet, toWalletObj);
   const authRatio = activeSignerWallet?.auth_ratio ?? 1000;
-  const baseDrainBps = activeToken?.drain_bps ?? 200;
+  const effectivePolicy = drainPolicy ?? activeToken?.drain_policy ?? null;
+  const baseDrainBps = resolveScopeDrainBps(effectivePolicy, transferScope);
 
-  const drainPreview = activeToken && amountInput ? (() => {
+  const drainPreview = activeToken && amountInput && baseDrainBps !== null ? (() => {
     try {
       const atomic = useAtomicUnits ? amountInput : parseDecimalToAtomic(amountInput, activeToken.decimals);
       return previewDrainClient(atomic, baseDrainBps, authRatio, 700);
@@ -294,7 +309,10 @@ export function TokensPanel({
                           {tok.name} ({tok.symbol})
                         </div>
                         <div className="font-mono text-[11px] text-slate-500">
-                          {tok.decimals} decimals · drain={tok.drain_bps ?? 200} bps
+                          {tok.decimals} decimals ·{" "}
+                          {tok.drain_bps != null
+                            ? `token policy=${tok.drain_bps} bps`
+                            : "scope drain=UNCONFIGURED"}
                         </div>
                       </td>
                       <td className="px-4 py-3 font-mono text-slate-700">{tok.token_id}</td>
@@ -306,8 +324,16 @@ export function TokensPanel({
                         {formatTokenUnitsClient(tok.burned_supply, tok.decimals)}
                       </td>
                       <td className="px-5 py-3 text-right font-mono font-medium">
-                        <span className={tok.conservation.conserved ? "text-emerald-700" : "text-red-700"}>
-                          {tok.conservation.conserved ? "VERIFIED" : "MISMATCH"}
+                        <span
+                          className={
+                            tok.conservation.verification_status === "VERIFIED"
+                              ? "text-emerald-700"
+                              : tok.conservation.verification_status === "INVALID"
+                                ? "text-red-700"
+                                : "text-amber-700"
+                          }
+                        >
+                          {tok.conservation.verification_status}
                         </span>
                       </td>
                     </tr>
@@ -492,12 +518,24 @@ export function TokensPanel({
 
               {mode === "transfer" && drainPreview && (
                 <div className="rounded border border-blue-200 bg-blue-50/60 p-3 text-[11px] font-mono text-blue-900 space-y-1">
-                  <div className="font-semibold">Transfer Drain Fee Breakdown:</div>
+                  <div className="font-semibold">
+                    Scope-Derived Drain Preview ({transferScope ?? "UNKNOWN"}):
+                  </div>
                   <div>Rate: {drainPreview.effectiveBps} bps ({drainPreview.discounted ? "50% discounted" : "base"})</div>
                   <div>Fee Collected: {drainPreview.totalFee.toString()} units</div>
                   <div>Net to Recipient: {drainPreview.netReceived.toString()} units</div>
                   <div className="text-[10px] text-blue-700 mt-1">
-                    Split equally 4 ways: Region, Wallet, Token creators & Network Pool.
+                    Enforced server-side by hierarchy scope &amp; DrainPolicy.
+                  </div>
+                </div>
+              )}
+              {mode === "transfer" && !drainPreview && (
+                <div className="rounded border border-amber-200 bg-amber-50/70 p-3 text-[11px] font-mono text-amber-900 space-y-1">
+                  <div className="font-semibold">
+                    Transfer Drain Policy: UNCONFIGURED ({transferScope ?? "SELECT_WALLETS"})
+                  </div>
+                  <div>
+                    Protocol fails closed for transfers whose scope drain rate is unconfigured.
                   </div>
                 </div>
               )}
@@ -569,13 +607,15 @@ export function TokensPanel({
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block font-medium text-slate-700">Drain Bps (e.g. 200)</label>
+                  <label className="mb-1 block font-medium text-slate-700">Token Policy Drain Bps</label>
                   <input
                     type="number"
+                    required
                     min={0}
                     max={10000}
                     value={newTokenDrainBps}
                     onChange={(e) => setNewTokenDrainBps(e.target.value)}
+                    placeholder="0..10000"
                     className="w-full border border-slate-300 px-2.5 py-2 font-mono text-xs focus:border-blue-600 focus:outline-none"
                   />
                 </div>

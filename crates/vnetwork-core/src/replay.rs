@@ -19,11 +19,12 @@ pub fn replay_from_events(
     events: &[LedgerEvent],
 ) -> VResult<NetworkLedgerState> {
     verify_event_chain(events)?;
-    let mut state = NetworkLedgerState::new(genesis);
+    let mut state = NetworkLedgerState::try_new(genesis)?;
 
     for ev in events {
         apply_event_to_state(&mut state, ev)?;
     }
+    state.event_history_root = state.compute_event_history_root();
 
     Ok(state)
 }
@@ -57,7 +58,7 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
             state.regions.insert(region.region_id.clone(), region);
         }
         "WALLET_CREATE" | "GHOST_WALLET_CREATE" | "WALLET_KEY_AUTHORIZE"
-        | "WALLET_KEY_REVOKE" | "WALLET_KEY_ROTATE" => {
+        | "WALLET_KEY_REVOKE" | "WALLET_KEY_ROTATE" | "WALLET_RECEIVE_POLICY_UPDATE" => {
             let wallet: WalletEntity = serde_json::from_value(ev.payload.clone())
                 .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
             if let Some(binding) = wallet
@@ -128,30 +129,44 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
                 .get(&from_key)
                 .cloned()
                 .ok_or_else(|| VNetworkError::InsufficientBalance("missing from balance".to_string()))?;
-            let mut to_bal = state.balances.get(&to_key).cloned().unwrap_or(TokenBalanceRecord {
-                token_id: token_id.to_string(),
-                wallet_id: to_wallet_id.to_string(),
-                vector: TokenVector::zero(),
-                updated_at_ms: ev.timestamp_ms,
-                version: 0,
-            });
 
-            from_bal.vector = from_bal.vector.checked_sub_token(amount)?;
-            from_bal.updated_at_ms = ev.timestamp_ms;
-            from_bal.version = from_bal
-                .version
-                .checked_add(1)
-                .ok_or_else(|| VNetworkError::Validation("balance version overflow".to_string()))?;
+            if from_wallet_id == to_wallet_id {
+                from_bal.vector = from_bal
+                    .vector
+                    .checked_sub_token(amount)?
+                    .checked_add_token(net_received)?;
+                from_bal.updated_at_ms = ev.timestamp_ms;
+                from_bal.version = from_bal
+                    .version
+                    .checked_add(1)
+                    .ok_or_else(|| VNetworkError::Validation("balance version overflow".to_string()))?;
+                state.balances.insert(from_key, from_bal);
+            } else {
+                let mut to_bal = state.balances.get(&to_key).cloned().unwrap_or(TokenBalanceRecord {
+                    token_id: token_id.to_string(),
+                    wallet_id: to_wallet_id.to_string(),
+                    vector: TokenVector::zero(),
+                    updated_at_ms: ev.timestamp_ms,
+                    version: 0,
+                });
 
-            to_bal.vector = to_bal.vector.checked_add_token(net_received)?;
-            to_bal.updated_at_ms = ev.timestamp_ms;
-            to_bal.version = to_bal
-                .version
-                .checked_add(1)
-                .ok_or_else(|| VNetworkError::Validation("balance version overflow".to_string()))?;
+                from_bal.vector = from_bal.vector.checked_sub_token(amount)?;
+                from_bal.updated_at_ms = ev.timestamp_ms;
+                from_bal.version = from_bal
+                    .version
+                    .checked_add(1)
+                    .ok_or_else(|| VNetworkError::Validation("balance version overflow".to_string()))?;
 
-            state.balances.insert(from_key, from_bal);
-            state.balances.insert(to_key, to_bal);
+                to_bal.vector = to_bal.vector.checked_add_token(net_received)?;
+                to_bal.updated_at_ms = ev.timestamp_ms;
+                to_bal.version = to_bal
+                    .version
+                    .checked_add(1)
+                    .ok_or_else(|| VNetworkError::Validation("balance version overflow".to_string()))?;
+
+                state.balances.insert(from_key, from_bal);
+                state.balances.insert(to_key, to_bal);
+            }
             if drain_fee > 0 {
                 if let Some(t) = state.tokens.get_mut(token_id) {
                     t.total_supply = t.total_supply.checked_sub(drain_fee).ok_or_else(|| {
@@ -304,6 +319,18 @@ pub fn verify_replay_equivalence(
     replayed.actor_nonces = live_state.actor_nonces.clone();
     replayed.seen_request_ids = live_state.seen_request_ids.clone();
     replayed.used_wallet_pop_nonces = live_state.used_wallet_pop_nonces.clone();
+    if !live_state.validator_membership_history.is_empty() {
+        let proven = crate::consensus_gate::verify_membership_chain_from_genesis(
+            &genesis.initial_validators,
+            &live_state.validator_membership_history,
+            live_state.validator_epoch,
+            &validate_validator_set(&live_state.validators)?,
+            &live_state.validators,
+        )?;
+        replayed.validator_epoch = live_state.validator_epoch;
+        replayed.validators = proven;
+        replayed.validator_membership_history = live_state.validator_membership_history.clone();
+    }
     let replayed_state_root = replayed.compute_state_root()?;
     let live_state_root = live_state.compute_state_root()?;
     let replayed_replay_hash = replayed.compute_replay_hash();

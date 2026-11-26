@@ -32,6 +32,15 @@ if [[ ! -f "$DEVNET_DIR/.vnetwork-devnet-marker" ]]; then
   echo "vnetwork-devnet" > "$DEVNET_DIR/.vnetwork-devnet-marker"
 fi
 
+PASSPHRASE_FILE="$DEVNET_DIR/.devnet_passphrase"
+if [[ -z "${NETWORK_KEY_PASSPHRASE:-}" ]]; then
+  if [[ ! -f "$PASSPHRASE_FILE" ]]; then
+    python3 -c 'import secrets, pathlib; p=pathlib.Path("'"$PASSPHRASE_FILE"'"); p.write_text(secrets.token_urlsafe(24)); p.chmod(0o600)'
+  fi
+  NETWORK_KEY_PASSPHRASE="$(cat "$PASSPHRASE_FILE")"
+fi
+export NETWORK_KEY_PASSPHRASE
+
 echo "Building vnetwork-node and vn binaries..."
 cargo build -q -p vnetwork-node -p vnetwork-cli --manifest-path "$ROOT/Cargo.toml"
 NODE_BIN="$ROOT/target/debug/vnetwork-node"
@@ -43,6 +52,7 @@ for i in 1 2 3 4; do
       --node-key "$DEVNET_DIR/node$i/node.key.json" \
       --validator-key "$DEVNET_DIR/node$i/validator.key.json" \
       --validator-id "val_$i" \
+      --profile development \
       --validator > "$DEVNET_DIR/node$i/init.json"
   fi
 done
@@ -56,10 +66,11 @@ validators = []
 peers = []
 for i in range(1, 5):
     init = json.loads((devnet_dir / f"node{i}" / "init.json").read_text())
+    val_pk = init["validator_metadata"]["public_key_hex"]
     validators.append({
         "validator_id": f"val_{i}",
         "node_id": init["node_id"],
-        "validator_pubkey_hex": init["validator_pubkey_hex"],
+        "validator_pubkey_hex": val_pk,
         "weight": 100,
         "active": True,
         "joined_epoch": 1,
@@ -75,6 +86,13 @@ genesis = {
     "genesis_timestamp_ms": 1764150000000,
     "initial_validators": validators,
     "allow_bootstrap_atlas": True,
+    "drain_policy": {
+        "policy_version": 1,
+        "same_wallet": {"status": "CONFIGURED_BPS", "bps": 0},
+        "different_wallets_same_region": {"status": "CONFIGURED_BPS", "bps": 0},
+        "different_regions_same_space": {"status": "CONFIGURED_BPS", "bps": 50},
+        "different_spaces": {"status": "CONFIGURED_BPS", "bps": 150},
+    },
 }
 (devnet_dir / "genesis.json").write_text(json.dumps(genesis, indent=2))
 
@@ -113,6 +131,7 @@ for i in 1 2 3 4; do
     echo "Node $i already running (pid $(cat "$DEVNET_DIR/node$i/node.pid"))"
   else
     NETWORK_CONSENSUS_TIMEOUT_MS="$CONSENSUS_TIMEOUT_MS" \
+    NETWORK_KEY_PASSPHRASE="$NETWORK_KEY_PASSPHRASE" \
       "$NODE_BIN" \
       --config "$DEVNET_DIR/node$i/node.toml" \
       --genesis-file "$DEVNET_DIR/genesis.json" \

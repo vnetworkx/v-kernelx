@@ -14,3 +14,11 @@ pub async fn list_certificates(State(app): State<ApiAppState>) -> Json<serde_jso
         "certificates": certs,
     }))
 }
+
+pub async fn list_equivocations(State(app): State<ApiAppState>) -> Json<serde_json::Value> {
+    let evidence = app.backend.list_equivocations().await;
+    Json(serde_json::json!({
+        "count": evidence.len(),
+        "equivocations": evidence,
+    }))
+}

@@ -22,14 +22,16 @@ use vnetwork_api::{
     ApiError, NetworkNodeBackend, NetworkWsEvent, SignedOperationHttpRequest, StatusCode,
 };
 use vnetwork_consensus::{
-    finalize_and_commit, sign_consensus_vote, QuorumTracker, ValidatorMembership,
+    finalize_and_commit, EquivocationStore, QuorumTracker, ValidatorMembership,
 };
 use vnetwork_core::engine::ProtocolEngine;
 use vnetwork_core::identity::JoinNetworkRequest;
 use vnetwork_core::language::SubmitProgramRequest;
 use vnetwork_core::ledger::LedgerProofReport;
 use vnetwork_core::reconstruction::ReconstructionReport;
+use vnetwork_core::replay::ReplayVerificationReport;
 use vnetwork_core::state::{GenesisConfig, NetworkLedgerState, TransactionReceipt};
+use vnetwork_core::supply::SupplyConservationBreakdown;
 use vnetwork_storage::{CommittedProposalRecord, StorageDatabase};
 use vnetwork_types::*;
 
@@ -94,8 +96,10 @@ pub struct NodeHandle {
     pub shared_state: Arc<RwLock<NetworkLedgerState>>,
     pub shared_peers: Arc<RwLock<PeerRegistry>>,
     pub shared_membership: Arc<RwLock<ValidatorMembership>>,
+    pub shared_equivocations: Arc<RwLock<Vec<EquivocationEvidence>>>,
     pub storage: StorageDatabase,
     pub storage_healthy: Arc<AtomicBool>,
+    pub equivocation_store_healthy: Arc<AtomicBool>,
     pub metrics: Arc<NodeMetrics>,
     pub ws_tx: broadcast::Sender<NetworkWsEvent>,
     pub genesis: GenesisConfig,
@@ -107,15 +111,18 @@ impl NetworkNodeBackend for NodeHandle {
     async fn health_report(&self) -> serde_json::Value {
         let state = self.shared_state.read().await;
         let peers = self.shared_peers.read().await;
-        let storage_ok =
-            self.storage_healthy.load(Ordering::Relaxed) && self.storage.check_health().is_ok();
-        let ready = storage_ok
+        let equivocations = self.shared_equivocations.read().await;
+        let wal_ok = self.storage.check_health().is_ok();
+        let storage_ok = self.storage_healthy.load(Ordering::Relaxed) && wal_ok;
+        let eq_ok = self.equivocation_store_healthy.load(Ordering::Relaxed);
+        let healthy = storage_ok && eq_ok;
+        let ready = healthy
             && (state.height > 0
                 || peers.connected_count() > 0
                 || !self.config.enable_p2p
                 || self.config.bootstrap_peers.is_empty());
         let report = NodeHealthReport {
-            healthy: storage_ok,
+            healthy,
             ready,
             node_id: self.identity.node_id.clone(),
             peer_id: self.identity.libp2p_peer_id.to_string(),
@@ -127,6 +134,15 @@ impl NetworkNodeBackend for NodeHandle {
             connected_peers: peers.connected_count(),
             validator_active: self.config.enable_validator,
             storage_ok,
+            wal_consistency_ok: wal_ok,
+            equivocation_store_ok: eq_ok,
+            equivocation_count: equivocations.len(),
+            key_storage_mode: self.identity.storage_security_mode.clone(),
+            verification_status: if healthy {
+                VerificationStatus::Verified
+            } else {
+                VerificationStatus::Invalid
+            },
             api_enabled: self.config.enable_public_api,
             p2p_enabled: self.config.enable_p2p,
             protocol_version: self.config.protocol_version.clone(),
@@ -137,9 +153,11 @@ impl NetworkNodeBackend for NodeHandle {
     async fn ready_report(&self) -> (bool, serde_json::Value) {
         let state = self.shared_state.read().await;
         let peers = self.shared_peers.read().await;
-        let storage_ok =
-            self.storage_healthy.load(Ordering::Relaxed) && self.storage.check_health().is_ok();
+        let wal_ok = self.storage.check_health().is_ok();
+        let storage_ok = self.storage_healthy.load(Ordering::Relaxed) && wal_ok;
+        let eq_ok = self.equivocation_store_healthy.load(Ordering::Relaxed);
         let ready = storage_ok
+            && eq_ok
             && (!self.config.enable_p2p
                 || self.config.bootstrap_peers.is_empty()
                 || peers.connected_count() > 0
@@ -149,6 +167,8 @@ impl NetworkNodeBackend for NodeHandle {
             serde_json::json!({
                 "ready": ready,
                 "storage_ok": storage_ok,
+                "wal_consistency_ok": wal_ok,
+                "equivocation_store_ok": eq_ok,
                 "node_id": self.identity.node_id,
                 "network_id": self.config.network_id,
                 "height": state.height,
@@ -180,13 +200,20 @@ impl NetworkNodeBackend for NodeHandle {
             "network_name": self.config.network_name,
             "profile": self.config.profile,
             "protocol_version": self.config.protocol_version,
+            "genesis_commitment": state.genesis_commitment,
             "node_id": self.identity.node_id,
             "peer_id": self.identity.libp2p_peer_id.to_string(),
+            "node_metadata": self.identity.node_metadata,
+            "validator_metadata": self.identity.validator_metadata,
+            "key_storage_mode": self.identity.storage_security_mode,
             "listen_addresses": *addrs,
             "advertised_addresses": self.config.advertised_addresses,
             "bootstrap_peers": self.config.bootstrap_peers,
             "height": state.height,
+            "epoch": state.validator_epoch,
             "state_root": state.compute_state_root().unwrap_or_default(),
+            "event_history_root": state.event_history_root,
+            "drain_policy": state.drain_policy,
             "quorum_threshold_bps": membership.quorum_threshold_bps(),
             "validator_count": membership.active_validators().len(),
             "allow_bootstrap_atlas": self.genesis.allow_bootstrap_atlas,
@@ -197,12 +224,17 @@ impl NetworkNodeBackend for NodeHandle {
         let state = self.shared_state.read().await;
         let peers = self.shared_peers.read().await;
         let membership = self.shared_membership.read().await;
+        let wal_ok = self.storage.check_health().is_ok();
+        let storage_ok = self.storage_healthy.load(Ordering::Relaxed) && wal_ok;
+        let eq_ok = self.equivocation_store_healthy.load(Ordering::Relaxed);
         serde_json::json!({
             "network_id": self.config.network_id,
             "profile": self.config.profile,
             "node_id": self.identity.node_id,
             "peer_id": self.identity.libp2p_peer_id.to_string(),
+            "genesis_commitment": state.genesis_commitment,
             "height": state.height,
+            "epoch": state.validator_epoch,
             "logical_clock": state.logical_clock,
             "committed_events": state.events.len(),
             "certificates": state.certificates.len(),
@@ -219,7 +251,12 @@ impl NetworkNodeBackend for NodeHandle {
             "required_quorum_weight": membership.required_weight(),
             "total_validator_weight": membership.total_active_weight(),
             "state_root": state.compute_state_root().unwrap_or_default(),
+            "event_history_root": state.event_history_root,
             "replay_hash": state.compute_replay_hash(),
+            "storage_engine": "vnetwork-wal-json",
+            "storage_ok": storage_ok,
+            "wal_consistency_ok": wal_ok,
+            "equivocation_store_ok": eq_ok,
         })
     }
 
@@ -334,8 +371,10 @@ impl NetworkNodeBackend for NodeHandle {
     async fn consensus_status(&self) -> serde_json::Value {
         let state = self.shared_state.read().await;
         let membership = self.shared_membership.read().await;
+        let equivocations = self.shared_equivocations.read().await;
         serde_json::json!({
             "network_id": self.config.network_id,
+            "genesis_commitment": state.genesis_commitment,
             "height": state.height,
             "epoch": state.validator_epoch,
             "validator_set_hash": compute_validator_set_hash(&state.validators).unwrap_or_default(),
@@ -344,6 +383,9 @@ impl NetworkNodeBackend for NodeHandle {
             "total_active_weight": membership.total_active_weight(),
             "validators": membership.all_validators(),
             "certificate_count": state.certificates.len(),
+            "equivocation_count": equivocations.len(),
+            "equivocations": *equivocations,
+            "equivocation_store_ok": self.equivocation_store_healthy.load(Ordering::Relaxed),
             "proposals_committed": self.metrics.proposals_committed.load(Ordering::Relaxed),
             "proposals_rejected": self.metrics.proposals_rejected.load(Ordering::Relaxed),
             "votes_cast": self.metrics.votes_cast.load(Ordering::Relaxed),
@@ -353,6 +395,23 @@ impl NetworkNodeBackend for NodeHandle {
     async fn verify_ledger_proofs(&self) -> Result<LedgerProofReport, ApiError> {
         let state = self.shared_state.read().await;
         vnetwork_core::ledger::build_ledger_proof_report(&state).map_err(ApiError::from)
+    }
+
+    async fn verify_replay(&self) -> Result<ReplayVerificationReport, ApiError> {
+        let state = self.shared_state.read().await;
+        vnetwork_core::replay::verify_replay_equivalence(&state, &self.genesis).map_err(ApiError::from)
+    }
+
+    async fn verify_token_supply(
+        &self,
+        token_id: &str,
+    ) -> Result<SupplyConservationBreakdown, ApiError> {
+        let state = self.shared_state.read().await;
+        vnetwork_core::supply::compute_token_supply_breakdown(&state, token_id).map_err(ApiError::from)
+    }
+
+    async fn list_equivocations(&self) -> Vec<EquivocationEvidence> {
+        self.shared_equivocations.read().await.clone()
     }
 
     async fn verify_reconstruction(
@@ -378,11 +437,11 @@ impl NetworkNodeBackend for NodeHandle {
 pub fn build_genesis_from_config(cfg: &NodeConfig, identity: &NodeIdentity) -> GenesisConfig {
     let mut validators = cfg.genesis_validators.clone();
     if validators.is_empty() && cfg.enable_validator {
-        if let (Some(vid), Some(vkp)) = (&identity.validator_id, &identity.validator_keypair) {
+        if let (Some(vid), Some(vmeta)) = (&identity.validator_id, &identity.validator_metadata) {
             validators.push(ConsensusValidator {
                 validator_id: vid.clone(),
                 node_id: identity.node_id.clone(),
-                validator_pubkey_hex: vkp.public_key_hex.clone(),
+                validator_pubkey_hex: vmeta.public_key_hex.clone(),
                 weight: 100,
                 active: true,
                 joined_epoch: 1,
@@ -394,7 +453,8 @@ pub fn build_genesis_from_config(cfg: &NodeConfig, identity: &NodeIdentity) -> G
         &cfg.network_id,
         &cfg.network_name,
         validators,
-    );
+    )
+    .with_drain_policy(cfg.drain_policy.clone());
     if let Some(allow) = cfg.allow_bootstrap_atlas {
         if cfg.profile != NetworkProfile::Production || allow {
             g.allow_bootstrap_atlas = allow;
@@ -409,16 +469,28 @@ pub async fn start_node_runtime(
     shutdown: ShutdownSignal,
 ) -> Result<(NodeHandle, tokio::task::JoinHandle<()>), Box<dyn std::error::Error + Send + Sync>> {
     cfg.validate()?;
-    let identity = NodeIdentity::load_or_create(
+    let passphrase = cfg.resolve_key_passphrase()?;
+    let id_opts = crate::identity::NodeIdentityLoadOptions {
+        profile: cfg.profile,
+        passphrase,
+        kdf_params: None,
+        allow_plaintext_key_fallback: cfg.allow_plaintext_key_fallback,
+        external_node_signer: None,
+        external_validator_signer: None,
+    };
+    let identity = NodeIdentity::load_or_create_secure(
         &cfg.node_identity_path,
         cfg.validator_key_path.as_deref(),
         cfg.validator_id.as_deref(),
         cfg.enable_validator,
+        &id_opts,
     )?;
 
     let genesis = explicit_genesis.unwrap_or_else(|| build_genesis_from_config(&cfg, &identity));
+    genesis.validate()?;
     let (storage, recovered_state, recovery_report) =
         StorageDatabase::open_and_recover(&cfg.storage_path, &genesis)?;
+    let equivocation_store = EquivocationStore::open(&cfg.storage_path)?;
 
     tracing::info!(
         node_id = %identity.node_id,
@@ -426,19 +498,24 @@ pub async fn start_node_runtime(
         network_id = %cfg.network_id,
         height = recovery_report.final_height,
         events = recovery_report.wal_events_verified,
+        key_mode = %identity.storage_security_mode,
         "recovered durable node state"
     );
 
-    let membership = ValidatorMembership::new(
-        genesis.initial_validators.clone(),
-        cfg.quorum_threshold_bps,
-    );
+    let active_validators = if recovered_state.validators.is_empty() {
+        genesis.initial_validators.clone()
+    } else {
+        recovered_state.validators.clone()
+    };
+    let membership = ValidatorMembership::try_new(active_validators, cfg.quorum_threshold_bps)?;
     let engine = ProtocolEngine::from_restored(genesis.clone(), recovered_state.clone());
 
     let shared_state = Arc::new(RwLock::new(recovered_state));
     let shared_peers = Arc::new(RwLock::new(PeerRegistry::default()));
     let shared_membership = Arc::new(RwLock::new(membership));
+    let shared_equivocations = Arc::new(RwLock::new(equivocation_store.evidence().to_vec()));
     let storage_healthy = Arc::new(AtomicBool::new(storage.check_health().is_ok()));
+    let equivocation_store_healthy = Arc::new(AtomicBool::new(equivocation_store.check_health().is_ok()));
     let metrics = Arc::new(NodeMetrics::default());
     let (ws_tx, _) = broadcast::channel(512);
     let (cmd_tx, cmd_rx) = mpsc::channel(256);
@@ -451,8 +528,10 @@ pub async fn start_node_runtime(
         shared_state: shared_state.clone(),
         shared_peers: shared_peers.clone(),
         shared_membership: shared_membership.clone(),
+        shared_equivocations: shared_equivocations.clone(),
         storage: storage.clone(),
         storage_healthy: storage_healthy.clone(),
+        equivocation_store_healthy: equivocation_store_healthy.clone(),
         metrics: metrics.clone(),
         ws_tx: ws_tx.clone(),
         genesis: genesis.clone(),
@@ -465,10 +544,13 @@ pub async fn start_node_runtime(
         genesis,
         engine,
         storage,
+        equivocation_store,
         storage_healthy,
+        equivocation_store_healthy,
         shared_state,
         shared_peers,
         shared_membership,
+        shared_equivocations,
         metrics,
         ws_tx,
         listen_addrs,
@@ -486,10 +568,13 @@ async fn run_node_loop(
     genesis: GenesisConfig,
     mut engine: ProtocolEngine,
     storage: StorageDatabase,
+    mut equivocation_store: EquivocationStore,
     storage_healthy: Arc<AtomicBool>,
+    equivocation_store_healthy: Arc<AtomicBool>,
     shared_state: Arc<RwLock<NetworkLedgerState>>,
     shared_peers: Arc<RwLock<PeerRegistry>>,
     shared_membership: Arc<RwLock<ValidatorMembership>>,
+    shared_equivocations: Arc<RwLock<Vec<EquivocationEvidence>>>,
     metrics: Arc<NodeMetrics>,
     ws_tx: broadcast::Sender<NetworkWsEvent>,
     listen_addrs: Arc<RwLock<Vec<String>>>,
@@ -688,7 +773,7 @@ async fn run_node_loop(
                         let _ = reply.send(Ok(ch));
                     }
                     NodeCommand::JoinParticipant { req, reply } => {
-                        let Some((val_id, val_key)) = (&identity.validator_id, &identity.validator_keypair)
+                        let Some((val_id, val_signer)) = (&identity.validator_id, &identity.validator_signer)
                             .into_opt_pair()
                         else {
                             let _ = reply.send(Err(ApiError::new(
@@ -698,11 +783,14 @@ async fn run_node_loop(
                             )));
                             continue;
                         };
-                        match engine.stage_participant_join(&req, val_id, |b| val_key.sign(b), now) {
+                        match engine.stage_participant_join(&req, val_id, |b| val_signer.sign(b), now) {
                             Ok((participant, node, proposal, receipt)) => {
+                                if let Err(e) = quorum_tracker.register_proposal(proposal.clone()) {
+                                    let _ = reply.send(Err(ApiError::from(e)));
+                                    continue;
+                                }
                                 let pid = proposal.proposal_id.clone();
                                 pending_proposals.insert(pid.clone(), proposal.clone());
-                                quorum_tracker.register_proposal(proposal.clone());
                                 pending_waiters.insert(
                                     pid.clone(),
                                     PendingWaiter {
@@ -722,9 +810,12 @@ async fn run_node_loop(
                                     &genesis,
                                     &mut engine,
                                     &storage,
+                                    &mut equivocation_store,
                                     &storage_healthy,
+                                    &equivocation_store_healthy,
                                     &shared_state,
                                     &shared_membership,
+                                    &shared_equivocations,
                                     &metrics,
                                     &ws_tx,
                                     &mut swarm,
@@ -744,7 +835,7 @@ async fn run_node_loop(
                         }
                     }
                     NodeCommand::SubmitProgram { req, reply } => {
-                        let Some((val_id, val_key)) = (&identity.validator_id, &identity.validator_keypair)
+                        let Some((val_id, val_signer)) = (&identity.validator_id, &identity.validator_signer)
                             .into_opt_pair()
                         else {
                             let _ = reply.send(Err(ApiError::new(
@@ -754,8 +845,12 @@ async fn run_node_loop(
                             )));
                             continue;
                         };
-                        match engine.stage_program_submission(&req, None, val_id, |b| val_key.sign(b), now) {
+                        match engine.stage_program_submission(&req, None, val_id, |b| val_signer.sign(b), now) {
                             Ok(Ok(staged)) => {
+                                if let Err(e) = quorum_tracker.register_proposal(staged.proposal.clone()) {
+                                    let _ = reply.send(Err(ApiError::from(e)));
+                                    continue;
+                                }
                                 let pid = staged.proposal.proposal_id.clone();
                                 let prog_id = staged
                                     .program_submission
@@ -764,7 +859,6 @@ async fn run_node_loop(
                                     .unwrap_or_default();
                                 *shared_state.write().await = engine.state.clone();
                                 pending_proposals.insert(pid.clone(), staged.proposal.clone());
-                                quorum_tracker.register_proposal(staged.proposal.clone());
                                 pending_waiters.insert(
                                     pid.clone(),
                                     PendingWaiter {
@@ -782,9 +876,12 @@ async fn run_node_loop(
                                     &genesis,
                                     &mut engine,
                                     &storage,
+                                    &mut equivocation_store,
                                     &storage_healthy,
+                                    &equivocation_store_healthy,
                                     &shared_state,
                                     &shared_membership,
+                                    &shared_equivocations,
                                     &metrics,
                                     &ws_tx,
                                     &mut swarm,
@@ -822,7 +919,7 @@ async fn run_node_loop(
                                 continue;
                             }
                         };
-                        let Some((val_id, val_key)) = (&identity.validator_id, &identity.validator_keypair)
+                        let Some((val_id, val_signer)) = (&identity.validator_id, &identity.validator_signer)
                             .into_opt_pair()
                         else {
                             let _ = reply.send(Err(ApiError::new(
@@ -832,13 +929,16 @@ async fn run_node_loop(
                             )));
                             continue;
                         };
-                        match engine.stage_signed_operation(&env, &req.operation, val_id, |b| val_key.sign(b), now) {
+                        match engine.stage_signed_operation(&env, &req.operation, val_id, |b| val_signer.sign(b), now) {
                             Ok(staged) => {
+                                if let Err(e) = quorum_tracker.register_proposal(staged.proposal.clone()) {
+                                    let _ = reply.send(Err(ApiError::from(e)));
+                                    continue;
+                                }
                                 let pid = staged.proposal.proposal_id.clone();
                                 let tx_id = staged.tx_receipt.tx_id.clone();
                                 *shared_state.write().await = engine.state.clone();
                                 pending_proposals.insert(pid.clone(), staged.proposal.clone());
-                                quorum_tracker.register_proposal(staged.proposal.clone());
                                 pending_waiters.insert(
                                     pid.clone(),
                                     PendingWaiter {
@@ -853,9 +953,12 @@ async fn run_node_loop(
                                     &genesis,
                                     &mut engine,
                                     &storage,
+                                    &mut equivocation_store,
                                     &storage_healthy,
+                                    &equivocation_store_healthy,
                                     &shared_state,
                                     &shared_membership,
+                                    &shared_equivocations,
                                     &metrics,
                                     &ws_tx,
                                     &mut swarm,
@@ -946,9 +1049,12 @@ async fn run_node_loop(
                                 &genesis,
                                 &mut engine,
                                 &storage,
+                                &mut equivocation_store,
                                 &storage_healthy,
+                                &equivocation_store_healthy,
                                 &shared_state,
                                 &shared_membership,
+                                &shared_equivocations,
                                 &metrics,
                                 &ws_tx,
                                 &mut swarm,
@@ -998,9 +1104,12 @@ async fn run_node_loop(
                                             &genesis,
                                             &mut engine,
                                             &storage,
+                                            &mut equivocation_store,
                                             &storage_healthy,
+                                            &equivocation_store_healthy,
                                             &shared_state,
                                             &shared_membership,
+                                            &shared_equivocations,
                                             &metrics,
                                             &ws_tx,
                                             &mut swarm,
@@ -1025,9 +1134,12 @@ async fn run_node_loop(
                                             &genesis,
                                             &mut engine,
                                             &storage,
+                                            &mut equivocation_store,
                                             &storage_healthy,
+                                            &equivocation_store_healthy,
                                             &shared_state,
                                             &shared_membership,
+                                            &shared_equivocations,
                                             &metrics,
                                             &ws_tx,
                                             &mut swarm,
@@ -1052,9 +1164,12 @@ async fn run_node_loop(
                                             &genesis,
                                             &mut engine,
                                             &storage,
+                                            &mut equivocation_store,
                                             &storage_healthy,
+                                            &equivocation_store_healthy,
                                             &shared_state,
                                             &shared_membership,
+                                            &shared_equivocations,
                                             &metrics,
                                             &ws_tx,
                                             &mut swarm,
@@ -1116,9 +1231,12 @@ async fn process_new_proposal(
     genesis: &GenesisConfig,
     engine: &mut ProtocolEngine,
     storage: &StorageDatabase,
+    equivocation_store: &mut EquivocationStore,
     storage_healthy: &Arc<AtomicBool>,
+    equivocation_store_healthy: &Arc<AtomicBool>,
     shared_state: &Arc<RwLock<NetworkLedgerState>>,
     shared_membership: &Arc<RwLock<ValidatorMembership>>,
+    shared_equivocations: &Arc<RwLock<Vec<EquivocationEvidence>>>,
     metrics: &Arc<NodeMetrics>,
     ws_tx: &broadcast::Sender<NetworkWsEvent>,
     swarm: &mut libp2p::Swarm<VNetworkBehaviour>,
@@ -1140,47 +1258,69 @@ async fn process_new_proposal(
         P2pSyncRequest::RelayProposal(proposal.clone()),
     );
 
-    // Self-vote if local node is an active validator
-    if let (Some(val_id), Some(val_key)) = (&identity.validator_id, &identity.validator_keypair) {
+    // Self-vote if local node is an active validator, ALWAYS through durable EquivocationStore
+    if let (Some(val_id), Some(val_signer)) = (&identity.validator_id, &identity.validator_signer) {
         let membership = shared_membership.read().await.clone();
-        if let Ok(vote) = evaluate_and_sign_proposal(
+        match evaluate_and_sign_proposal(
             &engine.state,
             genesis,
             &membership,
             &proposal,
             val_id,
-            val_key,
+            val_signer.as_ref(),
+            equivocation_store,
             now,
         ) {
-            metrics.votes_cast.fetch_add(1, Ordering::Relaxed);
-            broadcast_gossip_and_direct(
-                cfg,
-                swarm,
-                topic,
-                connected_peers,
-                P2pGossipMessage::Vote(vote.clone()),
-                P2pSyncRequest::RelayVote(vote.clone()),
-            );
-            if let Ok(Some(qc)) = quorum_tracker.record_vote(&membership, vote, now) {
-                finalize_proposal_everywhere(
+            Ok(vote) => {
+                equivocation_store_healthy.store(true, Ordering::Relaxed);
+                metrics.votes_cast.fetch_add(1, Ordering::Relaxed);
+                broadcast_gossip_and_direct(
                     cfg,
-                    engine,
-                    storage,
-                    storage_healthy,
-                    shared_state,
-                    &membership,
-                    metrics,
-                    ws_tx,
                     swarm,
                     topic,
                     connected_peers,
-                    pending_proposals,
-                    pending_waiters,
-                    &proposal.proposal_id,
-                    qc,
+                    P2pGossipMessage::Vote(vote.clone()),
+                    P2pSyncRequest::RelayVote(vote.clone()),
+                );
+                match quorum_tracker.record_vote_with_store(
+                    &membership,
+                    vote,
+                    Some(equivocation_store),
                     now,
-                )
-                .await;
+                ) {
+                    Ok(Some(qc)) => {
+                        finalize_proposal_everywhere(
+                            cfg,
+                            engine,
+                            storage,
+                            storage_healthy,
+                            shared_state,
+                            &membership,
+                            metrics,
+                            ws_tx,
+                            swarm,
+                            topic,
+                            connected_peers,
+                            pending_proposals,
+                            pending_waiters,
+                            &proposal.proposal_id,
+                            qc,
+                            now,
+                        )
+                        .await;
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        *shared_equivocations.write().await = equivocation_store.evidence().to_vec();
+                        tracing::warn!(proposal_id = %proposal.proposal_id, error = %e, "rejected self-vote in quorum tracker");
+                    }
+                }
+            }
+            Err(e) => {
+                if matches!(e, VNetworkError::Storage(_)) {
+                    equivocation_store_healthy.store(false, Ordering::Relaxed);
+                }
+                tracing::warn!(proposal_id = %proposal.proposal_id, error = %e, "failed or refused self-vote in equivocation store");
             }
         }
     }
@@ -1194,9 +1334,12 @@ async fn handle_gossip_or_relay_message(
     genesis: &GenesisConfig,
     engine: &mut ProtocolEngine,
     storage: &StorageDatabase,
+    equivocation_store: &mut EquivocationStore,
     storage_healthy: &Arc<AtomicBool>,
+    equivocation_store_healthy: &Arc<AtomicBool>,
     shared_state: &Arc<RwLock<NetworkLedgerState>>,
     shared_membership: &Arc<RwLock<ValidatorMembership>>,
+    shared_equivocations: &Arc<RwLock<Vec<EquivocationEvidence>>>,
     metrics: &Arc<NodeMetrics>,
     ws_tx: &broadcast::Sender<NetworkWsEvent>,
     swarm: &mut libp2p::Swarm<VNetworkBehaviour>,
@@ -1223,12 +1366,25 @@ async fn handle_gossip_or_relay_message(
                 tracing::warn!(proposal_id = %proposal.proposal_id, error = %e, "rejected invalid proposal");
                 return;
             }
+            if let Err(e) = quorum_tracker.register_proposal(proposal.clone()) {
+                tracing::warn!(proposal_id = %proposal.proposal_id, error = %e, "rejected proposal registration");
+                return;
+            }
             pending_proposals.insert(proposal.proposal_id.clone(), proposal.clone());
-            quorum_tracker.register_proposal(proposal.clone());
 
-            if let (Some(val_id), Some(val_key)) = (&identity.validator_id, &identity.validator_keypair) {
-                if let Some(val) = membership.get(val_id) {
-                    if let Ok(vote) = sign_consensus_vote(&proposal, val, val_key, true, now) {
+            if let (Some(val_id), Some(val_signer)) = (&identity.validator_id, &identity.validator_signer) {
+                match evaluate_and_sign_proposal(
+                    &engine.state,
+                    genesis,
+                    &membership,
+                    &proposal,
+                    val_id,
+                    val_signer.as_ref(),
+                    equivocation_store,
+                    now,
+                ) {
+                    Ok(vote) => {
+                        equivocation_store_healthy.store(true, Ordering::Relaxed);
                         metrics.votes_cast.fetch_add(1, Ordering::Relaxed);
                         broadcast_gossip_and_direct(
                             cfg,
@@ -1238,27 +1394,45 @@ async fn handle_gossip_or_relay_message(
                             P2pGossipMessage::Vote(vote.clone()),
                             P2pSyncRequest::RelayVote(vote.clone()),
                         );
-                        if let Ok(Some(qc)) = quorum_tracker.record_vote(&membership, vote, now) {
-                            finalize_proposal_everywhere(
-                                cfg,
-                                engine,
-                                storage,
-                                storage_healthy,
-                                shared_state,
-                                &membership,
-                                metrics,
-                                ws_tx,
-                                swarm,
-                                topic,
-                                connected_peers,
-                                pending_proposals,
-                                pending_waiters,
-                                &proposal.proposal_id,
-                                qc,
-                                now,
-                            )
-                            .await;
+                        match quorum_tracker.record_vote_with_store(
+                            &membership,
+                            vote,
+                            Some(equivocation_store),
+                            now,
+                        ) {
+                            Ok(Some(qc)) => {
+                                finalize_proposal_everywhere(
+                                    cfg,
+                                    engine,
+                                    storage,
+                                    storage_healthy,
+                                    shared_state,
+                                    &membership,
+                                    metrics,
+                                    ws_tx,
+                                    swarm,
+                                    topic,
+                                    connected_peers,
+                                    pending_proposals,
+                                    pending_waiters,
+                                    &proposal.proposal_id,
+                                    qc,
+                                    now,
+                                )
+                                .await;
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                *shared_equivocations.write().await = equivocation_store.evidence().to_vec();
+                                tracing::warn!(proposal_id = %proposal.proposal_id, error = %e, "rejected peer proposal vote");
+                            }
                         }
+                    }
+                    Err(e) => {
+                        if matches!(e, VNetworkError::Storage(_)) {
+                            equivocation_store_healthy.store(false, Ordering::Relaxed);
+                        }
+                        tracing::warn!(proposal_id = %proposal.proposal_id, error = %e, "refused vote signing via durable equivocation store");
                     }
                 }
             }
@@ -1268,26 +1442,41 @@ async fn handle_gossip_or_relay_message(
                 return;
             }
             let membership = shared_membership.read().await.clone();
-            if let Ok(Some(qc)) = quorum_tracker.record_vote(&membership, vote.clone(), now) {
-                finalize_proposal_everywhere(
-                    cfg,
-                    engine,
-                    storage,
-                    storage_healthy,
-                    shared_state,
-                    &membership,
-                    metrics,
-                    ws_tx,
-                    swarm,
-                    topic,
-                    connected_peers,
-                    pending_proposals,
-                    pending_waiters,
-                    &vote.proposal_id,
-                    qc,
-                    now,
-                )
-                .await;
+            match quorum_tracker.record_vote_with_store(
+                &membership,
+                vote.clone(),
+                Some(equivocation_store),
+                now,
+            ) {
+                Ok(Some(qc)) => {
+                    finalize_proposal_everywhere(
+                        cfg,
+                        engine,
+                        storage,
+                        storage_healthy,
+                        shared_state,
+                        &membership,
+                        metrics,
+                        ws_tx,
+                        swarm,
+                        topic,
+                        connected_peers,
+                        pending_proposals,
+                        pending_waiters,
+                        &vote.proposal_id,
+                        qc,
+                        now,
+                    )
+                    .await;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    if matches!(e, VNetworkError::Storage(_)) {
+                        equivocation_store_healthy.store(false, Ordering::Relaxed);
+                    }
+                    *shared_equivocations.write().await = equivocation_store.evidence().to_vec();
+                    tracing::warn!(proposal_id = %vote.proposal_id, validator_id = %vote.validator_id, error = %e, "rejected incoming vote");
+                }
             }
         }
         P2pGossipMessage::Certificate { proposal_id, certificate } => {

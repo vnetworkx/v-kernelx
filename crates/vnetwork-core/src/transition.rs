@@ -11,7 +11,7 @@ use crate::token::{
 use crate::validation::validate_operation_preconditions_with_policy;
 use crate::wallet::{
     apply_authorize_wallet_key, apply_create_wallet, apply_revoke_wallet_key,
-    apply_rotate_wallet_key,
+    apply_rotate_wallet_key, apply_update_wallet_receive_policy,
 };
 use std::collections::BTreeMap;
 use vnetwork_types::*;
@@ -317,7 +317,6 @@ pub fn apply_network_operation_with_policy(
             from_wallet_id,
             to_wallet_id,
             amount,
-            drain_bps,
             cosignatures,
         } => {
             let (from_bal, to_bal, fee, ev) = apply_transfer_token(
@@ -326,7 +325,6 @@ pub fn apply_network_operation_with_policy(
                 from_wallet_id,
                 to_wallet_id,
                 *amount,
-                *drain_bps,
                 cosignatures,
                 actor_pubkey,
                 timestamp_ms,
@@ -339,6 +337,25 @@ pub fn apply_network_operation_with_policy(
                 fee,
                 from_bal.vector.token,
                 to_bal.vector.token
+            ));
+            events.push(ev);
+        }
+        NetworkOperation::UpdateWalletReceivePolicy {
+            wallet_id,
+            mode,
+            allowed_senders,
+        } => {
+            let (wallet, ev) = apply_update_wallet_receive_policy(
+                state,
+                wallet_id,
+                mode,
+                allowed_senders,
+                actor_pubkey,
+                timestamp_ms,
+            )?;
+            outputs.push(format!(
+                "wallet receive policy updated: {} ({:?})",
+                wallet.name, wallet.receive_policy
             ));
             events.push(ev);
         }

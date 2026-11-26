@@ -73,7 +73,7 @@ export function SandboxPanel() {
               VectorKernelX Opcode Sandbox
             </h2>
             <p className="text-xs text-slate-500">
-              Isolated in-memory protocol state machine (does not mutate persistent SQLite ledger)
+              Isolated compiler &amp; verifier preview (does not mutate persistent WAL ledger)
             </p>
           </div>
           <div className="flex items-center gap-2">

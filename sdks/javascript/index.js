@@ -161,7 +161,7 @@ export class VectorNetworkClient {
     return signEd25519(authorizedKey.private_key_hex, msg);
   }
 
-  signTransferApproval(tokenId, fromWalletId, toWalletId, amount, cosignerKey, drainBps = null) {
+  signTransferApproval(tokenId, fromWalletId, toWalletId, amount, cosignerKey) {
     const networkId = this.resolvedNetworkId();
     const msg = canonicalJsonBytes(
       canonicalTransferApprovalObject({
@@ -170,10 +170,20 @@ export class VectorNetworkClient {
         fromWalletId,
         toWalletId,
         amount,
-        drainBps,
       }),
     );
     return signEd25519(cosignerKey.private_key_hex, msg);
+  }
+
+  updateWalletReceivePolicy(walletId, mode, allowedSenders = []) {
+    return this.submitOperation({
+      op: "UpdateWalletReceivePolicy",
+      payload: {
+        wallet_id: walletId,
+        mode,
+        allowed_senders: allowedSenders,
+      },
+    });
   }
 
   async submitOperation(operation) {
@@ -216,7 +226,10 @@ export class VectorNetworkClient {
   listLoans() { return this.getJson("/v1/loans"); }
   getLedgerEvents() { return this.getJson("/v1/ledger/events"); }
   getLedgerProofs() { return this.getJson("/v1/ledger/proofs"); }
+  verifyLedgerReplay() { return this.getJson("/v1/ledger/replay"); }
+  verifyTokenSupply(tokenId) { return this.getJson(`/v1/tokens/${tokenId}/supply`); }
   getConsensusStatus() { return this.getJson("/v1/consensus/status"); }
+  getEquivocations() { return this.getJson("/v1/consensus/equivocations"); }
 
   verifyReconstruction(entityKind, entityId) {
     return this.postJson("/v1/reconstruction/verify", {

@@ -7,7 +7,7 @@ import {
   ClientIdentity,
   signEd25519,
   verifyEd25519,
-} from "../../sdks/typescript/src/index.ts";
+} from "../../sdks/typescript/src/index.js";
 
 const SEED_HEX = "1111111111111111111111111111111111111111111111111111111111111111";
 const NODE_SEED_HEX = "2222222222222222222222222222222222222222222222222222222222222222";
@@ -48,7 +48,6 @@ const xferCanon = canonicalJsonBytes(canonicalTransferApprovalObject({
   fromWalletId: "wal_a",
   toWalletId: "wal_b",
   amount: 250,
-  drainBps: null,
 }));
 const xferSig = signEd25519(SEED_HEX, xferCanon);
 

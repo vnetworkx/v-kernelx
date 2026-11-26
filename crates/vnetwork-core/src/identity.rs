@@ -1,4 +1,5 @@
 use crate::state::NetworkLedgerState;
+use rand_core::{OsRng, RngCore};
 use std::collections::BTreeSet;
 use vnetwork_types::*;
 
@@ -6,20 +7,21 @@ pub fn issue_participant_challenge(
     state: &mut NetworkLedgerState,
     timestamp_ms: u64,
 ) -> ParticipantChallenge {
-    let nonce_seed = format!(
-        "{}:{}:{}",
-        state.network_id,
-        state.challenges.len() + 1,
-        timestamp_ms
-    );
-    let nonce = blake3_hex(nonce_seed.as_bytes());
-    let challenge_id = format!("chl_{}", &nonce[..20]);
+    let mut random_bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut random_bytes);
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"vnetwork/participant-challenge/v1:");
+    hasher.update(state.network_id.as_bytes());
+    hasher.update(b":");
+    hasher.update(&random_bytes);
+    let nonce = hasher.finalize().to_hex().to_string();
+    let challenge_id = format!("chl_{}", &nonce[..24]);
     let challenge = ParticipantChallenge {
         challenge_id: challenge_id.clone(),
         network_id: state.network_id.clone(),
         nonce,
         issued_at_ms: timestamp_ms,
-        expires_at_ms: timestamp_ms.saturating_add(300_000),
+        expires_at_ms: timestamp_ms.checked_add(300_000).unwrap_or(u64::MAX),
     };
     state.challenges.insert(challenge_id, challenge.clone());
     challenge

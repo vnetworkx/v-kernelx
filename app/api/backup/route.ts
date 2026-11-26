@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          "Use scripts/backup.sh on the host holding SQLite+WAL storage to capture an atomic live backup",
+          "Use scripts/backup.sh on the host holding Vector Network WAL+checkpoint storage to capture a consistent backup",
         suggested_backup_path: dest,
       },
       { status: 501 },

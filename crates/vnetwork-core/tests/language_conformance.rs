@@ -18,14 +18,22 @@ fn single_val_qc(
 ) -> QuorumCertificate {
     let mut vote = ConsensusVote {
         proposal_id: prop.proposal_id.clone(),
+        proposal_digest: prop.proposal_digest.clone(),
         network_id: prop.network_id.clone(),
+        genesis_commitment: prop.genesis_commitment.clone(),
+        protocol_version: prop.protocol_version.clone(),
         height: prop.height,
         round: prop.round,
         epoch: prop.epoch,
+        validator_set_hash: prop.validator_set_hash.clone(),
+        parent_commitment: prop.parent_commitment.clone(),
+        pre_state_root: prop.pre_state_root.clone(),
+        post_state_root: prop.post_state_root.clone(),
+        operation_scope: prop.operation_scope.clone(),
+        vote_phase: VotePhase::Commit,
         validator_id: "val_1".to_string(),
         validator_pubkey_hex: val_kp.public_key_hex.clone(),
         approve: true,
-        post_state_root: prop.post_state_root.clone(),
         timestamp_ms: ts,
         signature: String::new(),
     };
@@ -34,13 +42,21 @@ fn single_val_qc(
     QuorumCertificate {
         certificate_id: qc_id.to_string(),
         proposal_id: prop.proposal_id.clone(),
+        proposal_digest: prop.proposal_digest.clone(),
         network_id: prop.network_id.clone(),
+        genesis_commitment: prop.genesis_commitment.clone(),
+        protocol_version: prop.protocol_version.clone(),
         height: prop.height,
         round: prop.round,
         epoch: prop.epoch,
         validator_set_hash: prop.validator_set_hash.clone(),
+        parent_commitment: prop.parent_commitment.clone(),
+        pre_state_root: prop.pre_state_root.clone(),
         post_state_root: prop.post_state_root.clone(),
-        event_hashes: prop.events.iter().map(|e| e.event_hash.clone()).collect(),
+        operation_scope: prop.operation_scope.clone(),
+        vote_phase: VotePhase::Commit,
+        ordered_event_ids: prop.ordered_event_ids(),
+        event_hashes: prop.ordered_event_hashes(),
         total_weight: 100,
         approving_weight: 100,
         quorum_threshold_bps: 6667,
@@ -83,6 +99,15 @@ fn make_dev_engine() -> (ProtocolEngine, KeypairMaterial, KeypairMaterial, Keypa
             active: true,
             joined_epoch: 1,
         }],
+    )
+    .with_drain_policy(
+        DrainPolicy::new(
+            ScopeDrainRate::ConfiguredBps(0),
+            ScopeDrainRate::ConfiguredBps(0),
+            ScopeDrainRate::ConfiguredBps(50),
+            ScopeDrainRate::ConfiguredBps(150),
+        )
+        .unwrap(),
     );
     let mut engine = ProtocolEngine::new(genesis);
 
@@ -531,7 +556,6 @@ fn test_wallet_pop_multisig_and_loan_collateral_escrow_conservation() {
         from_wallet_id: vault_id.clone(),
         to_wallet_id: borrower_id.clone(),
         amount: 5_000,
-        drain_bps: Some(0),
         cosignatures: vec![],
     };
     let env_solo = sign_operation(&actor_kp, "vector-devnet-1", 7, "op_7_solo", 4_013, &solo_xfer);
@@ -546,7 +570,6 @@ fn test_wallet_pop_multisig_and_loan_collateral_escrow_conservation() {
         &vault_id,
         &borrower_id,
         5_000,
-        Some(0),
     )
     .unwrap();
     let cosig = cosigner_kp.sign(&approval_bytes).unwrap();
@@ -555,7 +578,6 @@ fn test_wallet_pop_multisig_and_loan_collateral_escrow_conservation() {
         from_wallet_id: vault_id.clone(),
         to_wallet_id: borrower_id.clone(),
         amount: 5_000,
-        drain_bps: Some(0),
         cosignatures: vec![(cosigner_kp.public_key_hex.clone(), cosig)],
     };
     let env7 = sign_operation(&actor_kp, "vector-devnet-1", 7, "op_7", 4_014, &multi_xfer);

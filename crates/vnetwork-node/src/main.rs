@@ -4,7 +4,11 @@ use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 use vnetwork_api::{serve_api, ApiServerConfig};
 use vnetwork_core::state::GenesisConfig;
-use vnetwork_node::{start_node_runtime, NodeConfig, NodeIdentity, ShutdownSignal};
+use vnetwork_node::{
+    rotate_encrypted_key, start_node_runtime, NodeConfig, NodeIdentity, NodeIdentityLoadOptions,
+    ShutdownSignal,
+};
+use vnetwork_types::{NetworkProfile, VNetworkError};
 
 #[derive(Parser, Debug)]
 #[command(name = "vnetwork-node", about = "Vector Network P2P + Consensus Node")]
@@ -26,11 +30,20 @@ struct Cli {
 
     #[arg(long, env = "NETWORK_PUBLIC_API_BIND")]
     api_bind: Option<String>,
+
+    #[arg(long, env = "NETWORK_KEY_PASSPHRASE")]
+    key_passphrase: Option<String>,
+
+    #[arg(long, env = "NETWORK_KEY_PASSPHRASE_FILE")]
+    key_passphrase_file: Option<PathBuf>,
+
+    #[arg(long, default_value_t = false, env = "NETWORK_ALLOW_PLAINTEXT_KEY_FALLBACK")]
+    allow_plaintext_key_fallback: bool,
 }
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Initialize node and optional validator keys and output public identity JSON
+    /// Initialize encrypted node and optional validator keys and output redacted public metadata JSON
     InitKey {
         #[arg(long)]
         node_key: PathBuf,
@@ -40,9 +53,41 @@ enum Commands {
         validator_id: Option<String>,
         #[arg(long, default_value_t = false)]
         validator: bool,
+        #[arg(long, default_value = "development")]
+        profile: String,
+    },
+    /// Rotate an encrypted key envelope and record versioned rotation history
+    RotateKey {
+        #[arg(long)]
+        key_path: PathBuf,
+        #[arg(long, env = "NETWORK_KEY_PASSPHRASE")]
+        current_passphrase: String,
+        #[arg(long, env = "NETWORK_NEW_KEY_PASSPHRASE")]
+        new_passphrase: String,
+        #[arg(long, default_value = "scheduled_rotation")]
+        reason: String,
     },
     /// Run the node runtime and optional public HTTP/WebSocket API
     Run,
+}
+
+fn read_passphrase(
+    inline: Option<String>,
+    file: Option<PathBuf>,
+) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(p) = inline {
+        if !p.is_empty() {
+            return Ok(Some(p));
+        }
+    }
+    if let Some(path) = file {
+        let raw = std::fs::read_to_string(&path)?;
+        let trimmed = raw.trim().to_string();
+        if !trimmed.is_empty() {
+            return Ok(Some(trimmed));
+        }
+    }
+    Ok(None)
 }
 
 #[tokio::main]
@@ -54,28 +99,62 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .init();
 
     let cli = Cli::parse();
+    let passphrase = read_passphrase(cli.key_passphrase.clone(), cli.key_passphrase_file.clone())?;
 
     if let Some(Commands::InitKey {
         node_key,
         validator_key,
         validator_id,
         validator,
+        profile,
     }) = cli.command
     {
-        let id = NodeIdentity::load_or_create(
+        let parsed_profile = NetworkProfile::parse(&profile).ok_or_else(|| {
+            VNetworkError::Validation(format!("invalid network profile `{profile}`"))
+        })?;
+        let opts = NodeIdentityLoadOptions {
+            profile: parsed_profile,
+            passphrase,
+            kdf_params: None,
+            allow_plaintext_key_fallback: cli.allow_plaintext_key_fallback,
+            external_node_signer: None,
+            external_validator_signer: None,
+        };
+        let id = NodeIdentity::load_or_create_secure(
             &node_key,
             validator_key.as_deref(),
             validator_id.as_deref(),
             validator,
+            &opts,
         )?;
         let out = serde_json::json!({
             "node_id": id.node_id,
-            "node_pubkey_hex": id.node_keypair.public_key_hex,
+            "node_metadata": id.node_metadata,
             "peer_id": id.libp2p_peer_id.to_string(),
             "validator_id": id.validator_id,
-            "validator_pubkey_hex": id.validator_keypair.as_ref().map(|k| k.public_key_hex.clone()),
+            "validator_metadata": id.validator_metadata,
+            "storage_security_mode": id.storage_security_mode,
         });
         println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+
+    if let Some(Commands::RotateKey {
+        key_path,
+        current_passphrase,
+        new_passphrase,
+        reason,
+    }) = cli.command
+    {
+        let (_, meta) = rotate_encrypted_key(
+            &key_path,
+            &current_passphrase,
+            &new_passphrase,
+            None,
+            &reason,
+            vnetwork_types::now_ms(),
+        )?;
+        println!("{}", serde_json::to_string_pretty(&meta)?);
         return Ok(());
     }
 
@@ -96,13 +175,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if let Some(bind) = cli.api_bind {
         cfg.public_api_bind = bind;
     }
+    if cli.allow_plaintext_key_fallback {
+        cfg.allow_plaintext_key_fallback = true;
+    }
+    if cli.key_passphrase_file.is_some() {
+        cfg.key_passphrase_file = cli.key_passphrase_file;
+    }
 
-    let explicit_genesis: Option<GenesisConfig> = if let Some(gpath) = cli.genesis_file.as_ref().or(cfg.genesis_file.as_ref()) {
-        let raw = std::fs::read_to_string(gpath)?;
-        Some(serde_json::from_str(&raw)?)
-    } else {
-        None
-    };
+    let explicit_genesis: Option<GenesisConfig> =
+        if let Some(gpath) = cli.genesis_file.as_ref().or(cfg.genesis_file.as_ref()) {
+            let raw = std::fs::read_to_string(gpath)?;
+            Some(serde_json::from_str(&raw)?)
+        } else {
+            None
+        };
 
     let shutdown = ShutdownSignal::new();
     let shutdown_clone = shutdown.clone();
@@ -111,7 +197,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         shutdown_clone.trigger();
     });
 
-    let (handle, node_task) = start_node_runtime(cfg.clone(), explicit_genesis, shutdown.clone()).await?;
+    let (handle, node_task) =
+        start_node_runtime(cfg.clone(), explicit_genesis, shutdown.clone()).await?;
 
     let api_task = if cfg.enable_public_api {
         let api_cfg = ApiServerConfig {

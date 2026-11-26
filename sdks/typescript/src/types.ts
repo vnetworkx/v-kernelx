@@ -13,6 +13,8 @@ export type ProgramLifecycleStatus =
   | "REJECTED"
   | "FAILED";
 
+export type VerificationStatus = "VERIFIED" | "UNVERIFIED" | "INVALID" | "UNKNOWN" | "PENDING";
+
 export interface KeypairMaterial {
   key_role: string;
   derived_id: string;
@@ -218,8 +220,15 @@ export type NetworkOperation =
         from_wallet_id: string;
         to_wallet_id: string;
         amount: number;
-        drain_bps?: number | null;
         cosignatures?: Array<[string, string]>;
+      };
+    }
+  | {
+      op: "UpdateWalletReceivePolicy";
+      payload: {
+        wallet_id: string;
+        mode: "OPEN" | "RESTRICTED" | "FROZEN";
+        allowed_senders?: string[];
       };
     }
   | { op: "DrainToken"; payload: { token_id: string; wallet_id: string; amount: number } }

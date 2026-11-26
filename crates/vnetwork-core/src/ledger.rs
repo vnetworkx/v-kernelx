@@ -1,6 +1,6 @@
 use crate::events::verify_event_chain;
 use crate::state::NetworkLedgerState;
-use crate::supply::verify_token_supply_conservation;
+use crate::supply::{compute_token_supply_breakdown, SupplyConservationBreakdown};
 use serde::{Deserialize, Serialize};
 use vnetwork_types::*;
 
@@ -23,7 +23,25 @@ pub struct TokenConservationSummary {
     pub symbol: String,
     pub total_supply: u128,
     pub max_supply: u128,
+    pub wallet_balances_total: u128,
+    pub escrow_balances_total: u128,
+    pub burned_or_drained_total: u128,
     pub conserved: bool,
+}
+
+impl From<SupplyConservationBreakdown> for TokenConservationSummary {
+    fn from(b: SupplyConservationBreakdown) -> Self {
+        Self {
+            token_id: b.token_id,
+            symbol: b.symbol,
+            total_supply: b.recorded_total_supply,
+            max_supply: b.max_supply,
+            wallet_balances_total: b.wallet_balances_total,
+            escrow_balances_total: b.escrow_balances_total,
+            burned_or_drained_total: b.burned_or_drained_total,
+            conserved: b.conserved,
+        }
+    }
 }
 
 pub fn build_ledger_proof_report(state: &NetworkLedgerState) -> VResult<LedgerProofReport> {
@@ -32,14 +50,8 @@ pub fn build_ledger_proof_report(state: &NetworkLedgerState) -> VResult<LedgerPr
     let replay_hash = state.compute_replay_hash();
     let mut token_conservation = Vec::new();
     for token in state.tokens.values() {
-        let conserved = verify_token_supply_conservation(state, &token.token_id)?;
-        token_conservation.push(TokenConservationSummary {
-            token_id: token.token_id.clone(),
-            symbol: token.symbol.clone(),
-            total_supply: token.total_supply,
-            max_supply: token.max_supply,
-            conserved,
-        });
+        let breakdown = compute_token_supply_breakdown(state, &token.token_id)?;
+        token_conservation.push(breakdown.into());
     }
     Ok(LedgerProofReport {
         network_id: state.network_id.clone(),

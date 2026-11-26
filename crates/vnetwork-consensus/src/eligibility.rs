@@ -15,6 +15,7 @@ pub fn verify_proposer_eligibility(
             "validator `{validator_id}` is not active or has zero weight"
         )));
     }
+    let _ = v.canonical_pubkey_bytes()?;
     Ok(v.clone())
 }
 

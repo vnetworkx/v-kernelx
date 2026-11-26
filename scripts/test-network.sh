@@ -17,6 +17,8 @@ fi
 export DEVNET_DIR
 export NETWORK_ID="${NETWORK_ID:-vector-devnet-1}"
 CLI_HOME="$(mktemp -d "${TMPDIR:-/tmp}/vnetwork-cli-XXXXXX")"
+export VNETWORK_CLI_PASSPHRASE="${VNETWORK_CLI_PASSPHRASE:-$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')}"
+export NETWORK_KEY_PASSPHRASE="${NETWORK_KEY_PASSPHRASE:-$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')}"
 
 cleanup() {
   echo "Stopping devnet nodes..."
@@ -56,7 +58,7 @@ echo "STEP 4: Boot 4 real persistent libp2p validator nodes"
 echo "=================================================================="
 DEVNET_CLEAN=0 NETWORK_CONSENSUS_TIMEOUT_MS=3500 bash "$ROOT/scripts/devnet-up.sh"
 
-N1_PEERS="$(curl -fsS http://127.0.0.1:18081/healthz | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["healthy"] and d["storage_ok"]; print(d["connected_peers"])')"
+N1_PEERS="$(curl -fsS http://127.0.0.1:18081/healthz | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["healthy"] and d["storage_ok"] and d["wal_consistency_ok"] and d["equivocation_store_ok"] and d["equivocation_count"] == 0; print(d["connected_peers"])')"
 echo "Node 1 connected libp2p peers: $N1_PEERS"
 if [[ "$N1_PEERS" -lt 3 ]]; then
   echo "Expected >= 3 connected peers on Node 1, got $N1_PEERS" >&2
@@ -72,6 +74,7 @@ HOME="$CLI_HOME" "$VN_BIN" join --scope NETWORK >/dev/null
 HOME="$CLI_HOME" "$VN_BIN" program submit "$ROOT/examples/vector-language/bootstrap-atlas.vx" >/dev/null
 HOME="$CLI_HOME" "$VN_BIN" program submit "$ROOT/examples/vector-language/complete-network-workflow.vx" >/dev/null
 HOME="$CLI_HOME" "$VN_BIN" ledger verify | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["chain_valid"] is True; print("CLI ledger proof verified:", d["event_count"], "events, state_root=", d["state_root"])'
+HOME="$CLI_HOME" "$VN_BIN" ledger replay | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["valid"] is True; print("CLI ledger replay verified:", d["replayed_state_root"])'
 
 echo "=================================================================="
 echo "STEP 6: Run ALL 5 live SDKs (Rust, JS, TS, Python, Go)"
@@ -217,6 +220,7 @@ echo "STEP 9: Restart Node 3 & Node 4 -> WAL Recovery + P2P Sync Catch-up"
 echo "=================================================================="
 for i in 3 4; do
   NETWORK_CONSENSUS_TIMEOUT_MS=3500 \
+  NETWORK_KEY_PASSPHRASE="$NETWORK_KEY_PASSPHRASE" \
     "$NODE_BIN" \
     --config "$DEVNET_DIR/node$i/node.toml" \
     --genesis-file "$DEVNET_DIR/genesis.json" \

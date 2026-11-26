@@ -16,6 +16,7 @@ const ED25519_PKCS8_PREFIX = new Uint8Array([
 export const PROTOCOL_VERSION = "vector-network/1.0.0";
 export const LANGUAGE_VERSION = "v-langx/1.2.0";
 export const COMPILER_VERSION = "vectorspace-compiler/1.2.0";
+export const DOM_TRANSFER_APPROVAL_V1 = "vnetwork/transfer-approval/v1";
 
 function toHex(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -186,12 +187,11 @@ export class BrowserVectorNetworkClient {
     toWalletId: string,
     amount: number | bigint | string,
     cosignerKey: KeypairMaterial,
-    drainBps: number | null = null,
   ): Promise<string> {
     if (!this.connectedNetworkId) await this.connect();
     const msg = canonicalJsonBytes({
       amount: String(amount),
-      drain_bps: drainBps,
+      domain: DOM_TRANSFER_APPROVAL_V1,
       from_wallet_id: fromWalletId,
       network_id: this.connectedNetworkId!,
       protocol_version: PROTOCOL_VERSION,

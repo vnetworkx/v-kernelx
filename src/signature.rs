@@ -50,20 +50,38 @@ pub fn verify_event_signature(
     payload: &[u8],
     signature_hex: &str,
 ) -> Result<bool, String> {
-    let sig_bytes = hex_decode(signature_hex)?;
+    if signature_hex.trim().len() != 128 {
+        return Err("signature hex must be exactly 128 hex characters".to_string());
+    }
+    let sig_bytes = hex_decode(signature_hex.trim())?;
     let signature =
         Signature::from_slice(&sig_bytes).map_err(|e| format!("signature parse error: {e}"))?;
-    Ok(verifying_key.verify(payload, &signature).is_ok())
+    Ok(verifying_key.verify_strict(payload, &signature).is_ok())
 }
 
 /// Parse a hex-encoded Ed25519 public key.
 pub fn verifying_key_from_hex(public_key_hex: &str) -> Result<VerifyingKey, String> {
-    let bytes = hex_decode(public_key_hex)?;
+    let trimmed = public_key_hex.trim();
+    if trimmed.len() != 64 {
+        return Err("ed25519 verifying key hex must be exactly 64 chars".to_string());
+    }
+    let bytes = hex_decode(trimmed)?;
     let key_bytes: [u8; 32] = bytes
         .try_into()
         .map_err(|_| "ed25519 verifying key must be 32 bytes".to_string())?;
-    // Some versions of ed25519-dalek want a fixed array here.
-    VerifyingKey::from_bytes(&key_bytes).map_err(|e| format!("public key parse error: {e}"))
+    let vk = VerifyingKey::from_bytes(&key_bytes).map_err(|e| format!("public key parse error: {e}"))?;
+    let canonical = vk.to_bytes();
+    if canonical != key_bytes
+        || canonical == [0u8; 32]
+        || canonical
+            == [
+                1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0,
+            ]
+    {
+        return Err("weak or non-canonical Ed25519 public key rejected".to_string());
+    }
+    Ok(vk)
 }
 
 /// Parse a hex-encoded Ed25519 signing key.

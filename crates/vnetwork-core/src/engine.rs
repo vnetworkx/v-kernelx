@@ -31,14 +31,18 @@ pub struct ProtocolEngine {
 }
 
 impl ProtocolEngine {
-    pub fn new(genesis: GenesisConfig) -> Self {
+    pub fn try_new(genesis: GenesisConfig) -> VResult<Self> {
         let validators = genesis.initial_validators.clone();
-        let state = NetworkLedgerState::new(&genesis);
-        Self {
+        let state = NetworkLedgerState::try_new(&genesis)?;
+        Ok(Self {
             genesis,
             state,
             validators,
-        }
+        })
+    }
+
+    pub fn new(genesis: GenesisConfig) -> Self {
+        Self::try_new(genesis).expect("invalid GenesisConfig passed to ProtocolEngine::new")
     }
 
     pub fn from_restored(genesis: GenesisConfig, state: NetworkLedgerState) -> Self {
@@ -55,7 +59,7 @@ impl ProtocolEngine {
     }
 
     pub fn validator_set_hash(&self) -> VResult<String> {
-        compute_validator_set_hash(&self.validators)
+        validate_validator_set(&self.validators)
     }
 
     pub fn issue_challenge(&mut self, timestamp_ms: u64) -> ParticipantChallenge {
@@ -71,6 +75,7 @@ impl ProtocolEngine {
     ) -> VResult<(ParticipantRecord, NodeRecord, ConsensusProposal, TransactionReceipt)> {
         let mut staged = self.state.clone();
         let pre_root = staged.compute_state_root()?;
+        let parent_commitment = self.state.expected_parent_commitment();
         let next_height = self.state.height + 1;
         let vset_hash = self.validator_set_hash()?;
         let (participant, node, event) =
@@ -81,30 +86,33 @@ impl ProtocolEngine {
             "tx_join_{}",
             &blake3_hex(format!("{}:{}", participant.participant_id, timestamp_ms).as_bytes())[..20]
         );
-        let proposal_id = format!(
-            "prop_{}_{}",
-            next_height,
-            &blake3_hex(post_root.as_bytes())[..16]
-        );
 
         let mut proposal = ConsensusProposal {
-            proposal_id,
+            proposal_id: String::new(),
+            proposal_version: PROPOSAL_VERSION,
             network_id: self.state.network_id.clone(),
+            genesis_commitment: self.state.genesis_commitment.clone(),
+            protocol_version: self.state.protocol_version.clone(),
             height: next_height,
             round: 1,
             epoch: self.state.validator_epoch,
             validator_set_hash: vset_hash,
             proposer_validator_id: proposer_validator_id.to_string(),
+            parent_commitment,
             pre_state_root: pre_root,
             post_state_root: post_root.clone(),
+            proposal_digest: String::new(),
+            operation_scope: "PARTICIPANT_JOIN".to_string(),
             events: vec![event.clone()],
             program_id: None,
             tx_id: Some(tx_id.clone()),
             program_source_bundle: None,
             nonce_binding: None,
+            execution_params: std::collections::BTreeMap::new(),
             timestamp_ms,
             proposer_signature: String::new(),
         };
+        proposal.finalize_digest_and_id()?;
         let bytes = proposal.canonical_signing_bytes()?;
         proposal.proposer_signature = proposer_signing_fn(&bytes)?;
 
@@ -203,12 +211,8 @@ impl ProtocolEngine {
         sub.final_state_root = Some(exec.post_state_root.clone());
 
         let next_height = self.state.height + 1;
+        let parent_commitment = self.state.expected_parent_commitment();
         let tx_id = sub.program_id.clone();
-        let proposal_id = format!(
-            "prop_{}_{}",
-            next_height,
-            &blake3_hex(exec.post_state_root.as_bytes())[..16]
-        );
         let vset_hash = self.validator_set_hash()?;
 
         let bundle = ProgramSourceBundle {
@@ -217,18 +221,27 @@ impl ProtocolEngine {
             source_hash: sub.source_hash.clone(),
             compiled_program_hash: compiled.program_hash.clone(),
             resolved_module_sources: req.modules.clone(),
+            language_version: compiled.language_version.clone(),
+            compiler_version: compiled.compiler_version.clone(),
+            execution_params: req.execution_params.clone(),
         };
 
         let mut proposal = ConsensusProposal {
-            proposal_id,
+            proposal_id: String::new(),
+            proposal_version: PROPOSAL_VERSION,
             network_id: self.state.network_id.clone(),
+            genesis_commitment: self.state.genesis_commitment.clone(),
+            protocol_version: self.state.protocol_version.clone(),
             height: next_height,
             round: 1,
             epoch: self.state.validator_epoch,
             validator_set_hash: vset_hash,
             proposer_validator_id: proposer_validator_id.to_string(),
+            parent_commitment,
             pre_state_root: exec.pre_state_root,
             post_state_root: exec.post_state_root.clone(),
+            proposal_digest: String::new(),
+            operation_scope: format!("VX_PROGRAM:{}", req.file_name),
             events: exec.generated_events,
             program_id: Some(sub.program_id.clone()),
             tx_id: Some(tx_id.clone()),
@@ -238,9 +251,11 @@ impl ProtocolEngine {
                 req.request_id.clone(),
                 req.nonce,
             )),
+            execution_params: req.execution_params.clone(),
             timestamp_ms,
             proposer_signature: String::new(),
         };
+        proposal.finalize_digest_and_id()?;
         let bytes = proposal.canonical_signing_bytes()?;
         proposal.proposer_signature = proposer_signing_fn(&bytes)?;
 
@@ -288,6 +303,7 @@ impl ProtocolEngine {
 
         let mut staged = self.state.clone();
         let pre_root = staged.compute_state_root()?;
+        let parent_commitment = self.state.expected_parent_commitment();
         let next_height = self.state.height + 1;
         let vset_hash = self.validator_set_hash()?;
         let outcome = apply_network_operation_with_genesis(
@@ -309,22 +325,29 @@ impl ProtocolEngine {
             "tx_{}",
             &blake3_hex(format!("{}:{}", envelope.request_id, post_root).as_bytes())[..20]
         );
-        let proposal_id = format!(
-            "prop_{}_{}",
-            next_height,
-            &blake3_hex(post_root.as_bytes())[..16]
-        );
+        let op_scope = serde_json::to_value(op)
+            .map_err(|e| VNetworkError::Serialization(e.to_string()))?
+            .get("op")
+            .and_then(|s| s.as_str())
+            .ok_or_else(|| VNetworkError::Serialization("missing op discriminator".to_string()))?
+            .to_string();
 
         let mut proposal = ConsensusProposal {
-            proposal_id,
+            proposal_id: String::new(),
+            proposal_version: PROPOSAL_VERSION,
             network_id: self.state.network_id.clone(),
+            genesis_commitment: self.state.genesis_commitment.clone(),
+            protocol_version: self.state.protocol_version.clone(),
             height: next_height,
             round: 1,
             epoch: self.state.validator_epoch,
             validator_set_hash: vset_hash,
             proposer_validator_id: proposer_validator_id.to_string(),
+            parent_commitment,
             pre_state_root: pre_root,
             post_state_root: post_root.clone(),
+            proposal_digest: String::new(),
+            operation_scope: op_scope,
             events: outcome.events.clone(),
             program_id: None,
             tx_id: Some(tx_id.clone()),
@@ -334,9 +357,11 @@ impl ProtocolEngine {
                 envelope.request_id.clone(),
                 envelope.nonce,
             )),
+            execution_params: std::collections::BTreeMap::new(),
             timestamp_ms,
             proposer_signature: String::new(),
         };
+        proposal.finalize_digest_and_id()?;
         let bytes = proposal.canonical_signing_bytes()?;
         proposal.proposer_signature = proposer_signing_fn(&bytes)?;
 
@@ -405,8 +430,8 @@ impl ProtocolEngine {
                     },
                     source_bytes: bundle.source_bytes.clone(),
                     source_hash: bundle.source_hash.clone(),
-                    language_version: "v-langx/1.2.0".to_string(),
-                    compiler_version: "vectorspace-compiler/1.2.0".to_string(),
+                    language_version: bundle.language_version.clone(),
+                    compiler_version: bundle.compiler_version.clone(),
                     imported_modules,
                     resolved_module_sources: bundle.resolved_module_sources.clone(),
                     compiled_program_hash: bundle.compiled_program_hash.clone(),
@@ -417,7 +442,7 @@ impl ProtocolEngine {
                     request_id,
                     nonce,
                     signature: String::new(),
-                    execution_params: std::collections::BTreeMap::new(),
+                    execution_params: bundle.execution_params.clone(),
                     status: ProgramLifecycleStatus::Committed,
                     failed_operation_index: None,
                     error_message: None,

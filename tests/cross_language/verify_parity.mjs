@@ -48,7 +48,6 @@ const xferCanon = canonicalJsonBytes(canonicalTransferApprovalObject({
   fromWalletId: "wal_a",
   toWalletId: "wal_b",
   amount: 250,
-  drainBps: null,
 }));
 const xferSig = signEd25519(SEED_HEX, xferCanon);
 

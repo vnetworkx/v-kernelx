@@ -337,7 +337,7 @@ export function DagInspectorPanel({
               className="space-y-2 border-t border-slate-200 bg-slate-50/70 p-4 text-xs"
             >
               <label className="block text-[11px] font-medium uppercase tracking-wider text-slate-500">
-                SQLite VACUUM INTO Backup
+                WAL &amp; Checkpoint Backup
               </label>
               <div className="flex gap-2">
                 <input

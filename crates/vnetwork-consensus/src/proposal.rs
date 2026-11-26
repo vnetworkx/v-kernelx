@@ -12,10 +12,34 @@ pub fn validate_proposal_against_state(
     membership: &ValidatorMembership,
     proposal: &ConsensusProposal,
 ) -> VResult<()> {
+    genesis.validate()?;
+    let expected_genesis_commitment = genesis.commitment_hash()?;
+    if state.genesis_commitment.trim().is_empty()
+        || state.genesis_commitment != expected_genesis_commitment
+    {
+        return Err(VNetworkError::ProfileMismatch(
+            "local state genesis_commitment does not match genesis configuration".to_string(),
+        ));
+    }
+
+    proposal.verify_digest_and_metadata()?;
+
     if proposal.network_id != state.network_id {
         return Err(VNetworkError::ProfileMismatch(format!(
             "proposal network_id `{}` != local `{}`",
             proposal.network_id, state.network_id
+        )));
+    }
+    if proposal.genesis_commitment != expected_genesis_commitment {
+        return Err(VNetworkError::ProfileMismatch(format!(
+            "proposal genesis_commitment `{}` != local `{expected_genesis_commitment}`",
+            proposal.genesis_commitment
+        )));
+    }
+    if proposal.protocol_version != state.protocol_version {
+        return Err(VNetworkError::ProfileMismatch(format!(
+            "proposal protocol_version `{}` != local `{}`",
+            proposal.protocol_version, state.protocol_version
         )));
     }
     if proposal.epoch != state.validator_epoch {
@@ -24,14 +48,13 @@ pub fn validate_proposal_against_state(
             proposal.epoch, state.validator_epoch
         )));
     }
-    if !proposal.validator_set_hash.is_empty() {
-        let expected_vhash = compute_validator_set_hash(&membership.all_validators())?;
-        if proposal.validator_set_hash != expected_vhash {
-            return Err(VNetworkError::Consensus(format!(
-                "proposal validator_set_hash `{}` != local `{expected_vhash}`",
-                proposal.validator_set_hash
-            )));
-        }
+
+    let expected_vhash = membership.validator_set_hash()?;
+    if proposal.validator_set_hash != expected_vhash {
+        return Err(VNetworkError::Consensus(format!(
+            "proposal validator_set_hash `{}` != local `{expected_vhash}`",
+            proposal.validator_set_hash
+        )));
     }
 
     let proposer = verify_proposer_eligibility(membership, &proposal.proposer_validator_id)?;
@@ -45,6 +68,14 @@ pub fn validate_proposal_against_state(
         )));
     }
 
+    let expected_parent = state.expected_parent_commitment();
+    if proposal.parent_commitment != expected_parent {
+        return Err(VNetworkError::Consensus(format!(
+            "proposal parent_commitment `{}` != local `{expected_parent}`",
+            proposal.parent_commitment
+        )));
+    }
+
     let local_root = state.compute_state_root()?;
     if proposal.pre_state_root != local_root {
         return Err(VNetworkError::Consensus(format!(
@@ -54,11 +85,11 @@ pub fn validate_proposal_against_state(
     }
 
     if let Some(bundle) = &proposal.program_source_bundle {
-        let actor_pubkey = proposal
-            .events
-            .first()
-            .map(|e| e.actor_pubkey.as_str())
-            .unwrap_or(&proposer.validator_pubkey_hex);
+        let (actor_pubkey, _, _) = proposal.nonce_binding.as_ref().ok_or_else(|| {
+            VNetworkError::Authorization(
+                "program proposal missing authenticated nonce_binding".to_string(),
+            )
+        })?;
         validator_verify_program_bundle(state, genesis, bundle, proposal, actor_pubkey)?;
     }
 

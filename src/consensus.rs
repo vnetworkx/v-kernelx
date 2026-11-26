@@ -110,11 +110,25 @@ pub struct QuorumConsensusState {
 
 impl QuorumConsensusState {
     pub fn new(quorum_threshold_bps: u16) -> Self {
+        let validated = quorum_threshold_bps.clamp(DEFAULT_QUORUM_BPS, 10_000);
         Self {
             validators: BTreeMap::new(),
             attestations: BTreeMap::new(),
-            quorum_threshold_bps: quorum_threshold_bps.clamp(5001, 10_000),
+            quorum_threshold_bps: validated,
         }
+    }
+
+    pub fn try_new(quorum_threshold_bps: u16) -> Result<Self, KernelXError> {
+        if !(DEFAULT_QUORUM_BPS..=10_000).contains(&quorum_threshold_bps) {
+            return Err(KernelXError::Rejected(format!(
+                "quorum_threshold_bps `{quorum_threshold_bps}` must be in [{DEFAULT_QUORUM_BPS}..=10000]"
+            )));
+        }
+        Ok(Self {
+            validators: BTreeMap::new(),
+            attestations: BTreeMap::new(),
+            quorum_threshold_bps,
+        })
     }
 
     pub fn register_validator(&mut self, validator: ValidatorNode) -> Result<(), KernelXError> {
@@ -127,6 +141,20 @@ impl QuorumConsensusState {
             return Err(KernelXError::InvalidState(
                 "validator weight must be > 0".to_string(),
             ));
+        }
+        let vk = crate::wallet::verifying_key_from_hex(&validator.public_key_hex)?;
+        let canonical_pk = vk.to_bytes();
+        for existing in self.validators.values() {
+            if existing.node_id != validator.node_id {
+                if let Ok(other_vk) = crate::wallet::verifying_key_from_hex(&existing.public_key_hex) {
+                    if other_vk.to_bytes() == canonical_pk {
+                        return Err(KernelXError::Rejected(format!(
+                            "duplicate canonical validator public key across `{}` and `{}`",
+                            existing.node_id, validator.node_id
+                        )));
+                    }
+                }
+            }
         }
         self.validators.insert(validator.node_id.clone(), validator);
         Ok(())
@@ -148,10 +176,18 @@ impl QuorumConsensusState {
             .entry(attestation.event_hash.clone())
             .or_default();
         if let Some(existing) = list
-            .iter_mut()
+            .iter()
             .find(|a| a.validator_id == attestation.validator_id)
         {
-            *existing = attestation.clone();
+            if existing.vote_accept != attestation.vote_accept
+                || existing.state_root_hash != attestation.state_root_hash
+            {
+                return Err(KernelXError::Rejected(format!(
+                    "validator `{}` attempted conflicting attestation for event `{}`",
+                    attestation.validator_id, attestation.event_hash
+                )));
+            }
+            // Idempotent identical retry: do not overwrite existing signed record
         } else {
             list.push(attestation.clone());
         }
@@ -178,7 +214,7 @@ impl QuorumConsensusState {
             .filter(|v| v.active)
             .map(|v| v.weight)
             .sum();
-        let threshold_bps = if self.quorum_threshold_bps == 0 {
+        let threshold_bps = if self.quorum_threshold_bps < DEFAULT_QUORUM_BPS {
             DEFAULT_QUORUM_BPS
         } else {
             self.quorum_threshold_bps

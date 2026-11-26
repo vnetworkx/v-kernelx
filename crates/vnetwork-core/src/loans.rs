@@ -1,7 +1,7 @@
 use crate::hierarchy::{verify_token_exists, verify_wallet_exists};
 use crate::state::NetworkLedgerState;
 use crate::supply::verify_token_supply_conservation;
-use crate::token::apply_transfer_token;
+use crate::token::apply_protocol_settlement_transfer;
 use vnetwork_types::*;
 
 pub fn loan_escrow_wallet_id(loan_id: &str) -> String {
@@ -226,14 +226,12 @@ pub fn apply_execute_loan(
                 Some(draw_amt),
                 timestamp_ms,
             )?;
-            let (_, _, _, tx_ev) = apply_transfer_token(
+            let (_, _, _, tx_ev) = apply_protocol_settlement_transfer(
                 state,
                 &loan.token_id,
                 &loan.lender_wallet_id,
                 &loan.borrower_wallet_id,
                 draw_amt,
-                Some(0),
-                &[],
                 actor_pubkey,
                 timestamp_ms,
             )?;
@@ -274,14 +272,12 @@ pub fn apply_execute_loan(
                 return Err(VNetworkError::Validation("loan is already fully repaid".to_string()));
             }
             let repay_amt = if amount == 0 { remaining } else { amount.min(remaining) };
-            let (_, _, _, tx_ev) = apply_transfer_token(
+            let (_, _, _, tx_ev) = apply_protocol_settlement_transfer(
                 state,
                 &loan.token_id,
                 &loan.borrower_wallet_id,
                 &loan.lender_wallet_id,
                 repay_amt,
-                Some(0),
-                &[],
                 actor_pubkey,
                 timestamp_ms,
             )?;

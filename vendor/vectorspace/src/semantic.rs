@@ -246,9 +246,9 @@ pub fn validate_program_semantics(
                 table.declare(&w.name, SymbolKind::Wallet, None)?;
             }
             Statement::Transfer(t) => {
-                if t.source == t.destination {
-                    return Err(RuntimeError::new(RuntimeErrorKind::Validation(
-                        "transfer source and destination cannot be identical".to_string(),
+                if t.drain.is_some() {
+                    return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation(
+                        "sender-supplied `drain` override on `transfer` is forbidden; transfer drain rate is strictly protocol-determined from transfer scope".to_string(),
                     )));
                 }
                 match &t.amount {

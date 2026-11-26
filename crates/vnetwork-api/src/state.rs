@@ -9,7 +9,9 @@ use vnetwork_core::identity::JoinNetworkRequest;
 use vnetwork_core::language::SubmitProgramRequest;
 use vnetwork_core::ledger::LedgerProofReport;
 use vnetwork_core::reconstruction::ReconstructionReport;
+use vnetwork_core::replay::ReplayVerificationReport;
 use vnetwork_core::state::{NetworkLedgerState, TransactionReceipt};
+use vnetwork_core::supply::SupplyConservationBreakdown;
 use vnetwork_types::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +48,12 @@ pub trait NetworkNodeBackend: Send + Sync {
     ) -> Result<TransactionReceipt, ApiError>;
     async fn consensus_status(&self) -> serde_json::Value;
     async fn verify_ledger_proofs(&self) -> Result<LedgerProofReport, ApiError>;
+    async fn verify_replay(&self) -> Result<ReplayVerificationReport, ApiError>;
+    async fn verify_token_supply(
+        &self,
+        token_id: &str,
+    ) -> Result<SupplyConservationBreakdown, ApiError>;
+    async fn list_equivocations(&self) -> Vec<EquivocationEvidence>;
     async fn verify_reconstruction(
         &self,
         entity_kind: &str,

@@ -162,12 +162,16 @@ pub fn apply_execute_contract(
             )));
         }
     }
-    if !contract.authorized_actors.is_empty()
-        && !contract.authorized_actors.contains(actor_pubkey)
-        && contract.creator_pubkey != actor_pubkey
-    {
+    let allow_public = contract
+        .rules
+        .get("allow_public_execution")
+        .and_then(|v| v.as_bool())
+        == Some(true);
+    let is_creator = contract.creator_pubkey == actor_pubkey;
+    let is_listed = contract.authorized_actors.contains(actor_pubkey);
+    if !allow_public && !is_creator && !is_listed {
         return Err(VNetworkError::Authorization(format!(
-            "actor `{actor_pubkey}` is not in authorized_actors for contract `{}`",
+            "actor `{actor_pubkey}` is not authorized to execute contract `{}`",
             contract.name
         )));
     }

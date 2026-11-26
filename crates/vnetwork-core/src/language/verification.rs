@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use vnetwork_types::*;
 
 /// Independently recompiles source bytes + verified module bundle and re-executes
-/// against `state` to confirm proposal integrity before a validator votes.
+/// against `state`, authenticating actor, versions, execution params, and exact event commitments.
 pub fn validator_verify_program_bundle(
     state: &NetworkLedgerState,
     genesis: &GenesisConfig,
@@ -13,6 +13,30 @@ pub fn validator_verify_program_bundle(
     proposal: &ConsensusProposal,
     actor_pubkey: &str,
 ) -> VResult<()> {
+    let (bound_actor, _, _) = proposal.nonce_binding.as_ref().ok_or_else(|| {
+        VNetworkError::Consensus(
+            "program proposal missing mandatory nonce_binding actor commitment".to_string(),
+        )
+    })?;
+    if bound_actor != actor_pubkey {
+        return Err(VNetworkError::Authorization(format!(
+            "program actor_pubkey `{actor_pubkey}` does not match proposal nonce_binding `{bound_actor}`"
+        )));
+    }
+    if bundle.language_version != v_langx::compiler::LANGUAGE_VERSION
+        || bundle.compiler_version != v_langx::compiler::COMPILER_VERSION
+    {
+        return Err(VNetworkError::Consensus(format!(
+            "program bundle language/compiler version mismatch: got {}/{}",
+            bundle.language_version, bundle.compiler_version
+        )));
+    }
+    if proposal.execution_params != bundle.execution_params {
+        return Err(VNetworkError::Consensus(
+            "proposal execution_params diverge from program source bundle".to_string(),
+        ));
+    }
+
     let actual_source_hash = blake3_hex(bundle.source_bytes.as_bytes());
     if actual_source_hash != bundle.source_hash {
         return Err(VNetworkError::Consensus(format!(
@@ -28,6 +52,13 @@ pub fn validator_verify_program_bundle(
         None,
     )?;
 
+    if compiled.language_version != bundle.language_version
+        || compiled.compiler_version != bundle.compiler_version
+    {
+        return Err(VNetworkError::Consensus(
+            "compiled language/compiler version differs from bundle metadata".to_string(),
+        ));
+    }
     if compiled.program_hash != bundle.compiled_program_hash {
         return Err(VNetworkError::Consensus(format!(
             "compiled program hash mismatch during validator verification: expected {}, got {}",
@@ -60,6 +91,24 @@ pub fn validator_verify_program_bundle(
             "validator re-execution post_state_root `{}` != proposal `{}`",
             staged.post_state_root, proposal.post_state_root
         )));
+    }
+
+    let staged_event_ids: Vec<String> = staged
+        .generated_events
+        .iter()
+        .map(|e| e.event_id.clone())
+        .collect();
+    let staged_event_hashes: Vec<String> = staged
+        .generated_events
+        .iter()
+        .map(|e| e.event_hash.clone())
+        .collect();
+    if staged_event_ids != proposal.ordered_event_ids()
+        || staged_event_hashes != proposal.ordered_event_hashes()
+    {
+        return Err(VNetworkError::Consensus(
+            "validator re-execution generated event IDs/hashes diverge from proposal".to_string(),
+        ));
     }
     Ok(())
 }

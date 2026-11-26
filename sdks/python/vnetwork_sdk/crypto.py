@@ -26,6 +26,12 @@ class KeypairMaterial:
     public_key_hex: str
     private_key_hex: str
 
+    def __repr__(self) -> str:
+        return (
+            f"KeypairMaterial(key_role={self.key_role!r}, derived_id={self.derived_id!r}, "
+            f"public_key_hex={self.public_key_hex!r}, private_key_hex='[REDACTED]')"
+        )
+
     @classmethod
     def generate(cls, role: str = "participant") -> "KeypairMaterial":
         seed = secrets.token_bytes(32)
@@ -51,6 +57,7 @@ class KeypairMaterial:
 PROTOCOL_VERSION = "vector-network/1.0.0"
 LANGUAGE_VERSION = "v-langx/1.2.0"
 COMPILER_VERSION = "vectorspace-compiler/1.2.0"
+DOM_TRANSFER_APPROVAL_V1 = "vnetwork/transfer-approval/v1"
 
 
 def canonical_program_submit_object(
@@ -109,11 +116,10 @@ def canonical_transfer_approval_object(
     from_wallet_id: str,
     to_wallet_id: str,
     amount: int | str,
-    drain_bps: int | None = None,
 ) -> dict:
     return {
         "amount": str(amount),
-        "drain_bps": drain_bps,
+        "domain": DOM_TRANSFER_APPROVAL_V1,
         "from_wallet_id": from_wallet_id,
         "network_id": network_id,
         "protocol_version": PROTOCOL_VERSION,

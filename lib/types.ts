@@ -1,3 +1,28 @@
+export type VerificationStatus =
+  | "VERIFIED"
+  | "UNVERIFIED"
+  | "INVALID"
+  | "UNKNOWN"
+  | "PENDING";
+
+export type TransferScopeDto =
+  | "SAME_WALLET"
+  | "DIFFERENT_WALLETS_SAME_REGION"
+  | "DIFFERENT_REGIONS_SAME_SPACE"
+  | "DIFFERENT_SPACES";
+
+export type ScopeDrainRateDto =
+  | { status: "UNCONFIGURED" }
+  | { status: "CONFIGURED_BPS"; bps: number };
+
+export interface DrainPolicyDto {
+  policy_version: number;
+  same_wallet: ScopeDrainRateDto;
+  different_wallets_same_region: ScopeDrainRateDto;
+  different_regions_same_space: ScopeDrainRateDto;
+  different_spaces: ScopeDrainRateDto;
+}
+
 export interface StateRootDto {
   root_hash: string;
   event_count: number;
@@ -13,6 +38,12 @@ export interface NodeStatusDto {
   storage_engine: string;
   db_path: string;
   db_integrity_ok: boolean;
+  wal_consistency_ok: boolean;
+  equivocation_store_ok: boolean;
+  equivocation_count: number;
+  verification_status: VerificationStatus;
+  replay_status: VerificationStatus;
+  key_storage_mode?: string;
   vector_count: number;
   record_count: number;
   event_count: number;
@@ -88,12 +119,19 @@ export interface DrainFeeBreakdownDto {
   network_reward: string;
 }
 
+export interface WalletReceivePolicyDto {
+  mode: "OPEN" | "RESTRICTED" | "FROZEN";
+  allowed_senders?: string[];
+}
+
 export interface WalletDto {
   wallet_id: string;
   public_key_hex: string;
   label: string;
   region_id: string | null;
+  space_id?: string | null;
   creator_wallet_id: string | null;
+  receive_policy?: WalletReceivePolicyDto;
   created_at_ms: number;
   auth_ratio: number;
   balances: TokenBalanceDto[];
@@ -102,8 +140,11 @@ export interface WalletDto {
 
 export interface SupplyConservationDto {
   conserved: boolean;
+  verification_status: VerificationStatus;
   total_supply: string;
   sum_of_balances: string;
+  escrow_balances_total?: string;
+  unknown_account_balances_total?: string;
   minted_minus_burned: string;
   transported_minus_burned?: string;
 }
@@ -120,7 +161,8 @@ export interface TokenDto {
   transported_supply?: string;
   burned_supply: string;
   drained_fees_collected?: string;
-  drain_bps?: number;
+  drain_bps?: number | null;
+  drain_policy?: DrainPolicyDto | null;
   authority_pubkey: string;
   supply_policy: string;
   token_type: string;
@@ -227,6 +269,10 @@ export interface ReplayDto {
   replay_hash: string;
   applied_event_hashes: string[];
   matches_stored_state: boolean;
+  verification_status?: VerificationStatus;
+  events_replayed?: number;
+  replayed_state_root?: string;
+  live_state_root?: string;
   mismatch_reasons: string[];
 }
 

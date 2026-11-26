@@ -1,41 +1,127 @@
 use crate::authorization::record_nonce_and_request;
 use crate::replay::apply_event_to_state;
-use crate::state::NetworkLedgerState;
+use crate::state::{NetworkLedgerState, ValidatorEpochTransition};
+use std::collections::{BTreeMap, BTreeSet};
 use vnetwork_types::*;
 
 pub fn verify_quorum_certificate(
     qc: &QuorumCertificate,
     validators: &[ConsensusValidator],
 ) -> VResult<()> {
-    let active_validators: Vec<&ConsensusValidator> =
-        validators.iter().filter(|v| v.active).collect();
-    if active_validators.is_empty() {
+    verify_quorum_certificate_strict(qc, validators, None, None, None)
+}
+
+pub fn verify_quorum_certificate_strict(
+    qc: &QuorumCertificate,
+    validators: &[ConsensusValidator],
+    expected_network_id: Option<&str>,
+    expected_genesis_commitment: Option<&str>,
+    expected_epoch: Option<u64>,
+) -> VResult<()> {
+    // 1. Validate canonical pubkey uniqueness & active weights in validator set
+    let expected_vset_hash = validate_validator_set(validators)?;
+
+    // 2. Mandatory QC metadata & domain fields (no empty bypasses!)
+    if qc.protocol_version != PROTOCOL_VERSION {
+        return Err(VNetworkError::Consensus(format!(
+            "QC protocol_version `{}` != expected `{PROTOCOL_VERSION}`",
+            qc.protocol_version
+        )));
+    }
+    if qc.network_id.trim().is_empty() {
         return Err(VNetworkError::Consensus(
-            "no active validators configured".to_string(),
+            "QC missing required network_id".to_string(),
         ));
     }
-
-    if !qc.validator_set_hash.is_empty() {
-        let expected_hash = compute_validator_set_hash(validators)?;
-        if qc.validator_set_hash != expected_hash {
-            return Err(VNetworkError::Consensus(format!(
-                "QC validator_set_hash mismatch: expected {expected_hash}, got {}",
-                qc.validator_set_hash
+    if let Some(exp_net) = expected_network_id {
+        if qc.network_id != exp_net {
+            return Err(VNetworkError::ProfileMismatch(format!(
+                "QC network_id `{}` != expected `{exp_net}`",
+                qc.network_id
             )));
         }
     }
+    if qc.genesis_commitment.trim().is_empty() {
+        return Err(VNetworkError::Consensus(
+            "QC missing required genesis_commitment".to_string(),
+        ));
+    }
+    if let Some(exp_gen) = expected_genesis_commitment {
+        if qc.genesis_commitment != exp_gen {
+            return Err(VNetworkError::ProfileMismatch(format!(
+                "QC genesis_commitment `{}` != expected `{exp_gen}`",
+                qc.genesis_commitment
+            )));
+        }
+    }
+    if let Some(exp_ep) = expected_epoch {
+        if qc.epoch != exp_ep {
+            return Err(VNetworkError::Consensus(format!(
+                "QC epoch {} != expected {exp_ep}",
+                qc.epoch
+            )));
+        }
+    }
+    if qc.validator_set_hash.trim().is_empty() {
+        return Err(VNetworkError::Consensus(
+            "QC missing required validator_set_hash".to_string(),
+        ));
+    }
+    if qc.validator_set_hash != expected_vset_hash {
+        return Err(VNetworkError::Consensus(format!(
+            "QC validator_set_hash mismatch: expected {expected_vset_hash}, got {}",
+            qc.validator_set_hash
+        )));
+    }
+    if qc.proposal_digest.len() != 64 {
+        return Err(VNetworkError::Consensus(
+            "QC missing full 64-hex proposal_digest".to_string(),
+        ));
+    }
+    let expected_prop_id = format!("prop_{}_{}", qc.height, qc.proposal_digest);
+    if qc.proposal_id != expected_prop_id {
+        return Err(VNetworkError::Consensus(format!(
+            "QC proposal_id `{}` != expected `{expected_prop_id}`",
+            qc.proposal_id
+        )));
+    }
+    if qc.parent_commitment.trim().is_empty()
+        || qc.pre_state_root.trim().is_empty()
+        || qc.post_state_root.trim().is_empty()
+        || qc.operation_scope.trim().is_empty()
+    {
+        return Err(VNetworkError::Consensus(
+            "QC missing required parent_commitment, pre_state_root, post_state_root, or operation_scope"
+                .to_string(),
+        ));
+    }
+    if qc.ordered_event_ids.len() != qc.event_hashes.len() {
+        return Err(VNetworkError::Consensus(
+            "QC ordered_event_ids length does not match event_hashes length".to_string(),
+        ));
+    }
+    if qc.quorum_threshold_bps < DEFAULT_BFT_QUORUM_BPS || qc.quorum_threshold_bps > 10_000 {
+        return Err(VNetworkError::Consensus(format!(
+            "QC quorum_threshold_bps `{}` out of allowed range [{}..=10000]",
+            qc.quorum_threshold_bps, DEFAULT_BFT_QUORUM_BPS
+        )));
+    }
 
+    let active_validators: Vec<&ConsensusValidator> =
+        validators.iter().filter(|v| v.active).collect();
     let expected_total_weight: u64 = active_validators
         .iter()
         .try_fold(0u64, |acc, v| acc.checked_add(v.weight))
         .ok_or_else(|| VNetworkError::Consensus("validator total weight overflow".to_string()))?;
-    if expected_total_weight == 0 {
-        return Err(VNetworkError::Consensus(
-            "total active validator weight cannot be zero".to_string(),
-        ));
+    if qc.total_weight != expected_total_weight {
+        return Err(VNetworkError::Consensus(format!(
+            "QC total_weight {} != expected active weight {expected_total_weight}",
+            qc.total_weight
+        )));
     }
 
-    let mut seen_validators = std::collections::BTreeSet::new();
+    let mut seen_validators = BTreeSet::new();
+    let mut seen_pubkeys: BTreeSet<[u8; 32]> = BTreeSet::new();
     let mut verified_weight: u64 = 0;
 
     for vote in &qc.votes {
@@ -46,14 +132,22 @@ pub fn verify_quorum_certificate(
             )));
         }
         if vote.proposal_id != qc.proposal_id
+            || vote.proposal_digest != qc.proposal_digest
+            || vote.network_id != qc.network_id
+            || vote.genesis_commitment != qc.genesis_commitment
+            || vote.protocol_version != qc.protocol_version
             || vote.height != qc.height
             || vote.round != qc.round
             || vote.epoch != qc.epoch
+            || vote.validator_set_hash != qc.validator_set_hash
+            || vote.parent_commitment != qc.parent_commitment
+            || vote.pre_state_root != qc.pre_state_root
             || vote.post_state_root != qc.post_state_root
-            || vote.network_id != qc.network_id
+            || vote.operation_scope != qc.operation_scope
+            || vote.vote_phase != qc.vote_phase
         {
             return Err(VNetworkError::Consensus(
-                "quorum certificate vote does not match proposal metadata".to_string(),
+                "quorum certificate vote does not match proposal/QC commitments".to_string(),
             ));
         }
         let val = active_validators
@@ -72,13 +166,27 @@ pub fn verify_quorum_certificate(
                 val.validator_id
             )));
         }
+        let canonical_pk = canonical_ed25519_pubkey_bytes(&vote.validator_pubkey_hex)?;
+        if !seen_pubkeys.insert(canonical_pk) {
+            return Err(VNetworkError::Consensus(format!(
+                "duplicate Ed25519 public key across votes in QC for `{}`",
+                val.validator_id
+            )));
+        }
         vote.verify(val)?;
         verified_weight = verified_weight
             .checked_add(val.weight)
             .ok_or_else(|| VNetworkError::Consensus("verified quorum weight overflow".to_string()))?;
     }
 
-    let threshold = qc.quorum_threshold_bps.max(DEFAULT_BFT_QUORUM_BPS) as u128;
+    if qc.approving_weight != verified_weight {
+        return Err(VNetworkError::Consensus(format!(
+            "QC approving_weight {} != verified weight {verified_weight}",
+            qc.approving_weight
+        )));
+    }
+
+    let threshold = qc.quorum_threshold_bps as u128;
     if (verified_weight as u128) * 10_000 < (expected_total_weight as u128) * threshold {
         return Err(VNetworkError::Consensus(format!(
             "insufficient quorum weight: {verified_weight}/{expected_total_weight} (need >= {} bps)",
@@ -86,6 +194,72 @@ pub fn verify_quorum_certificate(
         )));
     }
     Ok(())
+}
+
+pub fn verify_membership_chain_from_genesis(
+    genesis_validators: &[ConsensusValidator],
+    transitions: &[ValidatorEpochTransition],
+    target_epoch: u64,
+    target_vset_hash: &str,
+    target_validators: &[ConsensusValidator],
+) -> VResult<Vec<ConsensusValidator>> {
+    let mut current_epoch = 1u64;
+    let mut current_validators = genesis_validators.to_vec();
+    let mut current_hash = validate_validator_set(&current_validators)?;
+    let mut last_height = 0u64;
+
+    for tr in transitions {
+        if tr.epoch != current_epoch + 1 {
+            return Err(VNetworkError::Consensus(format!(
+                "validator epoch transition gap: expected epoch {}, got {}",
+                current_epoch + 1,
+                tr.epoch
+            )));
+        }
+        if tr.height <= last_height {
+            return Err(VNetworkError::Consensus(format!(
+                "validator transition height {} did not advance past {}",
+                tr.height, last_height
+            )));
+        }
+        if tr.prev_validator_set_hash != current_hash {
+            return Err(VNetworkError::Consensus(format!(
+                "validator transition prev_validator_set_hash mismatch at epoch {}",
+                tr.epoch
+            )));
+        }
+        let next_hash = validate_validator_set(&tr.new_validators)?;
+        if tr.new_validator_set_hash != next_hash {
+            return Err(VNetworkError::Consensus(format!(
+                "validator transition new_validator_set_hash mismatch at epoch {}",
+                tr.epoch
+            )));
+        }
+        verify_quorum_certificate_strict(
+            &tr.transition_certificate,
+            &current_validators,
+            None,
+            None,
+            Some(current_epoch),
+        )?;
+        current_epoch = tr.epoch;
+        current_validators = tr.new_validators.clone();
+        current_hash = next_hash;
+        last_height = tr.height;
+    }
+
+    if current_epoch != target_epoch {
+        return Err(VNetworkError::Consensus(format!(
+            "proven validator epoch {current_epoch} != target epoch {target_epoch}"
+        )));
+    }
+    let expected_target_hash = validate_validator_set(target_validators)?;
+    if current_hash != target_vset_hash || current_hash != expected_target_hash {
+        return Err(VNetworkError::Consensus(format!(
+            "proven validator set hash `{current_hash}` != target `{target_vset_hash}`"
+        )));
+    }
+    Ok(current_validators)
 }
 
 pub fn commit_verified_proposal(
@@ -100,20 +274,33 @@ pub fn commit_verified_proposal(
             proposal.network_id, state.network_id
         )));
     }
+    if state.genesis_commitment.trim().is_empty()
+        || proposal.genesis_commitment != state.genesis_commitment
+    {
+        return Err(VNetworkError::ProfileMismatch(format!(
+            "proposal genesis_commitment `{}` != local `{}`",
+            proposal.genesis_commitment, state.genesis_commitment
+        )));
+    }
+    if proposal.protocol_version != state.protocol_version {
+        return Err(VNetworkError::ProfileMismatch(format!(
+            "proposal protocol_version `{}` != local `{}`",
+            proposal.protocol_version, state.protocol_version
+        )));
+    }
     if proposal.epoch != state.validator_epoch {
         return Err(VNetworkError::Consensus(format!(
             "proposal epoch {} != active validator_epoch {}",
             proposal.epoch, state.validator_epoch
         )));
     }
-    if !proposal.validator_set_hash.is_empty() {
-        let expected_vhash = compute_validator_set_hash(validators)?;
-        if proposal.validator_set_hash != expected_vhash {
-            return Err(VNetworkError::Consensus(format!(
-                "proposal validator_set_hash mismatch: expected {expected_vhash}, got {}",
-                proposal.validator_set_hash
-            )));
-        }
+
+    let expected_vhash = validate_validator_set(validators)?;
+    if proposal.validator_set_hash != expected_vhash {
+        return Err(VNetworkError::Consensus(format!(
+            "proposal validator_set_hash mismatch: expected {expected_vhash}, got {}",
+            proposal.validator_set_hash
+        )));
     }
 
     let proposer = validators
@@ -126,6 +313,14 @@ pub fn commit_verified_proposal(
             ))
         })?;
     proposal.verify_proposer_signature(proposer)?;
+
+    let expected_parent = state.expected_parent_commitment();
+    if proposal.parent_commitment != expected_parent {
+        return Err(VNetworkError::Consensus(format!(
+            "proposal parent_commitment `{}` != expected `{expected_parent}`",
+            proposal.parent_commitment
+        )));
+    }
 
     let current_root = state.compute_state_root()?;
     if proposal.pre_state_root != current_root {
@@ -142,18 +337,36 @@ pub fn commit_verified_proposal(
         )));
     }
 
-    verify_quorum_certificate(qc, validators)?;
+    verify_quorum_certificate_strict(
+        qc,
+        validators,
+        Some(&state.network_id),
+        Some(&state.genesis_commitment),
+        Some(state.validator_epoch),
+    )?;
     if qc.proposal_id != proposal.proposal_id
+        || qc.proposal_digest != proposal.proposal_digest
+        || qc.network_id != proposal.network_id
+        || qc.genesis_commitment != proposal.genesis_commitment
+        || qc.protocol_version != proposal.protocol_version
         || qc.height != proposal.height
+        || qc.round != proposal.round
         || qc.epoch != proposal.epoch
+        || qc.validator_set_hash != proposal.validator_set_hash
+        || qc.parent_commitment != proposal.parent_commitment
+        || qc.pre_state_root != proposal.pre_state_root
         || qc.post_state_root != proposal.post_state_root
+        || qc.operation_scope != proposal.operation_scope
+        || qc.ordered_event_ids != proposal.ordered_event_ids()
+        || qc.event_hashes != proposal.ordered_event_hashes()
     {
         return Err(VNetworkError::Consensus(
-            "quorum certificate does not match proposal".to_string(),
+            "quorum certificate does not strictly match proposal commitments".to_string(),
         ));
     }
 
     let mut staged = state.clone();
+    let mut executed_event_ids = Vec::with_capacity(proposal.events.len());
     for ev in &proposal.events {
         if !ev.verify_hashes()? {
             return Err(VNetworkError::Consensus(format!(
@@ -162,6 +375,12 @@ pub fn commit_verified_proposal(
             )));
         }
         apply_event_to_state(&mut staged, ev)?;
+        executed_event_ids.push(ev.event_id.clone());
+    }
+    if executed_event_ids != qc.ordered_event_ids {
+        return Err(VNetworkError::Consensus(
+            "executed proposal event IDs diverge from certified QC".to_string(),
+        ));
     }
     if let Some((actor_pubkey, request_id, nonce)) = &proposal.nonce_binding {
         record_nonce_and_request(&mut staged, request_id, actor_pubkey, *nonce);
@@ -175,9 +394,35 @@ pub fn commit_verified_proposal(
         )));
     }
 
+    staged.last_proposal_digest = proposal.proposal_digest.clone();
+    staged.event_history_root = staged.compute_event_history_root();
     staged
         .certificates
         .insert(qc.certificate_id.clone(), qc.clone());
     *state = staged;
     Ok(computed_post)
+}
+
+pub fn replay_validator_epoch_history(
+    genesis_validators: &[ConsensusValidator],
+    transitions: &[ValidatorEpochTransition],
+) -> VResult<(u64, Vec<ConsensusValidator>, BTreeMap<u64, Vec<ConsensusValidator>>)> {
+    let mut epoch_map = BTreeMap::new();
+    let mut current = genesis_validators.to_vec();
+    validate_validator_set(&current)?;
+    epoch_map.insert(1, current.clone());
+    let mut current_epoch = 1u64;
+    for tr in transitions {
+        verify_membership_chain_from_genesis(
+            genesis_validators,
+            &transitions[..=(tr.epoch as usize - 2)],
+            tr.epoch,
+            &tr.new_validator_set_hash,
+            &tr.new_validators,
+        )?;
+        current_epoch = tr.epoch;
+        current = tr.new_validators.clone();
+        epoch_map.insert(current_epoch, current.clone());
+    }
+    Ok((current_epoch, current, epoch_map))
 }

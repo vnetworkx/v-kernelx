@@ -73,15 +73,26 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.22"
-      - name: Verify JS/Python/Go parity & TypeScript compilation
+      - name: Install Node dependencies
+        run: npm ci
+      - name: Verify JS/TS/Python/Go parity & SDK unit tests
         run: |
           node tests/cross_language/verify_parity.mjs
+          npx tsx tests/cross_language/verify_parity.ts
           python3 tests/cross_language/verify_parity.py
+          go -C tests/cross_language run .
           go -C sdks/go build ./...
           go -C examples/go build ./...
+          node --test tests/cross_language/sdk_parity.test.mjs tests/explorer/integrity_and_crypto.test.mjs
+          python3 -m unittest discover -s tests/cross_language -p "test_*.py"
+      - name: Validate Next.js Explorer TypeScript, Lint, and Build
+        run: |
+          ./node_modules/.bin/tsc --noEmit
+          npm run lint
+          npm run build
       - name: Validate shell scripts syntax
         run: |
-          for s in scripts/*.sh tests/cross_language/*.sh; do
+          for s in scripts/*.sh tests/cross_language/*.sh tests/e2e/*.sh tests/multi_node/*.sh; do
             bash -n "$s"
           done
       - name: Validate config TOML manifests

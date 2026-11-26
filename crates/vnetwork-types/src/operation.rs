@@ -90,9 +90,14 @@ pub enum NetworkOperation {
         from_wallet_id: String,
         to_wallet_id: String,
         amount: u128,
-        drain_bps: Option<u16>,
         #[serde(default)]
         cosignatures: Vec<(String, String)>,
+    },
+    UpdateWalletReceivePolicy {
+        wallet_id: String,
+        mode: String,
+        #[serde(default)]
+        allowed_senders: Vec<String>,
     },
     DrainToken {
         token_id: String,

@@ -15,6 +15,8 @@ pub struct GenesisConfig {
     pub genesis_timestamp_ms: u64,
     pub initial_validators: Vec<ConsensusValidator>,
     pub allow_bootstrap_atlas: bool,
+    #[serde(default)]
+    pub drain_policy: DrainPolicy,
 }
 
 impl GenesisConfig {
@@ -32,7 +34,32 @@ impl GenesisConfig {
             genesis_timestamp_ms: 1_764_150_000_000,
             initial_validators: validators,
             allow_bootstrap_atlas: profile.allows_dev_atlas_fixture(),
+            drain_policy: DrainPolicy::unconfigured(),
         }
+    }
+
+    pub fn with_drain_policy(mut self, policy: DrainPolicy) -> Self {
+        self.drain_policy = policy;
+        self
+    }
+
+    pub fn validate(&self) -> VResult<()> {
+        if self.network_id.trim().is_empty() {
+            return Err(VNetworkError::Validation(
+                "genesis network_id cannot be empty".to_string(),
+            ));
+        }
+        if self.protocol_version != PROTOCOL_VERSION {
+            return Err(VNetworkError::ProfileMismatch(format!(
+                "genesis protocol_version `{}` != `{PROTOCOL_VERSION}`",
+                self.protocol_version
+            )));
+        }
+        self.drain_policy.validate()?;
+        if !self.initial_validators.is_empty() {
+            validate_validator_set(&self.initial_validators)?;
+        }
+        Ok(())
     }
 
     pub fn commitment_hash(&self) -> VResult<String> {
@@ -40,6 +67,7 @@ impl GenesisConfig {
         sorted_validators.sort_by(|a, b| a.validator_id.cmp(&b.validator_id));
         let obj = serde_json::json!({
             "allow_bootstrap_atlas": self.allow_bootstrap_atlas,
+            "drain_policy": self.drain_policy,
             "genesis_timestamp_ms": self.genesis_timestamp_ms,
             "initial_validators": sorted_validators,
             "network_id": self.network_id,
@@ -49,6 +77,16 @@ impl GenesisConfig {
         });
         Ok(blake3_hex(&canonical_json_bytes(&obj)?))
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ValidatorEpochTransition {
+    pub epoch: u64,
+    pub height: u64,
+    pub prev_validator_set_hash: String,
+    pub new_validator_set_hash: String,
+    pub new_validators: Vec<ConsensusValidator>,
+    pub transition_certificate: QuorumCertificate,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,6 +113,14 @@ pub struct NetworkLedgerState {
     pub validator_epoch: u64,
     #[serde(default)]
     pub validators: Vec<ConsensusValidator>,
+    #[serde(default)]
+    pub validator_membership_history: Vec<ValidatorEpochTransition>,
+    #[serde(default)]
+    pub drain_policy: DrainPolicy,
+    #[serde(default)]
+    pub last_proposal_digest: String,
+    #[serde(default)]
+    pub event_history_root: String,
     pub spaces: BTreeMap<String, SpaceEntity>,
     pub regions: BTreeMap<String, RegionEntity>,
     pub wallets: BTreeMap<String, WalletEntity>,
@@ -114,17 +160,23 @@ pub struct TransactionReceipt {
 }
 
 impl NetworkLedgerState {
-    pub fn new(genesis: &GenesisConfig) -> Self {
-        let genesis_commitment = genesis.commitment_hash().unwrap_or_default();
-        Self {
+    pub fn try_new(genesis: &GenesisConfig) -> VResult<Self> {
+        genesis.validate()?;
+        let genesis_commitment = genesis.commitment_hash()?;
+        let initial_event_root = blake3_hex(DOM_EVENT_HISTORY_V1.as_bytes());
+        Ok(Self {
             network_id: genesis.network_id.clone(),
             profile: genesis.profile,
             protocol_version: genesis.protocol_version.clone(),
-            genesis_commitment,
+            genesis_commitment: genesis_commitment.clone(),
             height: 0,
             logical_clock: 0,
             validator_epoch: 1,
             validators: genesis.initial_validators.clone(),
+            validator_membership_history: Vec::new(),
+            drain_policy: genesis.drain_policy.clone(),
+            last_proposal_digest: genesis_commitment,
+            event_history_root: initial_event_root,
             spaces: BTreeMap::new(),
             regions: BTreeMap::new(),
             wallets: BTreeMap::new(),
@@ -143,7 +195,11 @@ impl NetworkLedgerState {
             used_wallet_pop_nonces: BTreeSet::new(),
             transactions: BTreeMap::new(),
             snapshots: Vec::new(),
-        }
+        })
+    }
+
+    pub fn new(genesis: &GenesisConfig) -> Self {
+        Self::try_new(genesis).expect("invalid GenesisConfig passed to NetworkLedgerState::new")
     }
 
     pub fn balance_key(token_id: &str, wallet_id: &str) -> String {
@@ -158,6 +214,29 @@ impl NetworkLedgerState {
         self.events.last().map(|e| e.event_hash.clone())
     }
 
+    pub fn expected_parent_commitment(&self) -> String {
+        if self.height == 0 || self.last_proposal_digest.trim().is_empty() {
+            self.genesis_commitment.clone()
+        } else {
+            self.last_proposal_digest.clone()
+        }
+    }
+
+    pub fn compute_event_history_root(&self) -> String {
+        let mut h = blake3::Hasher::new();
+        h.update(DOM_EVENT_HISTORY_V1.as_bytes());
+        h.update(b":");
+        for ev in &self.events {
+            h.update(ev.sequence.to_le_bytes().as_slice());
+            h.update(b":");
+            h.update(ev.event_id.as_bytes());
+            h.update(b":");
+            h.update(ev.event_hash.as_bytes());
+            h.update(b"|");
+        }
+        h.finalize().to_hex().to_string()
+    }
+
     pub fn compute_state_root(&self) -> VResult<String> {
         let mut sorted_validators = self.validators.clone();
         sorted_validators.sort_by(|a, b| a.validator_id.cmp(&b.validator_id));
@@ -165,6 +244,7 @@ impl NetworkLedgerState {
             "actor_nonces": self.actor_nonces,
             "balances": self.balances,
             "contracts": self.contracts,
+            "drain_policy": self.drain_policy,
             "genesis_commitment": self.genesis_commitment,
             "height": self.height,
             "loans": self.loans,
@@ -180,6 +260,7 @@ impl NetworkLedgerState {
             "tokens": self.tokens,
             "used_wallet_pop_nonces": self.used_wallet_pop_nonces,
             "validator_epoch": self.validator_epoch,
+            "validator_membership_history": self.validator_membership_history,
             "validators": sorted_validators,
             "wallets": self.wallets,
         });

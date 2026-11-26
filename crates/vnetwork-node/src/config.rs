@@ -53,12 +53,24 @@ pub struct NodeConfig {
     pub allow_bootstrap_atlas: Option<bool>,
     #[serde(default)]
     pub genesis_file: Option<PathBuf>,
+    #[serde(default = "default_passphrase_env")]
+    pub key_passphrase_env: String,
+    #[serde(default)]
+    pub key_passphrase_file: Option<PathBuf>,
+    #[serde(default)]
+    pub allow_plaintext_key_fallback: bool,
+    #[serde(default)]
+    pub drain_policy: DrainPolicy,
     #[serde(default)]
     pub tls: TlsConfig,
 }
 
 fn default_quorum_bps() -> u16 {
     DEFAULT_BFT_QUORUM_BPS
+}
+
+fn default_passphrase_env() -> String {
+    "NETWORK_KEY_PASSPHRASE".to_string()
 }
 
 impl Default for NodeConfig {
@@ -88,6 +100,10 @@ impl Default for NodeConfig {
             quorum_threshold_bps: DEFAULT_BFT_QUORUM_BPS,
             allow_bootstrap_atlas: None,
             genesis_file: None,
+            key_passphrase_env: default_passphrase_env(),
+            key_passphrase_file: None,
+            allow_plaintext_key_fallback: false,
+            drain_policy: DrainPolicy::unconfigured(),
             tls: TlsConfig::default(),
         }
     }
@@ -214,11 +230,49 @@ impl NodeConfig {
         if let Ok(v) = std::env::var("NETWORK_ALLOW_BOOTSTRAP_ATLAS") {
             self.allow_bootstrap_atlas = Some(parse_bool(&v));
         }
+        if let Ok(v) = std::env::var("NETWORK_KEY_PASSPHRASE_FILE") {
+            if !v.trim().is_empty() {
+                self.key_passphrase_file = Some(PathBuf::from(v.trim()));
+            }
+        }
+        if let Ok(v) = std::env::var("NETWORK_ALLOW_PLAINTEXT_KEY_FALLBACK") {
+            self.allow_plaintext_key_fallback = parse_bool(&v);
+        }
+        if let Ok(v) = std::env::var("NETWORK_DRAIN_POLICY") {
+            if let Ok(dp) = serde_json::from_str::<DrainPolicy>(&v) {
+                self.drain_policy = dp;
+            }
+        }
         if let Ok(v) = std::env::var("NETWORK_TLS_CONFIGURATION") {
             if let Ok(tls) = serde_json::from_str::<TlsConfig>(&v) {
                 self.tls = tls;
             }
         }
+    }
+
+    pub fn resolve_key_passphrase(&self) -> VResult<Option<String>> {
+        if let Some(path) = &self.key_passphrase_file {
+            let raw = std::fs::read_to_string(path).map_err(|e| {
+                VNetworkError::Storage(format!("read key passphrase file {:?} failed: {e}", path))
+            })?;
+            let trimmed = raw.trim().to_string();
+            if !trimmed.is_empty() {
+                return Ok(Some(trimmed));
+            }
+        }
+        if !self.key_passphrase_env.trim().is_empty() {
+            if let Ok(val) = std::env::var(self.key_passphrase_env.trim()) {
+                if !val.is_empty() {
+                    return Ok(Some(val));
+                }
+            }
+        }
+        if let Ok(val) = std::env::var("NETWORK_KEY_PASSPHRASE") {
+            if !val.is_empty() {
+                return Ok(Some(val));
+            }
+        }
+        Ok(None)
     }
 
     pub fn validate(&self) -> VResult<()> {
@@ -237,6 +291,7 @@ impl NodeConfig {
                 self.quorum_threshold_bps
             )));
         }
+        self.drain_policy.validate()?;
         if self.profile == NetworkProfile::Production
             && self.network_id.to_ascii_lowercase().contains("devnet")
         {

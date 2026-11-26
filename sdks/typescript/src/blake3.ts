@@ -53,7 +53,7 @@ function compress(
     cv[0], cv[1], cv[2], cv[3], cv[4], cv[5], cv[6], cv[7],
     IV[0], IV[1], IV[2], IV[3], counterLow, counterHigh, blockLen, flags,
   ]);
-  let m = new Uint32Array(blockWords);
+  let m: Uint32Array = new Uint32Array(blockWords);
   roundFn(state, m); m = permute(m);
   roundFn(state, m); m = permute(m);
   roundFn(state, m); m = permute(m);
@@ -103,7 +103,7 @@ export function blake3Bytes(input: Uint8Array | string): Uint8Array {
   while (offset < totalLen) {
     const chunkEnd = Math.min(offset + 1024, totalLen);
     const isSingleChunk = chunkIdx === 0 && chunkEnd === totalLen;
-    let cv = new Uint32Array(IV);
+    let cv: Uint32Array = new Uint32Array(IV);
     let pos = offset;
     let blocksInChunk = 0;
 
@@ -137,14 +137,14 @@ export function blake3Bytes(input: Uint8Array | string): Uint8Array {
 
     if (offset < totalLen) {
       let totalChunks = chunkIdx;
-      let newCv = cv;
+      let newCv: Uint32Array = cv;
       while ((totalChunks & 1) === 0) {
         newCv = parentCv(cvStack.pop()!, newCv);
         totalChunks >>= 1;
       }
       cvStack.push(newCv);
     } else {
-      let cur = cv;
+      let cur: Uint32Array = cv;
       if (cvStack.length === 0) {
         const out = new Uint8Array(32);
         const view = new DataView(out.buffer);

@@ -1,0 +1,1325 @@
+VECTOR NETWORK
+
+FINAL SECURITY REPAIR AND NETWORK VERIFICATION
+
+Repository: https://github.com/vnetworkx/v-kernelx
+Vector Language: https://github.com/vnetworkx/vectorspace
+Authoritative implementation: Rust
+Required SDKs: Rust, JavaScript, TypeScript, Python and Go.
+
+1. MISSION
+
+Independently inspect the entire existing Vector Network repository and complete a comprehensive security, correctness and integration repair.
+
+Your responsibility is to make the existing implementation reliable, internally consistent, secure and demonstrably functional.
+
+You must investigate the actual source code, identify the root causes of defects, modify the implementation, add regression tests and run the full test suite.
+
+Do not produce only an audit report.
+
+Do not simply describe what needs to be done.
+
+Do not create placeholder files.
+
+Do not add unrelated features while critical security defects remain.
+
+Do not claim a component works because it compiles.
+
+Perform the actual engineering work and prove the results.
+
+The priorities are:
+
+1. Protect private keys and participant identities.
+2. Correct consensus proposal binding and certificate verification.
+3. Prevent validator double-signing across restarts.
+4. Make snapshot recovery and historical verification trustworthy.
+5. Correct deterministic, scope-dependent Token drains.
+6. Enforce both source and destination Wallet permissions.
+7. Remove fabricated Explorer verification results.
+8. Eliminate all remaining compilation, formatting, testing and integration errors.
+9. Prove the complete distributed network works across all five SDKs.
+
+Do not deploy production, publish packages or expose real participant assets during development and testing.
+
+⸻
+
+2. INDEPENDENT REPOSITORY AUDIT
+
+Inspect the current repository rather than relying on assumptions about its structure.
+
+Establish:
+
+git status --short
+git branch --show-current
+git log -5 --oneline --decorate
+git rev-parse HEAD
+cargo metadata --format-version 1
+cargo tree --workspace
+
+Inspect every relevant source file in:
+
+crates/vnetwork-types/
+crates/vnetwork-core/
+crates/vnetwork-consensus/
+crates/vnetwork-storage/
+crates/vnetwork-node/
+crates/vnetwork-api/
+crates/vnetwork-cli/
+sdks/rust/
+sdks/javascript/
+sdks/typescript/
+sdks/python/
+sdks/go/
+vendor/vectorspace/
+lib/server/
+scripts/
+tests/
+deploy/
+.github/workflows/
+docs/
+
+Adapt the paths if the current repository structure differs.
+
+Inspect the actual implementations of:
+
+* Node identity and key management.
+* Validator signing.
+* Proposal construction.
+* Proposal identifiers and hashing.
+* Vote signing.
+* Quorum certificate construction.
+* Quorum certificate verification.
+* Validator membership.
+* Equivocation detection.
+* Persistent commit records.
+* Snapshot creation and restoration.
+* Event WAL.
+* Recovery and replay.
+* Token transfer.
+* Drain calculation.
+* Source Wallet authorization.
+* Destination Wallet authorization.
+* Explorer verification.
+* Network configuration.
+* Public deployment.
+* CI workflows.
+
+Create or update:
+
+docs/engineering/FINAL_SECURITY_AUDIT.md
+docs/engineering/SECURITY_REPAIR_REGISTER.md
+docs/engineering/CONSENSUS_INVARIANTS.md
+docs/engineering/STORAGE_INVARIANTS.md
+docs/engineering/FINAL_ACCEPTANCE_RESULTS.md
+
+Preserve existing user changes.
+
+Do not delete unrelated files.
+
+Do not weaken compiler settings or tests to conceal defects.
+
+⸻
+
+3. CRITICAL SECURITY REPAIR: PRIVATE KEY PROTECTION
+
+Inspect
+
+crates/vnetwork-node/src/identity.rs
+
+Inspect every location where node identities, validator keys and private-key material are generated, stored, loaded, serialized, logged or displayed.
+
+The Network must never store production private keys in plaintext.
+
+A structure containing:
+
+private_key_hex: String
+
+must not be serialized directly into an ordinary JSON identity file without appropriate encryption.
+
+A secret-bearing structure must not derive an ordinary Debug implementation that exposes its contents.
+
+Required architecture
+
+Separate public identity metadata from secret key material.
+
+Conceptually:
+
+pub struct NodeIdentityMetadata {
+    pub node_id: NodeId,
+    pub public_key: PublicKey,
+    pub key_role: KeyRole,
+    pub key_version: u32,
+}
+pub struct ProtectedSigningKey {
+    // Secret handling implementation.
+    // No public access to raw secret material.
+}
+
+Adapt the actual types to the existing architecture.
+
+Encryption at rest
+
+Implement an appropriately reviewed encrypted key-storage mechanism.
+
+Requirements:
+
+* Use an established authenticated encryption implementation.
+* Use secure random salts and nonces.
+* Use an appropriately configured password-based key derivation mechanism where required.
+* Version the encrypted key format.
+* Authenticate the encrypted envelope.
+* Detect tampering.
+* Prevent secret reuse mistakes.
+* Use restrictive filesystem permissions.
+* Write encrypted files atomically.
+* Avoid plaintext temporary files.
+* Avoid logging secrets.
+* Redact secrets in all formatting and diagnostic paths.
+* Zeroize secret memory where practical and supported.
+
+Do not invent cryptographic algorithms.
+
+Use maintained, audited Rust cryptographic dependencies after checking their suitability.
+
+External signing providers
+
+Provide an abstraction that can support:
+
+* Encrypted local key storage.
+* OS-protected key storage where available.
+* Hardware-backed signing.
+* External key-management providers.
+
+A validator must be able to use an external signing provider without exporting its long-term private key into ordinary application memory unnecessarily.
+
+Production behaviour
+
+Production validator mode must refuse unsafe plaintext key storage.
+
+There must be no silent fallback to plaintext when encryption fails.
+
+Development mode may use explicitly identified ephemeral test keys.
+
+Never commit real keys.
+
+Mandatory tests
+
+Test:
+
+1. Generate a node identity.
+2. Persist its encrypted key.
+3. Restart and load it.
+4. Sign and verify a challenge.
+5. Reject an incorrect passphrase.
+6. Reject a modified encrypted file.
+7. Reject a truncated key file.
+8. Confirm private keys do not appear in Debug output.
+9. Confirm private keys do not appear in logs.
+10. Confirm production mode rejects plaintext identity files.
+11. Confirm key rotation preserves an auditable history.
+
+⸻
+
+4. CRITICAL CONSENSUS REPAIR: COMPLETE PROPOSAL BINDING
+
+Inspect
+
+crates/vnetwork-types/src/consensus.rs
+crates/vnetwork-core/src/engine.rs
+crates/vnetwork-core/src/state.rs
+crates/vnetwork-core/src/consensus_gate.rs
+
+Inspect how proposals, votes, identifiers and certificates are created and verified.
+
+A resulting state root alone does not identify the complete proposal that validators approved.
+
+Two different operations must not be treated as the same proposal merely because they happen to result in the same state root.
+
+Introduce a canonical complete proposal digest
+
+Create a versioned, domain-separated canonical proposal serialization.
+
+Its digest must commit to all execution-relevant content, including:
+
+* Network ID.
+* Genesis hash.
+* Protocol version.
+* Proposal version.
+* Proposal height.
+* Round or view.
+* Parent commitment.
+* Previous state root.
+* Resulting state root.
+* Validator-set epoch.
+* Validator-set hash.
+* Operation scope.
+* Ordered transaction identifiers.
+* Ordered program identifiers.
+* Canonical operation payloads or their verified hashes.
+* Ordered event IDs.
+* Ordered event hashes.
+* Imported Vector Language module commitments.
+* Relevant authorization commitments.
+* Execution metadata that affects deterministic results.
+
+Use the full cryptographic digest.
+
+Do not use a shortened 64-bit value as the security identity of a proposal.
+
+A compact display ID may exist for user interfaces, but all protocol verification must bind to the complete digest.
+
+Required conceptual model
+
+Canonical Proposal
+       |
+       v
+Canonical Serialization
+       |
+       v
+Domain-Separated Hash
+       |
+       v
+Complete Proposal Digest
+       |
+       +---- Vote Signing
+       |
+       +---- Quorum Certificate
+       |
+       +---- Finality Verification
+       |
+       +---- Storage Record
+       |
+       +---- Recovery
+
+Validator vote payload
+
+Every vote must bind to:
+
+* Network ID.
+* Genesis hash.
+* Protocol version.
+* Proposal digest.
+* Height.
+* Round.
+* Parent commitment.
+* Previous state root.
+* Resulting state root.
+* Operation scope.
+* Validator-set epoch.
+* Validator-set hash.
+* Decision.
+
+The vote must not approve merely a shortened proposal ID or state root.
+
+Use explicit signing-domain separation.
+
+Mandatory tests
+
+Construct two proposals with:
+
+* Identical resulting state roots but different event histories.
+* Identical state roots but different program sources.
+* Identical program sources but different execution parameters.
+* Different operation scopes.
+* Different parent commitments.
+* Different validator epochs.
+
+Verify that their proposal digests and vote payloads cannot be confused.
+
+Modify any execution-relevant proposal field after signing and verify that the original signature is rejected.
+
+⸻
+
+5. CRITICAL CONSENSUS REPAIR: STRICT QUORUM CERTIFICATE VERIFICATION
+
+Inspect
+
+crates/vnetwork-core/src/consensus_gate.rs
+crates/vnetwork-types/src/consensus.rs
+crates/vnetwork-consensus/src/
+
+Certificate validation must be complete, strict and independent.
+
+In particular, a missing validator-set hash must not be silently accepted.
+
+The certificate’s Network identity must be checked against the actual Network and proposal.
+
+Its event list must match the canonical proposal.
+
+Mandatory verification rules
+
+Every certificate must be rejected unless all required fields are present and correct.
+
+Verify:
+
+1. Network ID.
+2. Genesis hash.
+3. Protocol version.
+4. Proposal digest.
+5. Height.
+6. Round or view.
+7. Parent commitment.
+8. Previous state root.
+9. Resulting state root.
+10. Validator-set epoch.
+11. Validator-set hash.
+12. Operation scope.
+13. Ordered event IDs.
+14. Ordered event hashes.
+15. Validator signatures.
+16. Active membership.
+17. Eligible signer weights.
+18. Duplicate signer identities.
+19. Duplicate public keys.
+20. Quorum threshold.
+21. Conflicting votes.
+22. Certificate domain separation.
+
+The event IDs and event hashes in the certificate must match the exact canonical ordered event collection belonging to the proposal.
+
+Do not accept a different list that merely has the same number of elements.
+
+Do not accept an omitted validator-set hash.
+
+Do not accept a certificate from another Network.
+
+Do not accept a certificate from a stale epoch.
+
+Do not accept a certificate with a mismatched proposal digest.
+
+Duplicate validator keys
+
+Inspect:
+
+crates/vnetwork-consensus/src/membership.rs
+
+Reject genesis or membership updates that assign the same cryptographic public key to multiple validator identities.
+
+Compare canonical public-key bytes, not only differently formatted strings.
+
+Also prevent the same key from contributing multiple voting weights through aliases or duplicate registrations.
+
+Deduplicate consensus participation by the actual cryptographic signing identity as well as validator identity.
+
+Quorum rules
+
+Use the actual configured validator weights and protocol fault assumptions.
+
+Do not invent a quorum percentage.
+
+Do not assume a 2f + 1 threshold is valid unless the complete consensus algorithm and membership assumptions support it.
+
+Mandatory tests
+
+Create certificates with:
+
+* Missing validator-set hash.
+* Wrong validator-set hash.
+* Wrong Network ID.
+* Wrong genesis hash.
+* Wrong proposal digest.
+* Changed event list.
+* Reordered event list.
+* Duplicate validator ID.
+* Duplicate public key.
+* Inactive validator.
+* Stale epoch.
+* Invalid signature.
+* Insufficient weight.
+* Conflicting votes.
+
+Every invalid certificate must be rejected.
+
+⸻
+
+6. CRITICAL CONSENSUS SAFETY REPAIR: DURABLE ANTI-EQUIVOCATION
+
+Inspect
+
+crates/vnetwork-consensus/src/equivocation.rs
+crates/vnetwork-consensus/src/
+crates/vnetwork-node/src/lifecycle.rs
+crates/vnetwork-storage/src/
+
+A validator must not forget its previous votes after restarting.
+
+The protection against conflicting votes must survive:
+
+* Process termination.
+* Operating-system restart.
+* Node upgrade.
+* Storage reopen.
+* Network disconnection.
+* Recovery.
+
+An in-memory equivocation detector is insufficient for a production validator.
+
+Required implementation
+
+Create durable anti-equivocation records.
+
+For each protocol-defined voting conflict domain, persist:
+
+* Network ID.
+* Genesis hash.
+* Validator identity.
+* Validator public-key fingerprint.
+* Validator-set epoch.
+* Height.
+* Round or view.
+* Vote phase.
+* Complete proposal digest.
+* Parent commitment.
+* Vote decision.
+* Signing intent.
+* Signed vote or reproducible signing reference.
+* Protocol version.
+* Record integrity information.
+
+Use the exact conflict domain defined by the chosen consensus protocol.
+
+Do not assume that proposal IDs alone define whether two votes conflict.
+
+Signing procedure
+
+Implement a safe sequence:
+
+Receive vote request
+       |
+       v
+Validate membership
+       |
+       v
+Check durable anti-equivocation record
+       |
+       v
+Reject conflicting proposal
+       |
+       v
+Persist signing intent durably
+       |
+       v
+Generate or retrieve signature
+       |
+       v
+Persist signed vote durably
+       |
+       v
+Publish vote
+
+If the storage write fails, do not sign or publish a new vote.
+
+If the node crashes after recording signing intent but before recording the signature, it must not sign a conflicting proposal.
+
+A retry for the exact same proposal must be handled idempotently.
+
+A retry for a different proposal in the same conflict domain must be refused.
+
+Startup recovery
+
+Load and verify anti-equivocation records before enabling validator signing.
+
+If the records are corrupt, incomplete or unavailable, the validator must fail closed and refuse to vote until repaired.
+
+Do not silently initialize an empty anti-equivocation database when historical records are required.
+
+Evidence
+
+When an equivocation attempt is detected, retain sufficient verifiable evidence.
+
+Expose appropriate evidence through the consensus API and Explorer.
+
+Mandatory tests
+
+1. Vote once.
+2. Restart the validator.
+3. Attempt a conflicting vote.
+4. Confirm the vote is refused.
+5. Retry the original vote.
+6. Confirm safe idempotent behaviour.
+7. Simulate a crash after signing intent.
+8. Restart and confirm conflicting signing remains disabled.
+9. Simulate durable storage failure.
+10. Confirm no unauthorized signature is released.
+
+⸻
+
+7. CRITICAL RECOVERY REPAIR: SNAPSHOTS MUST BE CERTIFIED
+
+Inspect
+
+crates/vnetwork-storage/src/recovery.rs
+crates/vnetwork-storage/src/events.rs
+crates/vnetwork-core/src/state.rs
+crates/vnetwork-core/src/reconstruction.rs
+crates/vnetwork-core/src/replay.rs
+
+Snapshot recovery must not trust a snapshot merely because its data can be deserialized or because its state root matches an arbitrary stored proposal.
+
+A snapshot must be tied to verified committed history.
+
+Required snapshot verification
+
+Before using a snapshot as an authoritative recovery starting point:
+
+1. Verify Network identity.
+2. Verify canonical genesis hash.
+3. Verify snapshot schema version.
+4. Verify snapshot contents.
+5. Verify the snapshot’s state root.
+6. Verify the associated proposal digest.
+7. Verify its certified height.
+8. Verify the parent commitment.
+9. Verify the historical validator-set epoch.
+10. Verify the historical validator-set commitment.
+11. Verify the quorum certificate.
+12. Verify the event-history commitment.
+13. Verify the exact relationship between committed events and the checkpoint.
+14. Verify all required membership transitions.
+15. Verify relevant protocol versions.
+
+Historical validator membership
+
+If validator membership changes between genesis and a snapshot checkpoint, recovery must establish the legitimate chain of membership transitions.
+
+Do not verify a historical certificate against an arbitrary current validator set.
+
+Membership changes must themselves be traceable to valid committed protocol history.
+
+If the historical membership chain cannot be verified from genesis or an explicitly trusted checkpoint, do not accept the snapshot as authoritative.
+
+Event WAL consistency
+
+Inspect the current comparison between Event WAL length and expected event count.
+
+Comparing lengths is insufficient.
+
+Recovery must verify that every persisted authoritative event exactly corresponds to the ordered event IDs and hashes in verified committed proposals.
+
+Check:
+
+* Exact identities.
+* Exact event hashes.
+* Exact ordering.
+* Parent links.
+* Height relationships.
+* Duplicate events.
+* Missing events.
+* Extra events.
+* Conflicting history.
+
+An uncommitted or uncertified event must never become authoritative because its bytes appear in the WAL.
+
+Authenticated history
+
+Maintain the appropriate event-history root separately from the state root where that provides a cleaner architecture.
+
+The certified checkpoint must commit to the state and history necessary to prove reconstruction correctness.
+
+Use a canonical structure such as:
+
+Committed Checkpoint
+    |
+    +-- Proposal Digest
+    |
+    +-- State Root
+    |
+    +-- Event History Root
+    |
+    +-- Validator Set Commitment
+    |
+    +-- Quorum Certificate
+
+If the full history is not locally available, use verified ancestry proofs or retrieve the missing history from independent replicas.
+
+Do not infer authenticity from a matching balance or state root alone.
+
+Recovery failure
+
+If a certificate is invalid:
+
+* Reject the checkpoint.
+* Do not mark the node ready.
+* Preserve forensic evidence.
+* Report the exact error.
+
+If no trusted and verifiable snapshot exists, replay from genesis using committed history.
+
+Never silently skip invalid events to make recovery succeed.
+
+Mandatory recovery tests
+
+Test:
+
+* Valid certified snapshot.
+* Snapshot with correct state root but invalid certificate.
+* Missing certificate.
+* Wrong validator-set epoch.
+* Wrong validator-set hash.
+* Modified event.
+* Reordered event.
+* Extra uncertified event.
+* Missing certified event.
+* Duplicate event.
+* Broken parent chain.
+* Incorrect history root.
+* Incorrect genesis.
+* Incompatible schema.
+* Interrupted snapshot write.
+* Recovery following a validator-set transition.
+
+⸻
+
+8. CRITICAL TOKEN ECONOMICS REPAIR: REMOVE USER-CONTROLLED DRAIN OVERRIDES
+
+Inspect
+
+crates/vnetwork-core/src/token.rs
+crates/vnetwork-core/src/drain.rs
+crates/vnetwork-types/
+crates/vnetwork-core/src/language/
+crates/vnetwork-api/
+
+Inspect the current implementation of:
+
+override_drain_bps: Option<u16>
+
+and any equivalent request parameter.
+
+An ordinary sender must not be allowed to override the protocol drain policy.
+
+A sender must not be able to reduce a required drain simply by submitting a lower rate or zero.
+
+Required correction
+
+Remove user-controlled drain overrides from ordinary public transfer requests.
+
+Calculate the applicable drain from an approved, deterministic, versioned protocol policy.
+
+The policy must evaluate the actual transaction scope:
+
+SAME WALLET
+    Very low scope cost
+DIFFERENT WALLETS / SAME REGION
+    Higher scope cost
+DIFFERENT REGIONS / SAME SPACE
+    Very high scope cost
+DIFFERENT SPACES
+    Extremely high scope cost
+
+Calculate scope from verified source and destination entity relationships.
+
+Do not trust a client-submitted scope label.
+
+Policy requirements
+
+The drain policy must have:
+
+* Version.
+* Effective protocol context.
+* Scope classification.
+* Integer arithmetic.
+* Defined precision.
+* Defined rounding.
+* Minimum and maximum.
+* Supply-accounting behaviour.
+* Authorization requirements.
+* Event history.
+* Replay support.
+* Reconstruction support.
+* Consensus commitment where required.
+
+Use the approved policy configuration.
+
+Do not invent final drain percentages or economic rates.
+
+If a required policy value has not been approved, represent it as explicitly unconfigured and prevent affected operations from bypassing it through an implicit zero or arbitrary default.
+
+Do not silently apply a new economic rule merely to make the tests pass.
+
+Token-only invariant
+
+Drains must affect only the transferable token dimension.
+
+They must never change:
+
+* authratio(au);
+* energy.
+
+Destination authorization
+
+Inspect the source and destination Wallet permission evaluation.
+
+The source needs appropriate send authority.
+
+The destination must satisfy its applicable receive policy.
+
+Do not treat the recipient’s lack of a signed transaction as automatic rejection if the approved receiving model allows open receiving.
+
+Implement the proper Wallet receive policy explicitly, supporting the permissions and restrictions defined by the protocol.
+
+A frozen, restricted or unauthorized receiving target must be handled according to its policy.
+
+A sender must never be able to bypass destination restrictions.
+
+Mandatory tests
+
+Test all four transaction scopes.
+
+For each scope, test:
+
+* Correct policy selection.
+* Sender cannot override the policy.
+* Zero override is rejected.
+* Negative or excessive values are rejected.
+* Unconfigured policy fails safely.
+* Deterministic calculation.
+* Integer rounding.
+* Supply consistency.
+* Correct Token-only dimension changes.
+* Unauthorized source rejection.
+* Destination receiving restrictions.
+
+⸻
+
+9. EXPLORER INTEGRITY: NEVER FABRICATE VERIFICATION RESULTS
+
+Inspect
+
+lib/server/network-proxy.ts
+
+Inspect every field that claims the Network has verified something.
+
+Pay particular attention to code that returns fixed or inferred values equivalent to:
+
+db_integrity_ok: true,
+certified: true,
+replay_verified: Boolean(replayHash),
+storage_engine: "rust-wal-sqlite",
+
+These claims must be supported by actual evidence.
+
+Do not hard-code a successful result.
+
+Do not infer certification merely from the presence of a hash.
+
+Do not infer replay verification merely because a replay hash exists.
+
+Do not describe a storage backend as SQLite if the implementation uses a different backend.
+
+Do not calculate Token conservation by setting the displayed balance total equal to the configured supply.
+
+Required verification model
+
+Introduce explicit statuses such as:
+
+VERIFIED
+UNVERIFIED
+INVALID
+UNKNOWN
+PENDING
+
+Adapt them to the existing API type system.
+
+Each displayed claim must have evidence
+
+Database integrity
+
+Only report verified when the relevant storage integrity operation actually ran and succeeded.
+
+Replay verification
+
+Only report verified after a deterministic replay or independently verified replay certificate.
+
+Consensus certification
+
+Only report verified after actual certificate validation.
+
+Token supply conservation
+
+Calculate the actual total from authoritative verified records.
+
+Account for:
+
+* Wallet holdings.
+* Escrows.
+* Locked collateral.
+* Reserves.
+* Burned amounts.
+* Any other protocol-defined supply location.
+
+Do not count the same amount twice.
+
+Do not silently assume all issued supply is held in Wallet balances.
+
+Storage backend
+
+Report the actual configured backend and its real implementation.
+
+API contract
+
+Expose evidence behind important Explorer verification indicators.
+
+Where verification has not been performed, report UNKNOWN or UNVERIFIED.
+
+Where invalidity has been detected, report INVALID.
+
+Never turn absence of evidence into success.
+
+Mandatory Explorer tests
+
+Test:
+
+* Genuine valid certificate.
+* Invalid certificate.
+* Missing certificate.
+* Valid replay.
+* Incorrect replay.
+* Modified state root.
+* Modified event history.
+* Correct supply calculation.
+* Supply mismatch.
+* Pending transaction.
+* Unverified entity.
+* Failed storage integrity.
+
+The UI must clearly distinguish pending, verified and unverified information.
+
+⸻
+
+10. AUDIT THE ENTIRE PROTOCOL FOR RELATED DEFECTS
+
+Do not assume the listed defects are the only defects.
+
+Search and inspect every security-sensitive operation.
+
+Review:
+
+* Key derivation.
+* Public-key parsing.
+* Signature validation.
+* Signing domain.
+* Nonce generation.
+* Nonce consumption.
+* Challenge expiry.
+* Participant registration.
+* Participation-scope grants.
+* Wallet permissions.
+* Source authorization.
+* Destination authorization.
+* Validator membership.
+* Validator weights.
+* Duplicate identities.
+* Quorum calculations.
+* Equivocation.
+* Proposal identity.
+* Certificate verification.
+* State roots.
+* Event roots.
+* Genesis.
+* Snapshot integrity.
+* WAL consistency.
+* Replay.
+* Reconstruction.
+* Token supply.
+* Drains.
+* Double-spend prevention.
+* Concurrent transactions.
+* Contract execution.
+* Loan execution.
+* API authentication.
+* SDK authorization.
+* P2P peer authentication.
+* Node synchronization.
+* Network upgrades.
+
+Search for:
+
+unwrap()
+expect()
+unwrap_or_default()
+saturating_add()
+saturating_sub()
+let _ =
+TODO
+FIXME
+unimplemented!
+todo!
+unsafe
+
+Review every occurrence.
+
+These patterns are not automatically defects, but no protocol-critical failure may be hidden through casual defaults, ignored errors or silent arithmetic.
+
+Use checked arithmetic in authoritative operations.
+
+Propagate storage, consensus, cryptographic and recovery errors.
+
+A failure must never be converted into successful protocol execution.
+
+⸻
+
+11. ENSURE THE CANONICAL NETWORK STATE IS COMPLETE
+
+Inspect:
+
+crates/vnetwork-core/src/state.rs
+
+The authoritative state commitment must cover the protocol state that influences ownership, authorization, consensus or execution.
+
+Ensure the state commitment and associated authenticated roots account for:
+
+* Network identity.
+* Spaces.
+* Regions.
+* Wallets.
+* Tokens.
+* Token holdings.
+* Token supply.
+* Participants.
+* Nodes.
+* Participation grants.
+* Wallet authorization.
+* Validator membership.
+* Validator-set epoch.
+* Validator-set commitment.
+* Contracts.
+* Loans.
+* Ghost entities.
+* Protocol-relevant configuration.
+* Committed event position.
+
+Separate volatile operational information from authoritative protocol state.
+
+Examples of volatile information include:
+
+* Peer latency.
+* Temporary connection state.
+* Current process memory.
+* Noncommitted cache contents.
+
+Use deterministic serialization and versioned domain-separated hashing.
+
+Never hide hashing errors by returning an empty default hash.
+
+Test that changing any authoritative field changes the relevant commitment.
+
+Test that identical protocol state on independent nodes produces identical roots.
+
+⸻
+
+12. VALIDATE VECTOR LANGUAGE PROGRAM SECURITY
+
+The actual VectorSpace Rust compiler remains the language frontend.
+
+The kernel remains the authority.
+
+Ensure the complete program signature binds to:
+
+* Network ID.
+* Genesis hash.
+* Protocol version.
+* Language version.
+* Compiler identity.
+* Exact source commitment.
+* Compiled program commitment.
+* Imported module hashes.
+* Execution parameters.
+* Actor identity.
+* Authorization context.
+* Nonce.
+* Request ID.
+
+Do not permit imported module substitution.
+
+Do not permit execution parameters to change after signing.
+
+Validators must independently verify the same complete program.
+
+Ensure deterministic resource limits.
+
+Reject uncontrolled file access, arbitrary network access, environment-dependent operations, nondeterministic clock inputs and unbounded execution.
+
+A failed multi-operation program must not partially commit authoritative state.
+
+Test source tampering, module tampering, changed parameters, unsupported compiler versions, unauthorized operations and failed atomic execution.
+
+⸻
+
+13. COMPLETE THE NODE AND PUBLIC NETWORK SECURITY REVIEW
+
+Inspect:
+
+crates/vnetwork-node/
+crates/vnetwork-consensus/
+crates/vnetwork-api/
+deploy/
+config/
+
+Verify:
+
+* Secure peer identity.
+* Authenticated P2P connections.
+* TLS for public APIs.
+* Correct genesis.
+* Secure bootstrap configuration.
+* Advertised peer addresses.
+* Validator key isolation.
+* Durable synchronization.
+* Restart recovery.
+* Membership verification.
+* Resource limits.
+* Rate limiting.
+* Request size limits.
+* Proper node shutdown.
+* Health checks.
+
+Node health must reflect actual storage, synchronization, peer and validator conditions.
+
+A node with invalid storage or unverifiable history must not announce that it is ready to finalize operations.
+
+Do not claim that public connectivity exists until public infrastructure has actually been deployed and reached from outside the development environment.
+
+⸻
+
+14. FIX ALL FORMATTING, BUILD AND CI ERRORS
+
+Run:
+
+cargo fmt --all
+cargo fmt --all --check
+cargo check --workspace --all-targets --all-features
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+cargo build --workspace --release
+cargo doc --workspace --all-features --no-deps
+
+Then run all applicable checks for:
+
+* Python.
+* JavaScript.
+* TypeScript.
+* Go.
+* Vector Language.
+* CLI.
+* API.
+* Node runtime.
+* Docker.
+* Compose.
+* Cross-language conformance.
+
+Correct every failure.
+
+Do not disable checks.
+
+Do not remove test cases to make CI green.
+
+Do not mark skipped tests as passed.
+
+Ensure CI does not merely build the Rust crates while ignoring the actual SDK and network integration.
+
+Add automated CI coverage for the isolated multi-node acceptance suite where practical.
+
+⸻
+
+15. FULL DISTRIBUTED NETWORK ACCEPTANCE TEST
+
+Build on the actual implementation.
+
+Use at least four independent node processes or containers with:
+
+* Different node keys.
+* Different persistent storage.
+* Separate configuration.
+* Actual P2P connections.
+* Independently running validation logic.
+
+Run the complete development network.
+
+The acceptance suite must test:
+
+1. Four nodes start.
+2. All validate the same canonical genesis.
+3. Peer identities authenticate.
+4. Nodes discover and synchronize.
+5. Participants join.
+6. Participants receive only authorized scopes.
+7. Wallet keys register using proof of possession.
+8. Wallet permissions are enforced.
+9. A real Vector Language program compiles.
+10. The complete program signature is verified.
+11. A Space is created.
+12. A Region is created under the Space.
+13. A Wallet is created under the Region.
+14. A Token is created under the Wallet.
+15. A vContract is created and tested.
+16. A vLoan is tested where the implementation supports the operation.
+17. An authorized Token transfer executes.
+18. The drain policy is selected from actual transaction scope.
+19. AuthRatio remains unchanged.
+20. Energy remains unchanged.
+21. Validators sign the complete proposal.
+22. The quorum certificate is independently verified.
+23. Durable commitment succeeds.
+24. Event histories converge.
+25. State roots and history commitments match.
+26. A validator restarts.
+27. Its anti-equivocation history is recovered.
+28. A conflicting vote is rejected.
+29. A node restarts from persistent storage.
+30. It verifies its certified checkpoint.
+31. It synchronizes missing committed history.
+32. It reconstructs the correct state.
+33. Invalid certificates are rejected.
+34. Uncertified events are not committed.
+35. Explorer verification reports match actual evidence.
+
+Run the same Network workflows through:
+
+* Rust.
+* JavaScript.
+* TypeScript.
+* Python.
+* Go.
+
+All must access the same actual Network.
+
+Do not substitute a fake API or a separate SDK-specific protocol engine.
+
+Test safety
+
+The test must create an isolated temporary directory.
+
+It must not delete existing development data.
+
+No ordinary test command may recursively delete an arbitrary user-selected directory.
+
+⸻
+
+16. FINAL DEFINITION OF DONE
+
+Do not report full completion until all applicable criteria have actual test evidence.
+
+Key security
+
+* Production private keys are protected at rest.
+* Secrets are never logged.
+* Debug output does not reveal secrets.
+* Validator keys can use external signing providers.
+* Production validator mode rejects unsafe key storage.
+
+Consensus
+
+* Proposal IDs bind to complete canonical proposal contents.
+* Votes bind to complete proposal digests.
+* Certificates require complete correct context.
+* Duplicate validator public keys are rejected.
+* Quorum membership is verified.
+* Anti-equivocation records survive restarts.
+* Validators refuse conflicting votes.
+
+Storage and recovery
+
+* Finality never precedes durable commitment.
+* Snapshots require valid certified checkpoints.
+* Historical validator membership is verified.
+* WAL events match certified proposal histories exactly.
+* Uncertified events cannot become authoritative.
+* Recovery detects corruption.
+* Reconstructed state matches verified commitments.
+
+Token protocol
+
+* Exactly three dimensions.
+* Only Token is transferable.
+* AuthRatio is preserved during transfers.
+* Energy is preserved during transfers.
+* Supply limits are enforced.
+* Drain is calculated by protocol scope.
+* Send permissions are enforced.
+* Receive policies are enforced.
+
+Explorer
+
+* No fabricated verification statuses.
+* Certification is genuinely verified.
+* Replay status reflects actual evidence.
+* Storage integrity is genuinely checked.
+* Supply calculations use real records.
+* Unknown data is not displayed as verified.
+
+Network
+
+* Four independent nodes operate.
+* P2P authentication works.
+* Consensus works under documented assumptions.
+* Storage survives restart.
+* Nodes recover and rejoin.
+* Reconstruction works.
+* All five SDKs pass real integration tests.
+
+⸻
+
+17. FINAL ENGINEERING REPORT
+
+Provide:
+
+1. Repository branch and commit.
+2. Complete list of files changed.
+3. Every confirmed defect discovered.
+4. Root cause of each important defect.
+5. Exact correction implemented.
+6. Tests proving the correction.
+7. Exact commands executed.
+8. CI results.
+9. Four-node acceptance results.
+10. Five-SDK conformance results.
+11. Remaining security concerns.
+12. Production deployment requirements.
+
+For each feature, use one of these statuses:
+
+IMPLEMENTED
+TESTED
+INTEGRATION VERIFIED
+PRODUCTION CANDIDATE
+NOT COMPLETED
+BLOCKED BY ENVIRONMENT
+
+Never claim a test passed without executing it.
+
+Never claim public deployment works without actual public connectivity.
+
+Never claim production security without independent review.
+
+Do not leave unresolved high-severity security findings hidden in the report.
+
+⸻
+
+FINAL DIRECTIVE
+
+Vector Network needs a reliable foundation, not another round of superficial feature development.
+
+Protect the keys.
+
+Bind the exact proposal.
+
+Verify every certificate.
+
+Prevent validator equivocation.
+
+Trust only certified history.
+
+Enforce the real Token drain policy.
+
+Enforce both Wallet sides of a transfer.
+
+Show only genuine verification evidence.
+
+Make the entire system compile, run, synchronize and recover.
+
+Preserve Vector Language as the native programming interface and Rust as the authoritative protocol engine.
+
+Make Rust, JavaScript, TypeScript, Python and Go access the same actual decentralized Network.
+
+Complete the repairs, run the tests, correct the remaining failures and demonstrate that the Network works.

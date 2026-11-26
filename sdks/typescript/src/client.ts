@@ -202,7 +202,6 @@ export class VectorNetworkClient {
     toWalletId: string,
     amount: number | bigint | string,
     cosignerKey: KeypairMaterial,
-    drainBps: number | null = null,
   ): string {
     const networkId = this.resolvedNetworkId();
     const msg = canonicalJsonBytes(
@@ -212,10 +211,24 @@ export class VectorNetworkClient {
         fromWalletId,
         toWalletId,
         amount,
-        drainBps,
       }),
     );
     return signEd25519(cosignerKey.private_key_hex, msg);
+  }
+
+  updateWalletReceivePolicy(
+    walletId: string,
+    mode: "OPEN" | "RESTRICTED" | "FROZEN",
+    allowedSenders: string[] = [],
+  ): Promise<Record<string, unknown>> {
+    return this.submitOperation({
+      op: "UpdateWalletReceivePolicy",
+      payload: {
+        wallet_id: walletId,
+        mode,
+        allowed_senders: allowedSenders,
+      },
+    });
   }
 
   async submitOperation(operation: NetworkOperation): Promise<Record<string, unknown>> {
@@ -258,7 +271,10 @@ export class VectorNetworkClient {
   listLoans(): Promise<unknown[]> { return this.getJson("/v1/loans"); }
   getLedgerEvents(): Promise<unknown[]> { return this.getJson("/v1/ledger/events"); }
   getLedgerProofs(): Promise<Record<string, unknown>> { return this.getJson("/v1/ledger/proofs"); }
+  verifyLedgerReplay(): Promise<Record<string, unknown>> { return this.getJson("/v1/ledger/replay"); }
+  verifyTokenSupply(tokenId: string): Promise<Record<string, unknown>> { return this.getJson(`/v1/tokens/${tokenId}/supply`); }
   getConsensusStatus(): Promise<Record<string, unknown>> { return this.getJson("/v1/consensus/status"); }
+  getEquivocations(): Promise<Record<string, unknown>> { return this.getJson("/v1/consensus/equivocations"); }
 
   verifyReconstruction(entityKind: string, entityId: string): Promise<ReconstructionReport> {
     return this.postJson<ReconstructionReport>("/v1/reconstruction/verify", {

@@ -64,20 +64,35 @@ const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 export const PROTOCOL_VERSION = "vector-network/1.0.0";
 export const LANGUAGE_VERSION = "v-langx/1.2.0";
 export const COMPILER_VERSION = "vectorspace-compiler/1.2.0";
+export const DOM_TRANSFER_APPROVAL_V1 = "vnetwork/transfer-approval/v1";
+
+const WEAK_PUBKEY_HEXES = new Set([
+  "0".repeat(64),
+  "01" + "0".repeat(62),
+]);
 
 export function verifyEd25519(
   publicKeyHex: string,
   messageBytes: Uint8Array,
   signatureHex: string,
 ): boolean {
-  const pubRaw = Buffer.from(publicKeyHex.trim(), "hex");
+  const pkClean = publicKeyHex.trim().toLowerCase();
+  const sigClean = signatureHex.trim();
+  if (pkClean.length !== 64 || WEAK_PUBKEY_HEXES.has(pkClean) || sigClean.length !== 128) {
+    return false;
+  }
+  const pubRaw = Buffer.from(pkClean, "hex");
+  const sigRaw = Buffer.from(sigClean, "hex");
+  if (pubRaw.length !== 32 || sigRaw.length !== 64) {
+    return false;
+  }
   const spki = Buffer.concat([ED25519_SPKI_PREFIX, pubRaw]);
   const key = crypto.createPublicKey({ key: spki, format: "der", type: "spki" });
   return crypto.verify(
     null,
     Buffer.from(messageBytes),
     key,
-    Buffer.from(signatureHex.trim(), "hex"),
+    sigRaw,
   );
 }
 
@@ -141,11 +156,10 @@ export function canonicalTransferApprovalObject(params: {
   fromWalletId: string;
   toWalletId: string;
   amount: number | bigint | string;
-  drainBps?: number | null;
 }): Record<string, unknown> {
   return {
     amount: String(params.amount),
-    drain_bps: params.drainBps ?? null,
+    domain: DOM_TRANSFER_APPROVAL_V1,
     from_wallet_id: params.fromWalletId,
     network_id: params.networkId,
     protocol_version: PROTOCOL_VERSION,

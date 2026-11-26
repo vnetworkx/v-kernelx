@@ -108,3 +108,155 @@ impl TokenVector {
         Ok(())
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum TransferScope {
+    SameWallet,
+    DifferentWalletsSameRegion,
+    DifferentRegionsSameSpace,
+    DifferentSpaces,
+}
+
+impl TransferScope {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TransferScope::SameWallet => "SAME_WALLET",
+            TransferScope::DifferentWalletsSameRegion => "DIFFERENT_WALLETS_SAME_REGION",
+            TransferScope::DifferentRegionsSameSpace => "DIFFERENT_REGIONS_SAME_SPACE",
+            TransferScope::DifferentSpaces => "DIFFERENT_SPACES",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", content = "bps", rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ScopeDrainRate {
+    Unconfigured,
+    ConfiguredBps(u16),
+}
+
+impl Default for ScopeDrainRate {
+    fn default() -> Self {
+        Self::Unconfigured
+    }
+}
+
+impl ScopeDrainRate {
+    pub fn validate(&self) -> VResult<()> {
+        if let ScopeDrainRate::ConfiguredBps(bps) = self {
+            if *bps > 10_000 {
+                return Err(VNetworkError::Validation(format!(
+                    "drain rate bps `{bps}` exceeds maximum 10000"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+pub const DRAIN_POLICY_VERSION: u16 = 1;
+
+fn default_drain_policy_version() -> u16 {
+    DRAIN_POLICY_VERSION
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DrainPolicy {
+    #[serde(default = "default_drain_policy_version")]
+    pub policy_version: u16,
+    #[serde(default)]
+    pub same_wallet: ScopeDrainRate,
+    #[serde(default)]
+    pub different_wallets_same_region: ScopeDrainRate,
+    #[serde(default)]
+    pub different_regions_same_space: ScopeDrainRate,
+    #[serde(default)]
+    pub different_spaces: ScopeDrainRate,
+}
+
+impl Default for DrainPolicy {
+    fn default() -> Self {
+        Self::unconfigured()
+    }
+}
+
+impl DrainPolicy {
+    pub fn unconfigured() -> Self {
+        Self {
+            policy_version: DRAIN_POLICY_VERSION,
+            same_wallet: ScopeDrainRate::Unconfigured,
+            different_wallets_same_region: ScopeDrainRate::Unconfigured,
+            different_regions_same_space: ScopeDrainRate::Unconfigured,
+            different_spaces: ScopeDrainRate::Unconfigured,
+        }
+    }
+
+    pub fn new(
+        same_wallet: ScopeDrainRate,
+        different_wallets_same_region: ScopeDrainRate,
+        different_regions_same_space: ScopeDrainRate,
+        different_spaces: ScopeDrainRate,
+    ) -> VResult<Self> {
+        same_wallet.validate()?;
+        different_wallets_same_region.validate()?;
+        different_regions_same_space.validate()?;
+        different_spaces.validate()?;
+        Ok(Self {
+            policy_version: DRAIN_POLICY_VERSION,
+            same_wallet,
+            different_wallets_same_region,
+            different_regions_same_space,
+            different_spaces,
+        })
+    }
+
+    pub fn validate(&self) -> VResult<()> {
+        if self.policy_version != DRAIN_POLICY_VERSION {
+            return Err(VNetworkError::Validation(format!(
+                "unsupported drain policy version {}",
+                self.policy_version
+            )));
+        }
+        self.same_wallet.validate()?;
+        self.different_wallets_same_region.validate()?;
+        self.different_regions_same_space.validate()?;
+        self.different_spaces.validate()?;
+        Ok(())
+    }
+
+    pub fn rate_for_scope(&self, scope: TransferScope) -> VResult<u16> {
+        self.validate()?;
+        let rate = match scope {
+            TransferScope::SameWallet => self.same_wallet,
+            TransferScope::DifferentWalletsSameRegion => self.different_wallets_same_region,
+            TransferScope::DifferentRegionsSameSpace => self.different_regions_same_space,
+            TransferScope::DifferentSpaces => self.different_spaces,
+        };
+        match rate {
+            ScopeDrainRate::ConfiguredBps(bps) => Ok(bps),
+            ScopeDrainRate::Unconfigured => Err(VNetworkError::Validation(format!(
+                "drain rate for transfer scope `{}` is UNCONFIGURED; refusing transfer (fail-closed)",
+                scope.as_str()
+            ))),
+        }
+    }
+
+    pub fn compute_drain(&self, scope: TransferScope, amount: u128) -> VResult<(u16, u128, u128)> {
+        if amount == 0 {
+            return Err(VNetworkError::Validation(
+                "transfer amount must be positive".to_string(),
+            ));
+        }
+        let bps = self.rate_for_scope(scope)?;
+        let fee = amount
+            .checked_mul(bps as u128)
+            .ok_or_else(|| VNetworkError::Validation("drain fee overflow".to_string()))?
+            / 10_000;
+        let net = amount
+            .checked_sub(fee)
+            .ok_or_else(|| VNetworkError::Validation("drain net underflow".to_string()))?;
+        Ok((bps, fee, net))
+    }
+}
+

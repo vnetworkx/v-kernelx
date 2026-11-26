@@ -461,12 +461,12 @@ fn execute_single_compiled_op(
                 .and_then(|v| v.as_str())
                 .unwrap_or("0");
             let amount = parse_u128_str(amt_str)?;
-            let drain_bps = op
-                .params
-                .get("drain")
-                .and_then(|v| v.as_str())
-                .and_then(|s| s.parse::<u16>().ok());
-
+            if op.params.get("drain").is_some_and(|v| !v.is_null()) {
+                return Err(VNetworkError::Validation(
+                    "sender-supplied `drain` override on `TOKEN_TRANSFER` is forbidden; drain is strictly protocol-determined from transfer scope"
+                        .to_string(),
+                ));
+            }
             let token_id = resolve_alias(aliases, token_ref);
             let from_wallet_id = resolve_alias(aliases, from_ref);
             let to_wallet_id = resolve_alias(aliases, to_ref);
@@ -476,7 +476,6 @@ fn execute_single_compiled_op(
                 from_wallet_id,
                 to_wallet_id,
                 amount,
-                drain_bps,
                 cosignatures: Vec::new(),
             };
             let outcome = apply_network_operation_with_genesis(state, genesis, &net_op, actor_pubkey, timestamp_ms)?;
@@ -497,7 +496,6 @@ fn execute_single_compiled_op(
                     from_wallet_id,
                     to_wallet_id,
                     amount,
-                    drain_bps: None,
                     cosignatures: Vec::new(),
                 };
                 let outcome = apply_network_operation_with_genesis(state, genesis, &net_op, actor_pubkey, timestamp_ms)?;
@@ -680,7 +678,9 @@ fn execute_single_compiled_op(
             } else if state.loans.contains_key(&resolved) {
                 "loan"
             } else {
-                "token"
+                return Err(VNetworkError::NotFound(format!(
+                    "reconstruct target `{resolved}` not found in spaces, regions, wallets, tokens, contracts, or loans"
+                )));
             };
             let report = reconstruct_entity(state, genesis, kind, &resolved)?;
             outs.push(format!(

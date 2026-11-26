@@ -1,4 +1,4 @@
-import { ClientIdentity, VectorNetworkClient } from "../../sdks/typescript/src/index.ts";
+import { ClientIdentity, VectorNetworkClient } from "../../sdks/typescript/src/index";
 
 const endpoint = process.env.VNETWORK_ENDPOINT || "http://127.0.0.1:8080";
 const networkId = process.env.VNETWORK_NETWORK_ID || "vector-devnet-1";

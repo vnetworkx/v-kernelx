@@ -1,4 +1,4 @@
-use crate::config::{load_cli_state, save_cli_state};
+use crate::config::{load_cli_identity, load_cli_state, save_cli_state};
 use std::path::PathBuf;
 use vnetwork_sdk::VectorNetworkClient;
 use vnetwork_types::ParticipationLevel;
@@ -6,12 +6,11 @@ use vnetwork_types::ParticipationLevel;
 pub async fn run_join(
     scopes: Vec<String>,
     auth_file: Option<PathBuf>,
+    passphrase: Option<&str>,
+    allow_plaintext_fallback: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let state = load_cli_state();
-    let id = state
-        .identity
-        .clone()
-        .ok_or("no local identity found; run `vn identity create` first")?;
+    let state = load_cli_state()?;
+    let id = load_cli_identity(&state, passphrase, allow_plaintext_fallback)?;
     let mut parsed_scopes = Vec::new();
     for s in scopes {
         for part in s.split(',') {

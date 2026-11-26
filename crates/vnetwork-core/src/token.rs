@@ -1,4 +1,4 @@
-use crate::drain::calculate_drain_fee;
+use crate::drain::compute_scope_drain;
 use crate::hierarchy::{verify_token_exists, verify_wallet_exists};
 use crate::identity::require_participant_scope_at;
 use crate::state::NetworkLedgerState;
@@ -13,11 +13,10 @@ pub fn canonical_transfer_approval_bytes(
     from_wallet_id: &str,
     to_wallet_id: &str,
     amount: u128,
-    drain_bps: Option<u16>,
 ) -> VResult<Vec<u8>> {
     let obj = serde_json::json!({
         "amount": amount.to_string(),
-        "drain_bps": drain_bps,
+        "domain": DOM_TRANSFER_APPROVAL_V1,
         "from_wallet_id": from_wallet_id,
         "network_id": network_id,
         "protocol_version": protocol_version,
@@ -172,7 +171,7 @@ pub fn apply_create_token(
         actor_pubkey,
         state.logical_clock,
         timestamp_ms,
-        serde_json::to_value(&token).unwrap_or_default(),
+        serde_json::to_value(&token).map_err(|e| VNetworkError::Serialization(e.to_string()))?,
         "",
         after_hash,
     )?;
@@ -187,10 +186,57 @@ pub fn apply_transfer_token(
     from_wallet_ref: &str,
     to_wallet_ref: &str,
     amount: u128,
-    override_drain_bps: Option<u16>,
     cosignatures: &[(String, String)],
     actor_pubkey: &str,
     timestamp_ms: u64,
+) -> VResult<(TokenBalanceRecord, TokenBalanceRecord, u128, LedgerEvent)> {
+    execute_transfer_internal(
+        state,
+        token_ref,
+        from_wallet_ref,
+        to_wallet_ref,
+        amount,
+        cosignatures,
+        actor_pubkey,
+        timestamp_ms,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_protocol_settlement_transfer(
+    state: &mut NetworkLedgerState,
+    token_ref: &str,
+    from_wallet_ref: &str,
+    to_wallet_ref: &str,
+    amount: u128,
+    actor_pubkey: &str,
+    timestamp_ms: u64,
+) -> VResult<(TokenBalanceRecord, TokenBalanceRecord, u128, LedgerEvent)> {
+    execute_transfer_internal(
+        state,
+        token_ref,
+        from_wallet_ref,
+        to_wallet_ref,
+        amount,
+        &[],
+        actor_pubkey,
+        timestamp_ms,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_transfer_internal(
+    state: &mut NetworkLedgerState,
+    token_ref: &str,
+    from_wallet_ref: &str,
+    to_wallet_ref: &str,
+    amount: u128,
+    cosignatures: &[(String, String)],
+    actor_pubkey: &str,
+    timestamp_ms: u64,
+    is_protocol_settlement: bool,
 ) -> VResult<(TokenBalanceRecord, TokenBalanceRecord, u128, LedgerEvent)> {
     if amount == 0 {
         return Err(VNetworkError::Validation(
@@ -202,21 +248,39 @@ pub fn apply_transfer_token(
     let from_wallet = verify_wallet_exists(state, from_wallet_ref)?.clone();
     let to_wallet = verify_wallet_exists(state, to_wallet_ref)?.clone();
 
-    if from_wallet.wallet_id == to_wallet.wallet_id {
-        return Err(VNetworkError::Validation(
-            "source and destination wallets must differ".to_string(),
-        ));
+    let same_wallet = from_wallet.wallet_id == to_wallet.wallet_id;
+
+    // 1. Source permission check
+    if is_protocol_settlement {
+        from_wallet.verify_permission(
+            actor_pubkey,
+            WalletPermission::LoanInteract,
+            Some(&token.token_id),
+            Some(amount),
+            timestamp_ms,
+        )?;
+    } else {
+        from_wallet.verify_permission(
+            actor_pubkey,
+            WalletPermission::Send,
+            Some(&token.token_id),
+            Some(amount),
+            timestamp_ms,
+        )?;
+        if same_wallet {
+            from_wallet.verify_permission(
+                actor_pubkey,
+                WalletPermission::Receive,
+                Some(&token.token_id),
+                Some(amount),
+                timestamp_ms,
+            )?;
+        }
     }
 
-    from_wallet.verify_permission(
-        actor_pubkey,
-        WalletPermission::Send,
-        Some(&token.token_id),
-        Some(amount),
-        timestamp_ms,
-    )?;
-
-    if from_wallet.approval_threshold > 1 {
+    // 2. Multisig verification when required on source wallet
+    let mut verified_cosigner_pks: Vec<String> = Vec::new();
+    if from_wallet.approval_threshold > 1 && !is_protocol_settlement {
         let approval_bytes = canonical_transfer_approval_bytes(
             &state.network_id,
             &state.protocol_version,
@@ -224,7 +288,6 @@ pub fn apply_transfer_token(
             &from_wallet.wallet_id,
             &to_wallet.wallet_id,
             amount,
-            override_drain_bps,
         )?;
         let mut approvers = BTreeSet::new();
         approvers.insert(actor_pubkey.to_string());
@@ -237,7 +300,9 @@ pub fn apply_transfer_token(
                 timestamp_ms,
             )?;
             verify_ed25519(signer_pk, &approval_bytes, sig_hex)?;
-            approvers.insert(signer_pk.clone());
+            if approvers.insert(signer_pk.clone()) {
+                verified_cosigner_pks.push(signer_pk.clone());
+            }
         }
         if approvers.len() < from_wallet.approval_threshold as usize {
             return Err(VNetworkError::Authorization(format!(
@@ -248,6 +313,18 @@ pub fn apply_transfer_token(
         }
     }
 
+    // 3. Destination receive policy verification (both-side wallet authorization)
+    let cosigner_refs: Vec<&str> = verified_cosigner_pks.iter().map(String::as_str).collect();
+    to_wallet.verify_receive_allowed(&from_wallet.wallet_id, actor_pubkey, &cosigner_refs)?;
+
+    // 4. Derive transfer scope strictly from verified ledger hierarchy and compute integer drain
+    let (scope, drain_bps, drain_fee, net_received) = if is_protocol_settlement {
+        let s = crate::drain::derive_transfer_scope(&from_wallet, &to_wallet);
+        (s, 0u16, 0u128, amount)
+    } else {
+        compute_scope_drain(&state.drain_policy, &from_wallet, &to_wallet, amount)?
+    };
+
     let from_key = NetworkLedgerState::balance_key(&token.token_id, &from_wallet.wallet_id);
     let to_key = NetworkLedgerState::balance_key(&token.token_id, &to_wallet.wallet_id);
 
@@ -255,15 +332,9 @@ pub fn apply_transfer_token(
         .balances
         .get(&from_key)
         .cloned()
-        .ok_or_else(|| VNetworkError::InsufficientBalance("source wallet holds 0 balance".to_string()))?;
-
-    let before_to = state.balances.get(&to_key).cloned().unwrap_or(TokenBalanceRecord {
-        token_id: token.token_id.clone(),
-        wallet_id: to_wallet.wallet_id.clone(),
-        vector: TokenVector::zero(),
-        updated_at_ms: timestamp_ms,
-        version: 0,
-    });
+        .ok_or_else(|| {
+            VNetworkError::InsufficientBalance("source wallet holds 0 balance".to_string())
+        })?;
 
     if before_from.vector.token < amount {
         return Err(VNetworkError::InsufficientBalance(format!(
@@ -272,49 +343,81 @@ pub fn apply_transfer_token(
         )));
     }
 
-    let drain_bps = override_drain_bps.unwrap_or(token.drain_bps);
-    let (drain_fee, net_received) = if drain_bps > 0 {
-        calculate_drain_fee(amount, drain_bps)?
+    let (before_to, after_from, after_to, before_hash, after_hash) = if same_wallet {
+        let before_to = before_from.clone();
+        let after_vec = before_from
+            .vector
+            .checked_sub_token(amount)?
+            .checked_add_token(net_received)?;
+        let mut after_single = before_from.clone();
+        after_single.vector = after_vec;
+        after_single.updated_at_ms = timestamp_ms;
+        after_single.version = after_single
+            .version
+            .checked_add(1)
+            .ok_or_else(|| VNetworkError::Validation("balance version overflow".to_string()))?;
+        TokenVector::verify_transfer_invariant(
+            &before_from.vector,
+            &after_single.vector,
+            &before_to.vector,
+            &after_single.vector,
+        )?;
+        let b_hash = blake3_hex(&canonical_json_bytes(&(&before_from, &before_to))?);
+        state.balances.insert(from_key, after_single.clone());
+        let a_hash = blake3_hex(&canonical_json_bytes(&(&after_single, &after_single))?);
+        (before_to, after_single.clone(), after_single, b_hash, a_hash)
     } else {
-        (0, amount)
+        let before_to = state
+            .balances
+            .get(&to_key)
+            .cloned()
+            .unwrap_or(TokenBalanceRecord {
+                token_id: token.token_id.clone(),
+                wallet_id: to_wallet.wallet_id.clone(),
+                vector: TokenVector::zero(),
+                updated_at_ms: timestamp_ms,
+                version: 0,
+            });
+        let mut after_from = before_from.clone();
+        after_from.vector = before_from.vector.checked_sub_token(amount)?;
+        after_from.updated_at_ms = timestamp_ms;
+        after_from.version = after_from
+            .version
+            .checked_add(1)
+            .ok_or_else(|| VNetworkError::Validation("balance version overflow".to_string()))?;
+
+        let mut after_to = before_to.clone();
+        after_to.vector = before_to.vector.checked_add_token(net_received)?;
+        after_to.updated_at_ms = timestamp_ms;
+        after_to.version = after_to
+            .version
+            .checked_add(1)
+            .ok_or_else(|| VNetworkError::Validation("balance version overflow".to_string()))?;
+
+        TokenVector::verify_transfer_invariant(
+            &before_from.vector,
+            &after_from.vector,
+            &before_to.vector,
+            &after_to.vector,
+        )?;
+        let b_hash = blake3_hex(&canonical_json_bytes(&(&before_from, &before_to))?);
+        state.balances.insert(from_key, after_from.clone());
+        state.balances.insert(to_key, after_to.clone());
+        let a_hash = blake3_hex(&canonical_json_bytes(&(&after_from, &after_to))?);
+        (before_to, after_from, after_to, b_hash, a_hash)
     };
-
-    // Token-only dimension rule: ONLY dimension 0 (`token`) changes.
-    // AuthRatio (dim 1) and Energy (dim 2) remain strictly untouched.
-    let mut after_from = before_from.clone();
-    after_from.vector = before_from.vector.checked_sub_token(amount)?;
-    after_from.updated_at_ms = timestamp_ms;
-    after_from.version = after_from
-        .version
-        .checked_add(1)
-        .ok_or_else(|| VNetworkError::Validation("balance version overflow".to_string()))?;
-
-    let mut after_to = before_to.clone();
-    after_to.vector = before_to.vector.checked_add_token(net_received)?;
-    after_to.updated_at_ms = timestamp_ms;
-    after_to.version = after_to
-        .version
-        .checked_add(1)
-        .ok_or_else(|| VNetworkError::Validation("balance version overflow".to_string()))?;
-
-    TokenVector::verify_transfer_invariant(
-        &before_from.vector,
-        &after_from.vector,
-        &before_to.vector,
-        &after_to.vector,
-    )?;
-
-    let before_hash = blake3_hex(&canonical_json_bytes(&(&before_from, &before_to))?);
-
-    state.balances.insert(from_key, after_from.clone());
-    state.balances.insert(to_key, after_to.clone());
+    let _ = before_to;
 
     if drain_fee > 0 {
         let mut t = token.clone();
         t.total_supply = t
             .total_supply
             .checked_sub(drain_fee)
-            .ok_or_else(|| VNetworkError::Validation("token total_supply underflow on drain fee".to_string()))?;
+            .ok_or_else(|| {
+                VNetworkError::Validation(
+                    "token total_supply underflow on drain fee".to_string(),
+                )
+            })?;
         t.version = t
             .version
             .checked_add(1)
@@ -327,8 +430,6 @@ pub fn apply_transfer_token(
             "token supply conservation check failed".to_string(),
         ));
     }
-
-    let after_hash = blake3_hex(&canonical_json_bytes(&(&after_from, &after_to))?);
 
     state.logical_clock += 1;
     let sequence = (state.events.len() as u64) + 1;
@@ -348,6 +449,9 @@ pub fn apply_transfer_token(
             "symbol": token.symbol,
             "from_wallet_id": from_wallet.wallet_id,
             "to_wallet_id": to_wallet.wallet_id,
+            "transfer_scope": scope.as_str(),
+            "drain_bps": drain_bps,
+            "protocol_settlement": is_protocol_settlement,
             "amount": amount.to_string(),
             "drain_fee": drain_fee.to_string(),
             "net_received": net_received.to_string(),

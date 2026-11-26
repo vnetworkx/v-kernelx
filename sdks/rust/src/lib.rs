@@ -1,6 +1,7 @@
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::mpsc;
@@ -8,19 +9,55 @@ use tokio_tungstenite::connect_async;
 use v_langx::compiler::{compile_source_with_imports, CompiledProgram, FilesystemModuleResolver};
 use vnetwork_types::*;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClientIdentityMetadata {
+    pub display_name: String,
+    pub participant_id: String,
+    pub participant_pubkey: String,
+    pub node_id: String,
+    pub node_pubkey: String,
+    pub storage_mode: String,
+    pub participant_key_version: u32,
+    pub node_key_version: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EncryptedClientIdentity {
+    pub envelope_version: u16,
+    pub display_name: String,
+    pub participant_id: String,
+    pub node_id: String,
+    pub participant_envelope: EncryptedKeyEnvelope,
+    pub node_envelope: EncryptedKeyEnvelope,
+}
+
+/// Protected in-memory client identity holding zeroizing signing keys.
+/// Does NOT derive `Serialize`/`Deserialize` to prevent accidental plaintext private-key persistence.
+#[derive(Clone)]
 pub struct ClientIdentity {
-    pub participant_key: KeypairMaterial,
-    pub node_key: KeypairMaterial,
+    pub participant_key: ProtectedSigningKey,
+    pub node_key: ProtectedSigningKey,
     pub display_name: String,
     pub participant_id: String,
     pub node_id: String,
 }
 
+impl fmt::Debug for ClientIdentity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ClientIdentity")
+            .field("display_name", &self.display_name)
+            .field("participant_id", &self.participant_id)
+            .field("participant_pubkey", &self.participant_key.public_key_hex)
+            .field("node_id", &self.node_id)
+            .field("node_pubkey", &self.node_key.public_key_hex)
+            .finish()
+    }
+}
+
 impl ClientIdentity {
     pub fn generate(display_name: impl Into<String>) -> Self {
-        let participant_key = KeypairMaterial::generate("participant");
-        let node_key = KeypairMaterial::generate("node");
+        let participant_key = ProtectedSigningKey::generate("participant");
+        let node_key = ProtectedSigningKey::generate("node");
         let participant_id = derive_participant_id(&participant_key.public_key_hex);
         let node_id = derive_node_id(&node_key.public_key_hex);
         Self {
@@ -37,8 +74,9 @@ impl ClientIdentity {
         participant_priv_hex: &str,
         node_priv_hex: &str,
     ) -> VResult<Self> {
-        let participant_key = KeypairMaterial::from_private_hex("participant", participant_priv_hex)?;
-        let node_key = KeypairMaterial::from_private_hex("node", node_priv_hex)?;
+        let participant_key =
+            ProtectedSigningKey::from_private_hex("participant", participant_priv_hex)?;
+        let node_key = ProtectedSigningKey::from_private_hex("node", node_priv_hex)?;
         let participant_id = derive_participant_id(&participant_key.public_key_hex);
         let node_id = derive_node_id(&node_key.public_key_hex);
         Ok(Self {
@@ -48,6 +86,93 @@ impl ClientIdentity {
             participant_id,
             node_id,
         })
+    }
+
+    pub fn encrypt_envelopes(
+        &self,
+        passphrase: &str,
+        kdf_params: Option<KeyKdfParams>,
+    ) -> VResult<EncryptedClientIdentity> {
+        let now = now_ms();
+        let participant_envelope = self.participant_key.encrypt_to_envelope(
+            passphrase,
+            kdf_params.clone(),
+            1,
+            now,
+            None,
+            Vec::new(),
+        )?;
+        let node_envelope = self.node_key.encrypt_to_envelope(
+            passphrase,
+            kdf_params,
+            1,
+            now,
+            None,
+            Vec::new(),
+        )?;
+        Ok(EncryptedClientIdentity {
+            envelope_version: ENCRYPTED_KEY_ENVELOPE_VERSION,
+            display_name: self.display_name.clone(),
+            participant_id: self.participant_id.clone(),
+            node_id: self.node_id.clone(),
+            participant_envelope,
+            node_envelope,
+        })
+    }
+
+    pub fn from_envelopes(
+        encrypted: &EncryptedClientIdentity,
+        passphrase: &str,
+    ) -> VResult<Self> {
+        let participant_key =
+            ProtectedSigningKey::from_envelope(&encrypted.participant_envelope, passphrase)?;
+        let node_key = ProtectedSigningKey::from_envelope(&encrypted.node_envelope, passphrase)?;
+        if participant_key.derived_id != encrypted.participant_id
+            || node_key.derived_id != encrypted.node_id
+        {
+            return Err(VNetworkError::Storage(
+                "decrypted encrypted client identity does not match derived IDs".to_string(),
+            ));
+        }
+        Ok(Self {
+            participant_key,
+            node_key,
+            display_name: encrypted.display_name.clone(),
+            participant_id: encrypted.participant_id.clone(),
+            node_id: encrypted.node_id.clone(),
+        })
+    }
+
+    pub fn metadata(&self, storage_mode: impl Into<String>) -> ClientIdentityMetadata {
+        ClientIdentityMetadata {
+            display_name: self.display_name.clone(),
+            participant_id: self.participant_id.clone(),
+            participant_pubkey: self.participant_key.public_key_hex.clone(),
+            node_id: self.node_id.clone(),
+            node_pubkey: self.node_key.public_key_hex.clone(),
+            storage_mode: storage_mode.into(),
+            participant_key_version: 1,
+            node_key_version: 1,
+        }
+    }
+
+    pub fn export_legacy_plaintext_keypairs_unsafe(&self) -> (KeypairMaterial, KeypairMaterial) {
+        (
+            self.participant_key.to_keypair_material_in_memory(),
+            self.node_key.to_keypair_material_in_memory(),
+        )
+    }
+
+    pub fn from_legacy_plaintext_keypairs_unsafe(
+        display_name: impl Into<String>,
+        participant: &KeypairMaterial,
+        node: &KeypairMaterial,
+    ) -> VResult<Self> {
+        Self::from_keys(
+            display_name,
+            &participant.private_key_hex,
+            &node.private_key_hex,
+        )
     }
 }
 
@@ -354,11 +479,11 @@ impl VectorNetworkClient {
         purpose: &str,
         pop_nonce: &str,
         expires_at_ms: Option<u64>,
-        authorized_key: &KeypairMaterial,
+        authorized_key: &dyn SigningProvider,
     ) -> VResult<String> {
         let network_id = self.resolved_network_id()?;
         let obj = serde_json::json!({
-            "authorized_pubkey": authorized_key.public_key_hex,
+            "authorized_pubkey": authorized_key.public_key_hex(),
             "expires_at_ms": expires_at_ms,
             "network_id": network_id,
             "nonce": pop_nonce,
@@ -370,19 +495,20 @@ impl VectorNetworkClient {
         authorized_key.sign(&canonical_json_bytes(&obj)?)
     }
 
+    /// Domain-separated co-signer approval for a token transfer.
+    /// Transfer drain is derived solely from the canonical hierarchy and protocol `DrainPolicy`.
     pub fn sign_transfer_approval(
         &self,
         token_id: &str,
         from_wallet_id: &str,
         to_wallet_id: &str,
         amount: u128,
-        drain_bps: Option<u16>,
-        cosigner_key: &KeypairMaterial,
+        cosigner_key: &dyn SigningProvider,
     ) -> VResult<String> {
         let network_id = self.resolved_network_id()?;
         let obj = serde_json::json!({
             "amount": amount.to_string(),
-            "drain_bps": drain_bps,
+            "domain": DOM_TRANSFER_APPROVAL_V1,
             "from_wallet_id": from_wallet_id,
             "network_id": network_id,
             "protocol_version": PROTOCOL_VERSION,
@@ -390,6 +516,20 @@ impl VectorNetworkClient {
             "token_id": token_id,
         });
         cosigner_key.sign(&canonical_json_bytes(&obj)?)
+    }
+
+    pub async fn update_wallet_receive_policy(
+        &mut self,
+        wallet_id: &str,
+        mode: &str,
+        allowed_senders: Vec<String>,
+    ) -> VResult<serde_json::Value> {
+        self.submit_operation(NetworkOperation::UpdateWalletReceivePolicy {
+            wallet_id: wallet_id.to_string(),
+            mode: mode.to_string(),
+            allowed_senders,
+        })
+        .await
     }
 
     pub async fn submit_operation(&mut self, operation: NetworkOperation) -> VResult<serde_json::Value> {
@@ -441,6 +581,18 @@ impl VectorNetworkClient {
             .await
             .map_err(|e| VNetworkError::Storage(e.to_string()))?;
         parse_json_response(resp).await
+    }
+
+    pub async fn verify_ledger_replay(&self) -> VResult<serde_json::Value> {
+        self.get_json("/v1/ledger/replay").await
+    }
+
+    pub async fn verify_token_supply(&self, token_id: &str) -> VResult<serde_json::Value> {
+        self.get_json(&format!("/v1/tokens/{token_id}/supply")).await
+    }
+
+    pub async fn equivocations(&self) -> VResult<serde_json::Value> {
+        self.get_json("/v1/consensus/equivocations").await
     }
 
     pub async fn verify_reconstruction(

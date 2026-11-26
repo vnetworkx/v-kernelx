@@ -116,6 +116,7 @@ pub fn apply_create_wallet(
         owner_pubkey: actor_pubkey.to_string(),
         authorized_keys,
         approval_threshold: threshold,
+        receive_policy: WalletReceivePolicy::Open,
         created_at_ms: timestamp_ms,
         version: 1,
     };
@@ -517,6 +518,82 @@ pub fn apply_rotate_wallet_key(
         state.logical_clock,
         timestamp_ms,
         serde_json::to_value(&wallet).unwrap_or_default(),
+        before_hash,
+        after_hash,
+    )?;
+    state.events.push(event.clone());
+    Ok((wallet, event))
+}
+
+pub fn apply_update_wallet_receive_policy(
+    state: &mut NetworkLedgerState,
+    wallet_ref: &str,
+    mode: &str,
+    allowed_senders: &[String],
+    actor_pubkey: &str,
+    timestamp_ms: u64,
+) -> VResult<(WalletEntity, LedgerEvent)> {
+    let mut wallet = verify_wallet_exists(state, wallet_ref)?.clone();
+    wallet.verify_permission(
+        actor_pubkey,
+        WalletPermission::ManageKeys,
+        None,
+        None,
+        timestamp_ms,
+    )?;
+
+    let norm_mode = mode.trim().to_ascii_uppercase();
+    let new_policy = match norm_mode.as_str() {
+        "OPEN" => WalletReceivePolicy::Open,
+        "FROZEN" => WalletReceivePolicy::Frozen,
+        "RESTRICTED" => {
+            let mut set = std::collections::BTreeSet::new();
+            for s in allowed_senders {
+                let clean = s.trim();
+                if !clean.is_empty() {
+                    set.insert(clean.to_string());
+                }
+            }
+            if set.is_empty() {
+                return Err(VNetworkError::Validation(
+                    "RESTRICTED wallet receive policy requires at least one allowed sender"
+                        .to_string(),
+                ));
+            }
+            WalletReceivePolicy::Restricted {
+                allowed_senders: set,
+            }
+        }
+        other => {
+            return Err(VNetworkError::Validation(format!(
+                "unsupported wallet receive policy mode `{other}` (expected OPEN, RESTRICTED, or FROZEN)"
+            )));
+        }
+    };
+
+    let before_hash = blake3_hex(&canonical_json_bytes(&wallet)?);
+    wallet.receive_policy = new_policy;
+    wallet.version = wallet
+        .version
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("wallet version overflow".to_string()))?;
+    state.wallets.insert(wallet.wallet_id.clone(), wallet.clone());
+
+    state.logical_clock += 1;
+    let sequence = (state.events.len() as u64) + 1;
+    let parents = state.latest_event_hash().into_iter().collect();
+    let after_hash = blake3_hex(&canonical_json_bytes(&wallet)?);
+    let event = LedgerEvent::build(
+        sequence,
+        parents,
+        &state.network_id,
+        "wallet",
+        &wallet.wallet_id,
+        "WALLET_RECEIVE_POLICY_UPDATE",
+        actor_pubkey,
+        state.logical_clock,
+        timestamp_ms,
+        serde_json::to_value(&wallet).map_err(|e| VNetworkError::Serialization(e.to_string()))?,
         before_hash,
         after_hash,
     )?;

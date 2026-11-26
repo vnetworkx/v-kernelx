@@ -1,0 +1,5 @@
+{
+  "name": "Vector Network Explorer",
+  "description": "Vector Network Explorer connecting to the authoritative Rust node runtime, BFT consensus ledger, and Vector Language verifier.",
+  "capabilities": []
+}

@@ -117,7 +117,7 @@ export async function generateBrowserKeypair(): Promise<{
   public_key_hex: string;
   private_key_hex: string;
 }> {
-  const secretKey = ed.utils.randomSecretKey();
+  const secretKey = ed.utils.randomPrivateKey();
   const publicKey = await ed.getPublicKeyAsync(secretKey);
   const public_key_hex = bytesToHex(publicKey);
   const private_key_hex = bytesToHex(secretKey);
@@ -173,6 +173,7 @@ export async function signOperationRequest(
 export const PROTOCOL_VERSION = "vector-network/1.0.0";
 export const LANGUAGE_VERSION = "v-langx/1.2.0";
 export const COMPILER_VERSION = "vectorspace-compiler/1.2.0";
+export const DOM_TRANSFER_APPROVAL_V1 = "vnetwork/transfer-approval/v1";
 
 export function deriveParticipantIdClient(publicKeyHex: string): string {
   const clean = publicKeyHex.trim().toLowerCase();
@@ -246,12 +247,11 @@ export function canonicalTransferApprovalBytesClient(params: {
   from_wallet_id: string;
   to_wallet_id: string;
   amount: string | number | bigint;
-  drain_bps?: number | null;
 }): Uint8Array {
   return utf8ToBytes(
     sortedJsonStringifyClient({
       amount: String(params.amount),
-      drain_bps: params.drain_bps ?? null,
+      domain: DOM_TRANSFER_APPROVAL_V1,
       from_wallet_id: params.from_wallet_id,
       network_id: params.network_id,
       protocol_version: PROTOCOL_VERSION,

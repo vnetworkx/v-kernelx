@@ -13,8 +13,16 @@ pub async fn healthz(State(app): State<ApiAppState>) -> impl IntoResponse {
     let storage_ok = report
         .get("storage_ok")
         .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-    let code = if healthy && storage_ok {
+        .unwrap_or(false);
+    let wal_ok = report
+        .get("wal_consistency_ok")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let eq_ok = report
+        .get("equivocation_store_ok")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let code = if healthy && storage_ok && wal_ok && eq_ok {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE

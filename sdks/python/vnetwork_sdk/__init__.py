@@ -3,6 +3,7 @@ from .canonical import canonical_json_bytes, canonical_json_string, sort_json_va
 from .client import VectorNetworkClient, VectorNetworkError
 from .crypto import (
     COMPILER_VERSION,
+    DOM_TRANSFER_APPROVAL_V1,
     LANGUAGE_VERSION,
     PROTOCOL_VERSION,
     ClientIdentity,
@@ -16,6 +17,7 @@ from .crypto import (
 
 __all__ = [
     "COMPILER_VERSION",
+    "DOM_TRANSFER_APPROVAL_V1",
     "LANGUAGE_VERSION",
     "PROTOCOL_VERSION",
     "VectorNetworkClient",

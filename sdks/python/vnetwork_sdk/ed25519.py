@@ -98,3 +98,43 @@ def sign(seed: bytes, message: bytes) -> bytes:
     k = int.from_bytes(hashlib.sha512(r_pt + a_pub + message).digest(), "little") % _L
     s = (r + k * a) % _L
     return r_pt + s.to_bytes(32, "little")
+
+
+def _decodepoint(enc: bytes) -> Tuple[int, int, int, int]:
+    if len(enc) != 32:
+        raise ValueError("Ed25519 point encoding must be 32 bytes")
+    if enc == bytes(32) or enc == (b"\x01" + bytes(31)):
+        raise ValueError("Weak or identity Ed25519 point rejected")
+    y_int = int.from_bytes(enc, "little")
+    sign_bit = (y_int >> 255) & 1
+    y = y_int & ((1 << 255) - 1)
+    if y >= _Q:
+        raise ValueError("Non-canonical Ed25519 y coordinate")
+    xx = ((y * y - 1) * _inv(_D * y * y + 1)) % _Q
+    x = pow(xx, (_Q + 3) // 8, _Q)
+    if (x * x - xx) % _Q != 0:
+        x = (x * _I) % _Q
+    if (x * x - xx) % _Q != 0:
+        raise ValueError("Point is not on Ed25519 curve")
+    if x == 0 and sign_bit == 1:
+        raise ValueError("Non-canonical Ed25519 negative zero x coordinate")
+    if (x & 1) != sign_bit:
+        x = _Q - x
+    return (x, y, 1, (x * y) % _Q)
+
+
+def verify(public_key: bytes, message: bytes, signature: bytes) -> bool:
+    if len(public_key) != 32 or len(signature) != 64:
+        raise ValueError("Invalid Ed25519 public key or signature length")
+    a_pt = _decodepoint(public_key)
+    r_bytes = signature[:32]
+    r_pt = _decodepoint(r_bytes)
+    s = int.from_bytes(signature[32:], "little")
+    if s >= _L:
+        raise ValueError("Non-canonical Ed25519 signature scalar")
+    k = int.from_bytes(hashlib.sha512(r_bytes + public_key + message).digest(), "little") % _L
+    lhs = _encodepoint(_scalarmult(_B_EXT, s))
+    rhs = _encodepoint(_edwards_add(r_pt, _scalarmult(a_pt, k)))
+    if lhs != rhs:
+        raise ValueError("Invalid Ed25519 signature")
+    return True

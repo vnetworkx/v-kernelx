@@ -215,7 +215,6 @@ class VectorNetworkClient:
         to_wallet_id: str,
         amount: int,
         cosigner_key: KeypairMaterial,
-        drain_bps: Optional[int] = None,
     ) -> str:
         network_id = self._resolved_network_id()
         msg = canonical_json_bytes(
@@ -225,10 +224,26 @@ class VectorNetworkClient:
                 from_wallet_id=from_wallet_id,
                 to_wallet_id=to_wallet_id,
                 amount=amount,
-                drain_bps=drain_bps,
             )
         )
         return cosigner_key.sign(msg)
+
+    def update_wallet_receive_policy(
+        self,
+        wallet_id: str,
+        mode: str,
+        allowed_senders: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        return self.submit_operation(
+            {
+                "op": "UpdateWalletReceivePolicy",
+                "payload": {
+                    "wallet_id": wallet_id,
+                    "mode": mode,
+                    "allowed_senders": allowed_senders or [],
+                },
+            }
+        )
 
     def submit_operation(self, operation: Dict[str, Any]) -> Dict[str, Any]:
         if not self.connected_network_id:
@@ -301,8 +316,17 @@ class VectorNetworkClient:
     def get_ledger_proofs(self) -> Dict[str, Any]:
         return self.get_json("/v1/ledger/proofs")
 
+    def verify_ledger_replay(self) -> Dict[str, Any]:
+        return self.get_json("/v1/ledger/replay")
+
+    def verify_token_supply(self, token_id: str) -> Dict[str, Any]:
+        return self.get_json(f"/v1/tokens/{token_id}/supply")
+
     def get_consensus_status(self) -> Dict[str, Any]:
         return self.get_json("/v1/consensus/status")
+
+    def get_equivocations(self) -> Dict[str, Any]:
+        return self.get_json("/v1/consensus/equivocations")
 
     def verify_reconstruction(self, entity_kind: str, entity_id: str) -> Dict[str, Any]:
         return self.post_json(

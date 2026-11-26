@@ -79,7 +79,6 @@ func main() {
 		"wal_a",
 		"wal_b",
 		"250",
-		nil,
 	))
 	if err != nil {
 		log.Fatal(err)

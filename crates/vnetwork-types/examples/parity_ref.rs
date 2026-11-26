@@ -44,7 +44,7 @@ fn main() {
 
     let xfer_canon = canonical_json_bytes(&serde_json::json!({
         "amount": "250",
-        "drain_bps": serde_json::Value::Null,
+        "domain": DOM_TRANSFER_APPROVAL_V1,
         "from_wallet_id": "wal_a",
         "network_id": "vector-devnet-1",
         "protocol_version": PROTOCOL_VERSION,

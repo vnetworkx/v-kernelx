@@ -60,7 +60,7 @@ export function VectorsPanel({
   const [gainsInput, setGainsInput] = useState("10,10");
   const [lossesInput, setLossesInput] = useState("0,0");
   const [outcomeTagInput, setOutcomeTagInput] = useState("settled");
-  const [drainBpsInput, setDrainBpsInput] = useState("200");
+  const [drainBpsInput, setDrainBpsInput] = useState("");
 
   const activeSigner = activeSignerId ? signerKeys[activeSignerId] : null;
   const activeVector = vectors.find((v) => v.vectorId === selectedVectorId) ?? vectors[0] ?? null;
@@ -203,7 +203,11 @@ export function VectorsPanel({
           signature,
         };
       } else if (mode === "drain") {
-        const bps = Number(drainBpsInput) || 200;
+        const bps = Number(drainBpsInput);
+        if (!Number.isInteger(bps) || bps <= 0 || bps > 10_000) {
+          onNotify("error", "Enter an explicit drain rate between 1 and 10000 bps");
+          return;
+        }
         const params = { basis_points: bps, vector_id: activeVector?.vectorId };
         const signingBytes = canonicalVectorOpSigningBytes("VECTOR_DRAIN", requestId, activeSigner.public_key_hex, params);
         const signature = await signBytesWithPrivateKey(activeSigner.private_key_hex, signingBytes);

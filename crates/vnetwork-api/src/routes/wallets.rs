@@ -33,6 +33,24 @@ pub async fn manage_wallet_key(
     Ok(Json(receipt))
 }
 
+pub async fn update_wallet_receive_policy(
+    State(app): State<ApiAppState>,
+    Json(req): Json<SignedOperationHttpRequest>,
+) -> ApiResult<Json<TransactionReceipt>> {
+    if !matches!(
+        &req.operation,
+        NetworkOperation::UpdateWalletReceivePolicy { .. }
+    ) {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "INVALID_WALLET_POLICY_OP",
+            "endpoint requires UpdateWalletReceivePolicy operation",
+        ));
+    }
+    let receipt = app.backend.submit_signed_operation(req).await?;
+    Ok(Json(receipt))
+}
+
 pub async fn get_wallet(
     State(app): State<ApiAppState>,
     Path(wallet_id): Path<String>,

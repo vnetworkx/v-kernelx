@@ -156,19 +156,22 @@ export function OverviewPanel({
 
         <div className="p-4">
           <div className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
-            Deterministic Replay
+            Deterministic Replay & State
           </div>
           <div
             className={`mt-1.5 font-mono text-2xl font-semibold tabular-nums ${
-              status.replay_verified && status.db_integrity_ok
+              status.verification_status === "VERIFIED"
                 ? "text-emerald-700"
-                : "text-red-700"
+                : status.verification_status === "INVALID"
+                  ? "text-red-700"
+                  : "text-amber-700"
             }`}
           >
-            {status.replay_verified && status.db_integrity_ok ? "VERIFIED" : "MISMATCH"}
+            {status.verification_status}
           </div>
           <div className="mt-1 font-mono text-[11px] text-slate-500">
-            SQLite WAL · integrity {status.db_integrity_ok ? "ok" : "fail"}
+            {status.storage_engine} · wal {status.wal_consistency_ok ? "ok" : "unverified"} · eq{" "}
+            {status.equivocation_count}
           </div>
         </div>
       </div>
@@ -196,15 +199,23 @@ export function OverviewPanel({
 
           <div className="divide-y divide-slate-100">
             {[
-              { key: "node_id", label: "Node Identifier", value: status.node_id },
-              { key: "node_pubkey", label: "Node Ed25519 Pubkey", value: status.node_pubkey },
+              { key: "node_id", label: "Node Identifier", value: status.node_id || "—" },
+              {
+                key: "node_pubkey",
+                label: "Node Ed25519 Pubkey",
+                value: status.node_pubkey || "—",
+              },
               {
                 key: "root_hash",
                 label: "Canonical State Root",
                 value: status.state_root.root_hash,
               },
               { key: "replay_hash", label: "DAG Replay Digest", value: status.replay_hash },
-              { key: "storage", label: "Storage Engine", value: status.storage_engine },
+              {
+                key: "storage",
+                label: "Storage Engine",
+                value: `${status.storage_engine} (replay: ${status.replay_status}, equivocations: ${status.equivocation_count})`,
+              },
             ].map((item) => (
               <div
                 key={item.key}
@@ -243,8 +254,8 @@ export function OverviewPanel({
                     }
                   >
                     {replayResult.matches_stored_state
-                      ? `MATCH (${replayResult.applied_event_hashes.length} events applied)`
-                      : `MISMATCH (${replayResult.mismatch_reasons.join("; ")})`}
+                      ? `VERIFIED (${replayResult.events_replayed ?? replayResult.applied_event_hashes.length} events replayed)`
+                      : `${replayResult.verification_status ?? "INVALID"} (${replayResult.mismatch_reasons.join("; ")})`}
                   </span>
                 </span>
                 <span className="font-mono text-slate-500">
@@ -297,10 +308,18 @@ export function OverviewPanel({
                   <span className="text-slate-500">Supply Conservation</span>
                   <span
                     className={`font-mono font-medium ${
-                      primaryToken.conservation.conserved ? "text-emerald-700" : "text-red-700"
+                      primaryToken.conservation.verification_status === "VERIFIED"
+                        ? "text-emerald-700"
+                        : primaryToken.conservation.verification_status === "INVALID"
+                          ? "text-red-700"
+                          : "text-amber-700"
                     }`}
                   >
-                    {primaryToken.conservation.conserved ? "CONSERVED" : "VIOLATION"}
+                    {primaryToken.conservation.verification_status === "VERIFIED"
+                      ? "CONSERVED (VERIFIED)"
+                      : primaryToken.conservation.verification_status === "INVALID"
+                        ? "VIOLATION (INVALID)"
+                        : primaryToken.conservation.verification_status}
                   </span>
                 </div>
                 <div className="flex items-center justify-between py-3 text-xs">

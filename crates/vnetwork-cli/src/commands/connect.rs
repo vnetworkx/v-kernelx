@@ -5,14 +5,11 @@ pub async fn run_connect(
     network: Option<String>,
     endpoint: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut state = load_cli_state();
+    let mut state = load_cli_state()?;
     if let Some(ep) = endpoint {
         state.endpoint = ep;
     }
-    let id = state
-        .identity
-        .clone()
-        .unwrap_or_else(|| ClientIdentity::generate("vn-cli-temp"));
+    let id = ClientIdentity::generate("vn-cli-read");
     let mut client = VectorNetworkClient::new(&state.endpoint, id);
     if let Some(n) = &network {
         client = client.with_expected_network(n);

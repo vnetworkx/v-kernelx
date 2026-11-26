@@ -50,7 +50,6 @@ xfer_canon = canonical_json_bytes(canonical_transfer_approval_object(
     from_wallet_id="wal_a",
     to_wallet_id="wal_b",
     amount=250,
-    drain_bps=None,
 ))
 xfer_sig = identity.participant_key.sign(xfer_canon)
 

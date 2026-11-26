@@ -1,8 +1,6 @@
 use crate::error::KernelXError;
 use serde::{Deserialize, Serialize};
 
-pub const DEFAULT_TRANSFER_DRAIN_BPS: u16 = 200; // 2.00% base drain, halved to 1.00% when certified
-
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DrainRewardDistribution {
     pub effective_bps: u16,

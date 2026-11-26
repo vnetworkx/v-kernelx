@@ -1,8 +1,11 @@
 use crate::events::EventWal;
 use crate::indexes::{persist_entity_index, StorageIndex};
 use crate::migrations::run_migrations;
-use crate::recovery::{committed_tx_path, pending_tx_path, recover_state_from_disk, RecoveryReport};
-use crate::snapshots::save_full_state_snapshot;
+use crate::recovery::{
+    committed_tx_path, pending_tx_path, recover_state_from_disk, verify_wal_exact_alignment,
+    RecoveryReport,
+};
+use crate::snapshots::{load_certified_checkpoint, save_certified_checkpoint_from_state};
 use crate::transactions::{
     atomic_write_json, save_transactions_and_programs, CommittedCommitMarker,
     CommittedProposalRecord, ConsensusWal, PendingCommitRecord, PersistFailpoint,
@@ -46,11 +49,17 @@ impl StorageDatabase {
     }
 
     pub fn check_health(&self) -> VResult<()> {
-        if !self.data_dir.join("genesis.json").exists() {
+        let genesis_path = self.data_dir.join("genesis.json");
+        if !genesis_path.exists() {
             return Err(VNetworkError::Storage(
                 "missing genesis.json in storage directory".to_string(),
             ));
         }
+        let raw_genesis = fs::read_to_string(&genesis_path)
+            .map_err(|e| VNetworkError::Storage(format!("read genesis.json failed: {e}")))?;
+        let genesis: GenesisConfig = serde_json::from_str(&raw_genesis)
+            .map_err(|e| VNetworkError::Storage(format!("parse genesis.json failed: {e}")))?;
+
         let probe = self.data_dir.join(".health_probe");
         {
             let mut f = File::create(&probe)
@@ -62,8 +71,11 @@ impl StorageDatabase {
         }
         fs::remove_file(&probe)
             .map_err(|e| VNetworkError::Storage(format!("storage cleanup probe failed: {e}")))?;
-        ConsensusWal::new(&self.data_dir).read_all()?;
-        EventWal::new(&self.data_dir).read_all()?;
+
+        let commits = ConsensusWal::new(&self.data_dir).read_all()?;
+        let wal_events = EventWal::new(&self.data_dir).read_all()?;
+        verify_wal_exact_alignment(&commits, &wal_events, &genesis)?;
+        let _ = load_certified_checkpoint(&self.data_dir, &genesis)?;
         Ok(())
     }
 
@@ -83,6 +95,7 @@ impl StorageDatabase {
         qc: &QuorumCertificate,
         failpoint: PersistFailpoint,
     ) -> VResult<StorageIndex> {
+        proposal.verify_digest_and_metadata()?;
         let computed_root = state.compute_state_root()?;
         if state.height != proposal.height || computed_root != proposal.post_state_root {
             return Err(VNetworkError::Storage(format!(
@@ -97,6 +110,7 @@ impl StorageDatabase {
         let pending = PendingCommitRecord {
             height: proposal.height,
             proposal_id: proposal.proposal_id.clone(),
+            proposal_digest: proposal.proposal_digest.clone(),
             certificate_id: qc.certificate_id.clone(),
             post_state_root: proposal.post_state_root.clone(),
             prior_event_count: prior_events,
@@ -126,6 +140,7 @@ impl StorageDatabase {
         let marker = CommittedCommitMarker {
             height: proposal.height,
             proposal_id: proposal.proposal_id.clone(),
+            proposal_digest: proposal.proposal_digest.clone(),
             certificate_id: qc.certificate_id.clone(),
             post_state_root: proposal.post_state_root.clone(),
             event_count: state.events.len(),
@@ -137,7 +152,16 @@ impl StorageDatabase {
             ));
         }
 
-        save_full_state_snapshot(&self.data_dir, state)?;
+        if state.height > 0 {
+            save_certified_checkpoint_from_state(
+                &self.data_dir,
+                state,
+                qc,
+                &proposal.proposal_digest,
+                &proposal.parent_commitment,
+                qc.finalized_at_ms,
+            )?;
+        }
         if failpoint == PersistFailpoint::AfterSnapshot {
             return Err(VNetworkError::Storage(
                 "simulated crash AfterSnapshot".to_string(),
@@ -158,14 +182,21 @@ impl StorageDatabase {
             ));
         }
 
-        let _ = fs::remove_file(&p_path);
-        let _ = fs::remove_file(&c_path);
+        if p_path.exists() {
+            fs::remove_file(&p_path).map_err(|e| {
+                VNetworkError::Storage(format!("remove pending WAL marker {:?}: {e}", p_path))
+            })?;
+        }
+        if c_path.exists() {
+            fs::remove_file(&c_path).map_err(|e| {
+                VNetworkError::Storage(format!("remove committed WAL marker {:?}: {e}", c_path))
+            })?;
+        }
         Ok(idx)
     }
 
     pub fn persist_metadata_only(&self, state: &NetworkLedgerState) -> VResult<()> {
         save_transactions_and_programs(&self.data_dir, &state.programs, &state.transactions)?;
-        save_full_state_snapshot(&self.data_dir, state)?;
         persist_entity_index(&self.data_dir, state)?;
         Ok(())
     }
@@ -181,7 +212,22 @@ impl StorageDatabase {
     ) -> VResult<StorageIndex> {
         EventWal::new(&self.data_dir).rewrite_all(&state.events)?;
         ConsensusWal::new(&self.data_dir).rewrite_all(commits)?;
-        save_full_state_snapshot(&self.data_dir, state)?;
+        if state.height > 0 {
+            let last = commits.last().ok_or_else(|| {
+                VNetworkError::Storage(
+                    "rewrite_full_state with non-zero height requires certified commit record"
+                        .to_string(),
+                )
+            })?;
+            save_certified_checkpoint_from_state(
+                &self.data_dir,
+                state,
+                &last.certificate,
+                &last.proposal.proposal_digest,
+                &last.proposal.parent_commitment,
+                last.certificate.finalized_at_ms,
+            )?;
+        }
         save_transactions_and_programs(&self.data_dir, &state.programs, &state.transactions)?;
         persist_entity_index(&self.data_dir, state)
     }

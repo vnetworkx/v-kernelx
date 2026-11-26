@@ -145,6 +145,20 @@ impl WalletKeyBinding {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum WalletReceivePolicy {
+    Open,
+    Restricted { allowed_senders: BTreeSet<String> },
+    Frozen,
+}
+
+impl Default for WalletReceivePolicy {
+    fn default() -> Self {
+        Self::Open
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WalletEntity {
     pub wallet_id: String,
     pub name: String,
@@ -155,6 +169,8 @@ pub struct WalletEntity {
     pub authorized_keys: BTreeMap<String, WalletKeyBinding>,
     #[serde(default = "default_approval_threshold")]
     pub approval_threshold: u16,
+    #[serde(default)]
+    pub receive_policy: WalletReceivePolicy,
     pub created_at_ms: u64,
     pub version: u64,
 }
@@ -165,6 +181,35 @@ impl WalletEntity {
             return true;
         }
         matches!(self.authorized_keys.get(pubkey_hex), Some(binding) if !binding.revoked)
+    }
+
+    pub fn verify_receive_allowed(
+        &self,
+        from_wallet_id: &str,
+        actor_pubkey: &str,
+        cosigner_pubkeys: &[&str],
+    ) -> VResult<()> {
+        match &self.receive_policy {
+            WalletReceivePolicy::Open => Ok(()),
+            WalletReceivePolicy::Frozen => Err(VNetworkError::Authorization(format!(
+                "destination wallet `{}` ({}) is frozen and cannot receive transfers",
+                self.name, self.wallet_id
+            ))),
+            WalletReceivePolicy::Restricted { allowed_senders } => {
+                let allowed = allowed_senders.contains(from_wallet_id)
+                    || allowed_senders.contains(actor_pubkey)
+                    || cosigner_pubkeys
+                        .iter()
+                        .any(|pk| allowed_senders.contains(*pk));
+                if !allowed {
+                    return Err(VNetworkError::Authorization(format!(
+                        "destination wallet `{}` ({}) receive policy restricts incoming transfers from `{}`",
+                        self.name, self.wallet_id, from_wallet_id
+                    )));
+                }
+                Ok(())
+            }
+        }
     }
 
     pub fn verify_permission(

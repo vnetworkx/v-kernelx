@@ -1,3 +1,5 @@
+import type { DrainPolicyDto, ScopeDrainRateDto, TransferScopeDto } from "@/lib/types";
+
 export function formatTokenUnitsClient(rawAmount: string | bigint, decimals: number): string {
   try {
     const val = typeof rawAmount === "bigint" ? rawAmount : BigInt(rawAmount || "0");
@@ -52,9 +54,56 @@ export function extractOperationLabel(op: unknown): string {
   return "Unknown";
 }
 
+export function deriveTransferScopeClient(
+  fromWallet?: { wallet_id: string; region_id?: string | null; space_id?: string | null } | null,
+  toWallet?: { wallet_id: string; region_id?: string | null; space_id?: string | null } | null,
+): TransferScopeDto | null {
+  if (!fromWallet || !toWallet) return null;
+  if (fromWallet.wallet_id === toWallet.wallet_id) return "SAME_WALLET";
+  if (
+    fromWallet.region_id &&
+    toWallet.region_id &&
+    fromWallet.region_id === toWallet.region_id
+  ) {
+    return "DIFFERENT_WALLETS_SAME_REGION";
+  }
+  if (
+    fromWallet.space_id &&
+    toWallet.space_id &&
+    fromWallet.space_id === toWallet.space_id
+  ) {
+    return "DIFFERENT_REGIONS_SAME_SPACE";
+  }
+  return "DIFFERENT_SPACES";
+}
+
+export function resolveScopeDrainBps(
+  policy: DrainPolicyDto | null | undefined,
+  scope: TransferScopeDto | null | undefined,
+): number | null {
+  if (!policy || !scope) return null;
+  let rate: ScopeDrainRateDto | undefined;
+  switch (scope) {
+    case "SAME_WALLET":
+      rate = policy.same_wallet;
+      break;
+    case "DIFFERENT_WALLETS_SAME_REGION":
+      rate = policy.different_wallets_same_region;
+      break;
+    case "DIFFERENT_REGIONS_SAME_SPACE":
+      rate = policy.different_regions_same_space;
+      break;
+    case "DIFFERENT_SPACES":
+      rate = policy.different_spaces;
+      break;
+  }
+  if (!rate || rate.status !== "CONFIGURED_BPS") return null;
+  return Number.isFinite(rate.bps) && rate.bps >= 0 && rate.bps <= 10_000 ? rate.bps : null;
+}
+
 export function previewDrainClient(
   atomicAmountStr: string,
-  baseBps = 200,
+  baseBps: number | null | undefined,
   authRatio = 1000,
   threshold = 700,
 ): {
@@ -66,7 +115,10 @@ export function previewDrainClient(
   walletReward: bigint;
   tokenReward: bigint;
   networkReward: bigint;
-} {
+} | null {
+  if (baseBps == null || !Number.isFinite(baseBps) || baseBps < 0 || baseBps > 10_000) {
+    return null;
+  }
   const amount = BigInt(atomicAmountStr || "0");
   const discounted = authRatio >= threshold;
   const effectiveBps = discounted ? Math.floor(baseBps / 2) : baseBps;

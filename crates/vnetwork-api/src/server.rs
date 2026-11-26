@@ -37,7 +37,11 @@ impl Default for ApiServerConfig {
     }
 }
 
-pub fn build_router(backend: Arc<dyn NetworkNodeBackend>, rate_limit_per_min: usize, max_body_bytes: usize) -> Router {
+pub fn build_router(
+    backend: Arc<dyn NetworkNodeBackend>,
+    rate_limit_per_min: usize,
+    max_body_bytes: usize,
+) -> Router {
     let app_state = ApiAppState {
         backend,
         rate_limiter: Arc::new(RateLimiter::new(rate_limit_per_min, 60)),
@@ -80,9 +84,11 @@ pub fn build_router(backend: Arc<dyn NetworkNodeBackend>, rate_limit_per_min: us
         .route("/v1/regions/:region_id", get(routes::regions::get_region))
         .route("/v1/wallets", get(routes::wallets::list_wallets))
         .route("/v1/wallets/keys", post(routes::wallets::manage_wallet_key))
+        .route("/v1/wallets/policy", post(routes::wallets::update_wallet_receive_policy))
         .route("/v1/wallets/:wallet_id", get(routes::wallets::get_wallet))
         .route("/v1/tokens", get(routes::tokens::list_tokens))
         .route("/v1/tokens/:token_id", get(routes::tokens::get_token))
+        .route("/v1/tokens/:token_id/supply", get(routes::tokens::token_supply))
         .route("/v1/transactions", post(routes::transactions::submit_transaction))
         .route(
             "/v1/transactions/:transaction_id",
@@ -103,10 +109,18 @@ pub fn build_router(backend: Arc<dyn NetworkNodeBackend>, rate_limit_per_min: us
         .route("/v1/loans/:loan_id", get(routes::loans::get_loan))
         .route("/v1/ledger/events", get(routes::ledgers::list_events))
         .route("/v1/ledger/proofs", get(routes::ledgers::ledger_proofs))
+        .route(
+            "/v1/ledger/replay",
+            get(routes::ledgers::verify_replay).post(routes::ledgers::verify_replay),
+        )
         .route("/v1/consensus/status", get(routes::consensus::consensus_status))
         .route(
             "/v1/consensus/certificates",
             get(routes::consensus::list_certificates),
+        )
+        .route(
+            "/v1/consensus/equivocations",
+            get(routes::consensus::list_equivocations),
         )
         .route(
             "/v1/reconstruction/verify",
