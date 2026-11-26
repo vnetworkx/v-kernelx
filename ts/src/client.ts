@@ -94,7 +94,34 @@ export class VectorKernelX {
     return state;
   }
 
-  transfer(fromId: string, toId: string, amount: number[]): [VectorStateV1, VectorStateV1] {
+  transport(fromReserveId: string, toId: string, amount: number[]): [VectorStateV1, VectorStateV1] {
+    const reserve = this.states.get(fromReserveId);
+    const recipient = this.states.get(toId);
+    if (!reserve || !recipient) throw new Error("vector not found");
+    if (reserve.components.length !== recipient.components.length || reserve.components.length !== amount.length) {
+      throw new Error("dimension mismatch");
+    }
+    if (amount.every((a) => a === 0)) throw new Error("transport amount must contain a positive component");
+    if (amount.some((a, i) => a > reserve.components[i])) throw new Error("insufficient reserve balance");
+    const beforeReserve = structuredClone(reserve);
+    const beforeRecipient = structuredClone(recipient);
+
+    reserve.components = reserve.components.map((c, i) => c - amount[i]);
+    recipient.components = recipient.components.map((c, i) => c + amount[i]);
+    reserve.certification = this.certifyState(reserve);
+    recipient.certification = this.certifyState(recipient);
+    reserve.updatedAtMs = now();
+    recipient.updatedAtMs = now();
+    reserve.version += 1;
+    recipient.version += 1;
+    this.states.set(fromReserveId, reserve);
+    this.states.set(toId, recipient);
+    this.record(beforeReserve, reserve, "Custom", { custom_operation: "TRANSPORT", direction: "out", amount });
+    this.record(beforeRecipient, recipient, "Custom", { custom_operation: "TRANSPORT", direction: "in", amount });
+    return [reserve, recipient];
+  }
+
+  transfer(fromId: string, toId: string, amount: number[], drainBps = 0): [VectorStateV1, VectorStateV1] {
     const from = this.states.get(fromId);
     const to = this.states.get(toId);
     if (!from || !to) throw new Error("vector not found");
@@ -103,14 +130,20 @@ export class VectorKernelX {
     const beforeFrom = structuredClone(from);
     const beforeTo = structuredClone(to);
 
+    const effectiveBps = drainBps > 0 && from.certification.authRatio >= from.certification.threshold
+      ? Math.floor(drainBps / 2)
+      : drainBps;
+    const fees = amount.map((a) => Math.floor((a * effectiveBps) / 10_000));
+    const net = amount.map((a, i) => a - fees[i]);
+
     from.components = from.components.map((c, i) => c - amount[i]);
-    to.components = to.components.map((c, i) => c + amount[i]);
+    to.components = to.components.map((c, i) => c + net[i]);
     from.certification = this.certifyState(from);
     to.certification = this.certifyState(to);
     this.states.set(fromId, from);
     this.states.set(toId, to);
-    this.record(beforeFrom, from, "Transfer", { direction: "out", amount });
-    this.record(beforeTo, to, "Transfer", { direction: "in", amount });
+    this.record(beforeFrom, from, "Transfer", { direction: "out", amount, fees, effectiveBps });
+    this.record(beforeTo, to, "Transfer", { direction: "in", amount: net, fees, effectiveBps });
     return [from, to];
   }
 
@@ -204,8 +237,12 @@ export class VectorKernelX {
         case "ORIGIN_CREATE":
           out.push(`origin:${this.originCreate(params.vectorId, params.ownerPubkey, params.spaceId ?? "default", params.components ?? [], params.seed ?? "", params.nonce ?? 0, params.difficulty ?? 1).vectorId}`);
           break;
+        case "TRANSPORT":
+          this.transport(params.from, params.to, params.amount ?? []);
+          out.push("transport");
+          break;
         case "TRANSFER":
-          this.transfer(params.from, params.to, params.amount ?? []);
+          this.transfer(params.from, params.to, params.amount ?? [], params.drainBps ?? 0);
           out.push("transfer");
           break;
         case "DRAIN":

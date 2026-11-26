@@ -1,14 +1,16 @@
 use crate::certification::certify_state;
-use crate::consensus::{accept_record, ConsensusPolicy};
-use crate::drain::apply_drain;
+use crate::consensus::{
+    accept_record, ConsensusPolicy, ConsensusRound, EventAttestation, QuorumConsensusState,
+    ValidatorNode, DEFAULT_QUORUM_BPS,
+};
+use crate::drain::{apply_drain, DrainRewardDistribution};
 use crate::error::KernelXError;
 use crate::event::{OperationType, VectorEvent, VectorState};
 use crate::hash::{canonical_event_hash, canonical_payload_hash};
 use crate::origin::create_origin_vector;
 use crate::projection::project_vector;
 use crate::query::{get_event_by_hash, get_vector, list_records, list_vectors};
-use crate::reconstruction::reconstruct_vector;
-use crate::reconstruction::SettlementOutcome;
+use crate::reconstruction::{reconstruct_vector, SettlementOutcome};
 use crate::record::{make_record_id, OperationKind, VectorRecordV1};
 use crate::region::{
     authorize_region_access, build_region_genesis_event, find_region_by_lookup_key,
@@ -19,13 +21,17 @@ use crate::region::{
 use crate::replay::{replay_events, ReplayResult};
 use crate::state::{compute_state_root, now_ms, StateRoot, VectorStateV1};
 use crate::storage::{EventStore, KernelStore, MemoryStore, ReplayStore, StateStore};
-use crate::transfer::{transfer_components, transfer_record};
+use crate::transfer::{
+    transfer_components, transfer_components_with_drain, transfer_record, transport_components,
+};
 use crate::validation::{validate_event, validate_state};
+use crate::wallet::{WalletContext, WalletKeypair};
 
 #[derive(Clone)]
 pub struct KernelEngine<S: KernelStore> {
     pub store: S,
     pub consensus: ConsensusPolicy,
+    pub quorum_consensus: QuorumConsensusState,
 }
 
 impl KernelEngine<MemoryStore> {
@@ -33,6 +39,7 @@ impl KernelEngine<MemoryStore> {
         Self {
             store: MemoryStore::default(),
             consensus: ConsensusPolicy::default(),
+            quorum_consensus: QuorumConsensusState::new(DEFAULT_QUORUM_BPS),
         }
     }
 }
@@ -48,7 +55,27 @@ impl<S: KernelStore> KernelEngine<S> {
         Self {
             store,
             consensus: ConsensusPolicy::default(),
+            quorum_consensus: QuorumConsensusState::new(DEFAULT_QUORUM_BPS),
         }
+    }
+
+    pub fn create_open_wallet(&self) -> Result<WalletKeypair, KernelXError> {
+        WalletContext::generate().export_keypair()
+    }
+
+    pub fn register_validator(&mut self, validator: ValidatorNode) -> Result<(), KernelXError> {
+        self.quorum_consensus.register_validator(validator)
+    }
+
+    pub fn record_attestation(
+        &mut self,
+        attestation: EventAttestation,
+    ) -> Result<ConsensusRound, KernelXError> {
+        self.quorum_consensus.record_attestation(attestation)
+    }
+
+    pub fn evaluate_consensus(&self, event_hash: &str) -> ConsensusRound {
+        self.quorum_consensus.evaluate_round(event_hash)
     }
 
     fn op_kind_to_event_kind(kind: &OperationKind) -> OperationType {
@@ -530,6 +557,159 @@ impl<S: KernelStore> KernelEngine<S> {
         self.append_canonical_event(receiver_event)?;
 
         Ok((after_from, after_to))
+    }
+
+    pub fn transport(
+        &mut self,
+        from_reserve_id: &str,
+        to_id: &str,
+        amount: Vec<u128>,
+    ) -> Result<(VectorStateV1, VectorStateV1), KernelXError> {
+        let reserve = self
+            .store
+            .get_state(from_reserve_id)?
+            .ok_or(KernelXError::VectorNotFound)?;
+        let recipient = self
+            .store
+            .get_state(to_id)?
+            .ok_or(KernelXError::VectorNotFound)?;
+        let before_reserve = reserve.clone();
+        let before_recipient = recipient.clone();
+
+        let (mut after_reserve, mut after_recipient) =
+            transport_components(reserve, recipient, amount.clone())?;
+        after_reserve.certification = certify_state(&after_reserve, true, true);
+        after_recipient.certification = certify_state(&after_recipient, true, true);
+
+        validate_state(&after_reserve)?;
+        validate_state(&after_recipient)?;
+
+        self.store.put_state(after_reserve.clone())?;
+        self.store.put_state(after_recipient.clone())?;
+
+        let transport_op = OperationType::Other("VECTOR_TRANSPORT".to_string());
+        let reserve_params = serde_json::json!({
+            "custom_operation": "VECTOR_TRANSPORT",
+            "direction": "out",
+            "amount": amount,
+            "to_vector_id": to_id
+        });
+        let recipient_params = serde_json::json!({
+            "custom_operation": "VECTOR_TRANSPORT",
+            "direction": "in",
+            "amount": amount,
+            "from_reserve_id": from_reserve_id
+        });
+
+        let reserve_rec = VectorRecordV1::new(
+            make_record_id("transport-out", from_reserve_id, reserve_params.to_string()),
+            from_reserve_id.to_string(),
+            Some(before_reserve.clone()),
+            after_reserve.clone(),
+            OperationKind::Custom("VECTOR_TRANSPORT".to_string()),
+            reserve_params,
+        );
+        let recipient_rec = VectorRecordV1::new(
+            make_record_id("transport-in", to_id, recipient_params.to_string()),
+            to_id.to_string(),
+            Some(before_recipient.clone()),
+            after_recipient.clone(),
+            OperationKind::Custom("VECTOR_TRANSPORT".to_string()),
+            recipient_params,
+        );
+
+        if accept_record(&reserve_rec, &self.consensus) {
+            self.store.put_record(reserve_rec)?;
+        }
+        if accept_record(&recipient_rec, &self.consensus) {
+            self.store.put_record(recipient_rec)?;
+        }
+
+        let reserve_ev = self.build_transition_event(
+            Some(&before_reserve),
+            &after_reserve,
+            transport_op.clone(),
+            after_reserve.version,
+            now_ms(),
+            self.latest_parent_hash_for_entity(&after_reserve.vector_id)?,
+        )?;
+        self.append_canonical_event(reserve_ev)?;
+
+        let recipient_ev = self.build_transition_event(
+            Some(&before_recipient),
+            &after_recipient,
+            transport_op,
+            after_recipient.version,
+            now_ms(),
+            self.latest_parent_hash_for_entity(&after_recipient.vector_id)?,
+        )?;
+        self.append_canonical_event(recipient_ev)?;
+
+        Ok((after_reserve, after_recipient))
+    }
+
+    pub fn transfer_with_drain(
+        &mut self,
+        from_id: &str,
+        to_id: &str,
+        amount: Vec<u128>,
+        drain_basis_points: u16,
+    ) -> Result<(VectorStateV1, VectorStateV1, DrainRewardDistribution), KernelXError> {
+        let from = self
+            .store
+            .get_state(from_id)?
+            .ok_or(KernelXError::VectorNotFound)?;
+        let to = self
+            .store
+            .get_state(to_id)?
+            .ok_or(KernelXError::VectorNotFound)?;
+        let before_from = from.clone();
+        let before_to = to.clone();
+
+        let (mut after_from, mut after_to, dist) =
+            transfer_components_with_drain(from, to, amount.clone(), drain_basis_points)?;
+        after_from.certification = certify_state(&after_from, true, true);
+        after_to.certification = certify_state(&after_to, true, true);
+
+        validate_state(&after_from)?;
+        validate_state(&after_to)?;
+
+        self.store.put_state(after_from.clone())?;
+        self.store.put_state(after_to.clone())?;
+
+        let (mut sender_record, mut receiver_record) =
+            transfer_record(&before_from, &before_to, &after_from, &after_to, amount);
+        sender_record.certification = after_from.certification.clone();
+        receiver_record.certification = after_to.certification.clone();
+
+        if accept_record(&sender_record, &self.consensus) {
+            self.store.put_record(sender_record)?;
+        }
+        if accept_record(&receiver_record, &self.consensus) {
+            self.store.put_record(receiver_record)?;
+        }
+
+        let sender_event = self.build_transition_event(
+            Some(&before_from),
+            &after_from,
+            OperationType::Transfer,
+            after_from.version,
+            now_ms(),
+            self.latest_parent_hash_for_entity(&after_from.vector_id)?,
+        )?;
+        self.append_canonical_event(sender_event)?;
+
+        let receiver_event = self.build_transition_event(
+            Some(&before_to),
+            &after_to,
+            OperationType::Transfer,
+            after_to.version,
+            now_ms(),
+            self.latest_parent_hash_for_entity(&after_to.vector_id)?,
+        )?;
+        self.append_canonical_event(receiver_event)?;
+
+        Ok((after_from, after_to, dist))
     }
 
     pub fn drain(

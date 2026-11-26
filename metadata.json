@@ -1,0 +1,5 @@
+{
+  "name": "v-kernelx",
+  "description": "Vector Network prototype kernel, protocol state machine, opcode interpreter, and TypeScript SDK workbench.",
+  "requestFramePermissions": []
+}

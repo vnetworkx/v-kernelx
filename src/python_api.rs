@@ -1,3 +1,4 @@
+use crate::consensus::{EventAttestation, ValidatorNode};
 use crate::engine::KernelEngine;
 use crate::reconstruction::SettlementOutcome;
 use crate::region::{RegionCreateRequest, RegionVisibility};
@@ -194,6 +195,74 @@ impl PyKernelEngine {
         to_json(&state)
     }
 
+    pub fn create_open_wallet(&self) -> PyResult<String> {
+        let kp = self.inner.create_open_wallet().map_err(map_err)?;
+        to_json(&kp)
+    }
+
+    pub fn register_validator(
+        &mut self,
+        node_id: String,
+        public_key_hex: String,
+        weight: u64,
+        active: bool,
+    ) -> PyResult<String> {
+        let validator = ValidatorNode {
+            node_id,
+            public_key_hex,
+            weight,
+            active,
+        };
+        self.inner
+            .register_validator(validator.clone())
+            .map_err(map_err)?;
+        to_json(&validator)
+    }
+
+    pub fn record_attestation(
+        &mut self,
+        event_hash: String,
+        validator_id: String,
+        validator_pubkey: String,
+        vote_accept: bool,
+        state_root_hash: String,
+        signature: String,
+        timestamp_ms: u64,
+    ) -> PyResult<String> {
+        let round = self
+            .inner
+            .record_attestation(EventAttestation {
+                event_hash,
+                validator_id,
+                validator_pubkey,
+                vote_accept,
+                state_root_hash,
+                signature,
+                timestamp_ms,
+            })
+            .map_err(map_err)?;
+        to_json(&round)
+    }
+
+    pub fn evaluate_consensus(&self, event_hash: String) -> PyResult<String> {
+        let round = self.inner.evaluate_consensus(&event_hash);
+        to_json(&round)
+    }
+
+    pub fn transport(
+        &mut self,
+        from_reserve_id: String,
+        to_id: String,
+        amount: Vec<u128>,
+    ) -> PyResult<String> {
+        let result = self
+            .inner
+            .transport(&from_reserve_id, &to_id, amount)
+            .map_err(map_err)?;
+
+        to_json(&result)
+    }
+
     pub fn transfer(
         &mut self,
         from_id: String,
@@ -203,6 +272,21 @@ impl PyKernelEngine {
         let result = self
             .inner
             .transfer(&from_id, &to_id, amount)
+            .map_err(map_err)?;
+
+        to_json(&result)
+    }
+
+    pub fn transfer_with_drain(
+        &mut self,
+        from_id: String,
+        to_id: String,
+        amount: Vec<u128>,
+        drain_basis_points: u16,
+    ) -> PyResult<String> {
+        let result = self
+            .inner
+            .transfer_with_drain(&from_id, &to_id, amount, drain_basis_points)
             .map_err(map_err)?;
 
         to_json(&result)

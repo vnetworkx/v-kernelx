@@ -21,6 +21,14 @@ pub fn compute_auth_ratio_unit(
     compute_auth_ratio(state, ownership_verified, structure_verified) as f64 / 1000.0
 }
 
+pub fn effective_drain_bps(base_bps: u16, auth_ratio: u16, threshold: u16) -> u16 {
+    if auth_ratio >= threshold {
+        base_bps / 2
+    } else {
+        base_bps
+    }
+}
+
 pub fn certify_state(
     state: &VectorStateV1,
     ownership_verified: bool,
@@ -42,6 +50,20 @@ pub fn certify_state(
             ))
         },
     }
+}
+
+pub fn certify_vector_with_actor(
+    state: &VectorStateV1,
+    actor_public_key: &str,
+    signature_verified: bool,
+) -> CertificationState {
+    let ownership_verified = signature_verified
+        && !actor_public_key.trim().is_empty()
+        && actor_public_key == state.owner_pubkey;
+    let structure_verified = !state.components.is_empty()
+        && !state.vector_id.is_empty()
+        && !state.space_id.is_empty();
+    certify_state(state, ownership_verified, structure_verified)
 }
 
 pub fn is_certified(state: &VectorStateV1) -> bool {

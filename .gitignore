@@ -88,3 +88,13 @@ desktop.ini
 .env
 .env.*
 !.env.example
+
+# =========================
+# Local Node Data & Keystore
+# =========================
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite*

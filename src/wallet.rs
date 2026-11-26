@@ -3,16 +3,35 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WalletIdentity {
     pub public_key_hex: String,
     pub metadata: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WalletKeypair {
+    pub wallet_id: String,
+    pub public_key_hex: String,
+    pub private_key_hex: String,
 }
 
 pub struct WalletContext {
     signing_key: SigningKey,
     public_key_hex: String,
     pub metadata: std::collections::BTreeMap<String, String>,
+}
+
+pub fn derive_wallet_id(public_key_hex: &str) -> Result<String, KernelXError> {
+    let pk_bytes = hex::decode(public_key_hex).map_err(|_| KernelXError::Signature)?;
+    if pk_bytes.len() != 32 {
+        return Err(KernelXError::Signature);
+    }
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"v-kernelx/wallet-id-v1:");
+    hasher.update(&pk_bytes);
+    let digest = hasher.finalize().to_hex().to_string();
+    Ok(format!("wlt_{}", &digest[..24]))
 }
 
 impl WalletContext {
@@ -27,8 +46,36 @@ impl WalletContext {
         }
     }
 
+    pub fn from_private_key_hex(private_key_hex: &str) -> Result<Self, KernelXError> {
+        let seed_bytes = hex::decode(private_key_hex.trim()).map_err(|_| KernelXError::Signature)?;
+        let seed_array: [u8; 32] = seed_bytes.try_into().map_err(|_| KernelXError::Signature)?;
+        let signing_key = SigningKey::from_bytes(&seed_array);
+        let public_key_hex = hex::encode(signing_key.verifying_key().to_bytes());
+        Ok(Self {
+            signing_key,
+            public_key_hex,
+            metadata: std::collections::BTreeMap::new(),
+        })
+    }
+
     pub fn public_key_hex(&self) -> String {
         self.public_key_hex.clone()
+    }
+
+    pub fn private_key_hex(&self) -> String {
+        hex::encode(self.signing_key.to_bytes())
+    }
+
+    pub fn wallet_id(&self) -> Result<String, KernelXError> {
+        derive_wallet_id(&self.public_key_hex)
+    }
+
+    pub fn export_keypair(&self) -> Result<WalletKeypair, KernelXError> {
+        Ok(WalletKeypair {
+            wallet_id: self.wallet_id()?,
+            public_key_hex: self.public_key_hex(),
+            private_key_hex: self.private_key_hex(),
+        })
     }
 
     pub fn identity(&self) -> WalletIdentity {

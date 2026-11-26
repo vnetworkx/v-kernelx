@@ -53,6 +53,9 @@ pub use state::*;
 pub use storage::*;
 pub use transfer::*;
 pub use validation::*;
+pub use wallet::{
+    derive_wallet_id, verify_signature, WalletContext, WalletIdentity, WalletKeypair,
+};
 
 pub use state::compute_state_root as replay_compute_state_root;
 pub use wallet::verifying_key_from_hex as wallet_verifying_key_from_hex;

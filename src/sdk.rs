@@ -1,9 +1,11 @@
+use crate::consensus::{ConsensusRound, EventAttestation, ValidatorNode};
+use crate::drain::DrainRewardDistribution;
 use crate::engine::KernelEngine;
 use crate::error::KernelXError;
 use crate::reconstruction::SettlementOutcome;
 use crate::state::VectorStateV1;
 use crate::storage::MemoryStore;
-use crate::wallet::WalletContext;
+use crate::wallet::{WalletContext, WalletKeypair};
 
 pub struct VectorKernel {
     pub engine: KernelEngine<MemoryStore>,
@@ -18,6 +20,25 @@ impl VectorKernel {
 
     pub fn wallet(&self) -> WalletContext {
         WalletContext::generate()
+    }
+
+    pub fn create_open_wallet(&self) -> Result<WalletKeypair, KernelXError> {
+        self.engine.create_open_wallet()
+    }
+
+    pub fn register_validator(&mut self, validator: ValidatorNode) -> Result<(), KernelXError> {
+        self.engine.register_validator(validator)
+    }
+
+    pub fn record_attestation(
+        &mut self,
+        attestation: EventAttestation,
+    ) -> Result<ConsensusRound, KernelXError> {
+        self.engine.record_attestation(attestation)
+    }
+
+    pub fn evaluate_consensus(&self, event_hash: &str) -> ConsensusRound {
+        self.engine.evaluate_consensus(event_hash)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -42,6 +63,15 @@ impl VectorKernel {
         )
     }
 
+    pub fn transport(
+        &mut self,
+        from_reserve_id: &str,
+        to_id: &str,
+        amount: Vec<u128>,
+    ) -> Result<(VectorStateV1, VectorStateV1), KernelXError> {
+        self.engine.transport(from_reserve_id, to_id, amount)
+    }
+
     pub fn transfer(
         &mut self,
         from_id: &str,
@@ -49,6 +79,17 @@ impl VectorKernel {
         amount: Vec<u128>,
     ) -> Result<(VectorStateV1, VectorStateV1), KernelXError> {
         self.engine.transfer(from_id, to_id, amount)
+    }
+
+    pub fn transfer_with_drain(
+        &mut self,
+        from_id: &str,
+        to_id: &str,
+        amount: Vec<u128>,
+        drain_basis_points: u16,
+    ) -> Result<(VectorStateV1, VectorStateV1, DrainRewardDistribution), KernelXError> {
+        self.engine
+            .transfer_with_drain(from_id, to_id, amount, drain_basis_points)
     }
 
     pub fn drain(
