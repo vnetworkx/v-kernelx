@@ -483,7 +483,10 @@ func (c *Client) SubmitOperation(operation map[string]any) (map[string]any, erro
 		return nil, err
 	}
 	requestID := newRequestID()
-	nonce := c.NextNonce()
+	nonce, err := c.ReserveNonce()
+	if err != nil {
+		return nil, err
+	}
 	timestampMs := uint64(time.Now().UnixMilli())
 	opBytes, err := CanonicalJSONBytes(operation)
 	if err != nil {
