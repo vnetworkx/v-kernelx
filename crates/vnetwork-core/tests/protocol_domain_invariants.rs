@@ -716,6 +716,32 @@ fn test_contract_state_and_escrow_execution_and_loan_draw_maturity_guards() {
     assert_eq!(engine.state.contracts.get(&contract_id).unwrap().escrow_balances.get(&tok).copied(), Some(1_000));
     assert!(verify_token_supply_conservation(&engine.state, &tok).unwrap());
 
+    // A contract requiring AuthRatio cannot bypass the gate by omitting its Region.
+    let mut no_region_rules = BTreeMap::new();
+    no_region_rules.insert("min_auth_ratio_bps".to_string(), serde_json::json!(5_000));
+    let mut contract_probe_state = engine.state.clone();
+    let (ungated_contract, _) = apply_create_contract(
+        &mut contract_probe_state,
+        "UngatedAuthRatioContract",
+        None,
+        no_region_rules,
+        vec![serde_json::json!({ "name": "increment" })],
+        &owner_kp.public_key_hex,
+        2_065,
+    ).unwrap();
+    assert!(apply_execute_contract(
+        &mut contract_probe_state,
+        &ungated_contract.contract_id,
+        "increment",
+        serde_json::json!({ "key": "counter", "delta": 1 }),
+        &owner_kp.public_key_hex,
+        2_066,
+    ).is_err());
+    assert_eq!(
+        contract_probe_state.contracts.get(&ungated_contract.contract_id).unwrap().execution_count,
+        0,
+    );
+
     // Loan with missing maturity CANNOT liquidate unless defaulted, and partial draw <= principal
     let no_mat_loan = commit(NetworkOperation::CreateLoan {
         name: "NoMatLoan".to_string(),
