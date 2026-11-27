@@ -59,3 +59,53 @@ pub fn validate_signed_envelope(
         &envelope.network_id,
     )
 }
+
+
+/// Commit an accepted actor nonce as an event so replay reconstructs anti-replay
+/// indexes from the ledger rather than trusting mutable live-state indexes.
+pub fn commit_request_nonce_event(
+    state: &mut NetworkLedgerState,
+    request_id: &str,
+    actor_pubkey: &str,
+    nonce: u64,
+    timestamp_ms: u64,
+) -> VResult<LedgerEvent> {
+    verify_non_replay(state, request_id, actor_pubkey, nonce, &state.network_id)?;
+
+    let before = serde_json::json!({
+        "actor_pubkey": actor_pubkey,
+        "previous_nonce": state.actor_nonces.get(actor_pubkey).copied(),
+    });
+    let payload = serde_json::json!({
+        "actor_pubkey": actor_pubkey,
+        "request_id": request_id,
+        "nonce": nonce,
+    });
+    let before_hash = blake3_hex(&canonical_json_bytes(&before)?);
+    let after_hash = blake3_hex(&canonical_json_bytes(&payload)?);
+    state.logical_clock = state
+        .logical_clock
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
+    let sequence = (state.events.len() as u64)
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
+    let parents = state.latest_event_hash().into_iter().collect();
+    let event = LedgerEvent::build(
+        sequence,
+        parents,
+        &state.network_id,
+        "request",
+        request_id,
+        "REQUEST_NONCE_COMMIT",
+        actor_pubkey,
+        state.logical_clock,
+        timestamp_ms,
+        payload,
+        before_hash,
+        after_hash,
+    )?;
+    record_nonce_and_request(state, request_id, actor_pubkey, nonce);
+    state.events.push(event.clone());
+    Ok(event)
+}
