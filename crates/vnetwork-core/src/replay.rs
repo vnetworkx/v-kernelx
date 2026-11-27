@@ -1,5 +1,6 @@
 use crate::authorization::{record_nonce_and_request, verify_non_replay};
 use crate::events::verify_event_chain;
+use crate::identity::{verify_participant_join_intent, JoinNetworkRequest};
 use crate::loans::{loan_escrow_wallet_id, move_loan_escrow_balance};
 use crate::state::{GenesisConfig, NetworkLedgerState};
 use serde::{Deserialize, Serialize};
@@ -32,6 +33,42 @@ pub fn replay_from_events(
 
 pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) -> VResult<()> {
     match ev.operation.as_str() {
+        "PARTICIPANT_JOIN_INTENT" => {
+            if ev.network_id != state.network_id || ev.entity_kind != "request" {
+                return Err(VNetworkError::ProfileMismatch(
+                    "participant join intent belongs to a different network or entity kind".to_string(),
+                ));
+            }
+            let challenge: ParticipantChallenge = serde_json::from_value(
+                ev.payload.get("challenge").cloned().ok_or_else(|| {
+                    VNetworkError::Serialization(
+                        "missing challenge in PARTICIPANT_JOIN_INTENT".to_string(),
+                    )
+                })?,
+            )
+            .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
+            let request: JoinNetworkRequest = serde_json::from_value(
+                ev.payload.get("request").cloned().ok_or_else(|| {
+                    VNetworkError::Serialization(
+                        "missing request in PARTICIPANT_JOIN_INTENT".to_string(),
+                    )
+                })?,
+            )
+            .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
+            if challenge.challenge_id != ev.entity_id
+                || request.participant_pubkey != ev.actor_pubkey
+            {
+                return Err(VNetworkError::Validation(
+                    "participant join intent does not match its ledger event envelope".to_string(),
+                ));
+            }
+            verify_participant_join_intent(
+                &challenge,
+                &request,
+                &ev.network_id,
+                ev.timestamp_ms,
+            )?;
+        }
         "SIGNED_OPERATION_INTENT" => {
             if ev.network_id != state.network_id || ev.entity_kind != "request" {
                 return Err(VNetworkError::ProfileMismatch(
