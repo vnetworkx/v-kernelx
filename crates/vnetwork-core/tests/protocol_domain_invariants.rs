@@ -716,6 +716,37 @@ fn test_contract_state_and_escrow_execution_and_loan_draw_maturity_guards() {
     assert_eq!(engine.state.contracts.get(&contract_id).unwrap().escrow_balances.get(&tok).copied(), Some(1_000));
     assert!(verify_token_supply_conservation(&engine.state, &tok).unwrap());
 
+    // Closing a contract must not wrap the sum of its escrow records.
+    let mut overflow_contract_state = engine.state.clone();
+    let (mut overflow_contract, _) = apply_create_contract(
+        &mut overflow_contract_state,
+        "EscrowOverflowClose",
+        None,
+        BTreeMap::new(),
+        vec![serde_json::json!({ "name": "close" })],
+        &owner_kp.public_key_hex,
+        2_064,
+    ).unwrap();
+    overflow_contract.escrow_balances.insert("token-a".to_string(), u128::MAX);
+    overflow_contract.escrow_balances.insert("token-b".to_string(), 1);
+    overflow_contract_state.contracts.insert(
+        overflow_contract.contract_id.clone(),
+        overflow_contract.clone(),
+    );
+    let overflow_state_before = overflow_contract_state.clone();
+    assert!(matches!(
+        apply_execute_contract(
+            &mut overflow_contract_state,
+            &overflow_contract.contract_id,
+            "close",
+            serde_json::json!({}),
+            &owner_kp.public_key_hex,
+            2_065,
+        ),
+        Err(VNetworkError::Validation(_))
+    ));
+    assert_eq!(overflow_contract_state, overflow_state_before);
+
     // A contract requiring AuthRatio cannot bypass the gate by omitting its Region.
     let mut no_region_rules = BTreeMap::new();
     no_region_rules.insert("min_auth_ratio_bps".to_string(), serde_json::json!(5_000));
