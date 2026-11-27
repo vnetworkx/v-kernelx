@@ -127,7 +127,7 @@ def _reserve_durable_nonce(
                     temp_file,
                     separators=(",", ":"),
                 )
-                temp_file.write("\\n")
+                temp_file.write("\n")
                 temp_file.flush()
                 os.fsync(temp_file.fileno())
             os.replace(temp_name, file_path)
