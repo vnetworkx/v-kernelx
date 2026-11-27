@@ -473,7 +473,7 @@ fn test_wallet_pop_replay_expiry_revocation_multisig_and_ghost_isolation() {
         lender_wallet_id: w_ms.clone(),
         borrower_wallet_id: w_dst.clone(),
         principal: 50,
-        collateral: 0,
+        collateral: 1,
         interest_bps: 0,
         maturity_at_ms: Some(650),
     });
@@ -486,6 +486,17 @@ fn test_wallet_pop_replay_expiry_revocation_multisig_and_ghost_isolation() {
         650,
     ).is_err());
     assert_eq!(engine.state.loans.get(&expired_loan_id).unwrap().status, LoanStatus::Created);
+    let (cancelled, _) = apply_execute_loan(
+        &mut engine.state,
+        &expired_loan_id,
+        "cancel",
+        0,
+        &owner_kp.public_key_hex,
+        651,
+    ).unwrap();
+    assert_eq!(cancelled.status, LoanStatus::Cancelled);
+    assert_eq!(cancelled.collateral_locked, 0);
+    assert!(verify_token_supply_conservation(&engine.state, &tok).unwrap());
 
     // Loan collateral maturity enforcement
     let loan_id = commit(NetworkOperation::CreateLoan {
