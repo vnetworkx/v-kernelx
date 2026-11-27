@@ -349,6 +349,7 @@ pub enum LoanStatus {
     Active,
     Repaid,
     Liquidated,
+    Cancelled,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
