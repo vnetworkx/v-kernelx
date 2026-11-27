@@ -364,7 +364,7 @@ impl ProtocolEngine {
             pre_state_root: pre_root,
             post_state_root: post_root.clone(),
             proposal_digest: String::new(),
-            operation_scope: op_scope,
+            operation_scope: op_scope.clone(),
             events: outcome.events.clone(),
             program_id: None,
             tx_id: Some(tx_id.clone()),
@@ -484,7 +484,7 @@ impl ProtocolEngine {
                         let ev_actor = proposal
                             .events
                             .first()
-                            .map(|e| e.actor.clone())
+                            .map(|e| e.actor_pubkey.clone())
                             .unwrap_or_default();
                         (ev_actor, proposal.proposal_id.clone(), 0)
                     });
