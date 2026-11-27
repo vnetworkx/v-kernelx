@@ -129,3 +129,14 @@ impl Display for Event {
         )
     }
 }
+
+
+#[cfg(test)]
+mod checked_timestamp_regressions {
+    use super::derive_timestamp;
+
+    #[test]
+    fn event_timestamp_overflow_is_rejected() {
+        assert!(derive_timestamp(u64::MAX).is_err());
+    }
+}
