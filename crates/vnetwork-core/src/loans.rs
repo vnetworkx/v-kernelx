@@ -224,6 +224,62 @@ pub fn apply_execute_loan(
     let norm = action.trim().to_ascii_lowercase();
 
     match norm.as_str() {
+        "cancel" => {
+            if loan.status != LoanStatus::Created || loan.disbursed_amount != 0 {
+                return Err(VNetworkError::Validation(
+                    "only an unfunded Created loan can be cancelled".to_string(),
+                ));
+            }
+            let borrower_authorized = borrower
+                .verify_permission(
+                    actor_pubkey,
+                    WalletPermission::LoanInteract,
+                    Some(&loan.token_id),
+                    None,
+                    timestamp_ms,
+                )
+                .is_ok();
+            let lender_authorized = lender
+                .verify_permission(
+                    actor_pubkey,
+                    WalletPermission::LoanInteract,
+                    Some(&loan.token_id),
+                    None,
+                    timestamp_ms,
+                )
+                .is_ok();
+            if !borrower_authorized && !lender_authorized {
+                return Err(VNetworkError::Authorization(
+                    "loan cancellation requires lender or borrower LoanInteract authorization"
+                        .to_string(),
+                ));
+            }
+            if loan.collateral_locked > 0 {
+                let escrow_id = loan_escrow_wallet_id(&loan.loan_id);
+                let collateral = loan.collateral_locked;
+                let collateral_token = if loan.collateral_token_id.is_empty() {
+                    loan.token_id.as_str()
+                } else {
+                    loan.collateral_token_id.as_str()
+                };
+                move_loan_escrow_balance(
+                    state,
+                    collateral_token,
+                    &escrow_id,
+                    &loan.borrower_wallet_id,
+                    collateral,
+                    timestamp_ms,
+                )?;
+                loan.collateral_locked = 0;
+                if !verify_token_supply_conservation(state, collateral_token)? {
+                    return Err(VNetworkError::Validation(
+                        "token supply conservation check failed releasing cancelled loan collateral"
+                            .to_string(),
+                    ));
+                }
+            }
+            loan.status = LoanStatus::Cancelled;
+        }
         "fund" => {
             if loan.maturity_at_ms.is_some_and(|maturity| timestamp_ms >= maturity) {
                 return Err(VNetworkError::Validation(
