@@ -1,4 +1,5 @@
-use crate::ast::{VectorType};
+use crate::ast::VectorType;
+use crate::error::{RuntimeError, RuntimeErrorKind};
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,8 +69,12 @@ pub fn derive_signature(event_hash: &str, actor_pk: &str, logical_clock: u64) ->
     fnv1a_128(&format!("{event_hash}:{actor_pk}:{logical_clock}"))
 }
 
-pub fn derive_timestamp(logical_clock: u64) -> u64 {
-    1_700_000_000 + logical_clock
+pub fn derive_timestamp(logical_clock: u64) -> Result<u64, RuntimeError> {
+    1_700_000_000u64.checked_add(logical_clock).ok_or_else(|| {
+        RuntimeError::new(RuntimeErrorKind::InvalidOperation(
+            "event timestamp overflow".to_string(),
+        ))
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
