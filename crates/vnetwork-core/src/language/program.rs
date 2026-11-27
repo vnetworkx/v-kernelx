@@ -1,4 +1,3 @@
-use crate::authorization::record_nonce_and_request;
 use crate::events::events_for_entity;
 use crate::ledger::build_ledger_proof_report;
 use crate::reconstruction::reconstruct_entity;
@@ -79,7 +78,19 @@ pub fn execute_compiled_program_staged(
     }
 
     if let Some((actor, req_id, nonce)) = nonce_binding {
-        record_nonce_and_request(&mut staged, req_id, actor, nonce);
+        let nonce_event = crate::authorization::commit_request_nonce_event(
+            &mut staged,
+            req_id,
+            actor,
+            nonce,
+            timestamp_ms,
+        )
+        .map_err(|error| ProgramFailure {
+            failed_operation_index: compiled.ops.len().saturating_sub(1),
+            error,
+            lifecycle_status: ProgramLifecycleStatus::Rejected,
+        })?;
+        generated_events.push(nonce_event);
     }
 
     staged.height = base_state.height.checked_add(1).ok_or_else(|| ProgramFailure {
