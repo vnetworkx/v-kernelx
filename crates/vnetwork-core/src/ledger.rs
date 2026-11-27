@@ -238,7 +238,7 @@ pub fn build_verified_ledger_proof_report(
     let replay_hash = state.compute_replay_hash();
     let event_history_root = state.compute_event_history_root();
 
-    let mut token_conservation = Vec::new();
+    let mut token_conservation: Vec<TokenConservationSummary> = Vec::new();
     for token in state.tokens.values() {
         let breakdown = compute_token_supply_breakdown(state, &token.token_id)?;
         token_conservation.push(breakdown.into());
