@@ -1,4 +1,5 @@
 use crate::ast::VectorType;
+use crate::error::{RuntimeError, RuntimeErrorKind};
 use crate::event::Event;
 use std::collections::BTreeMap;
 
@@ -23,8 +24,14 @@ pub struct VectorState {
 }
 
 impl VectorState {
-    pub fn magnitude(&self) -> u128 {
-        self.components.iter().copied().sum()
+    pub fn magnitude(&self) -> Result<u128, RuntimeError> {
+        self.components.iter().try_fold(0u128, |sum, component| {
+            sum.checked_add(*component).ok_or_else(|| {
+                RuntimeError::new(RuntimeErrorKind::InvalidOperation(
+                    "vector magnitude overflow".to_string(),
+                ))
+            })
+        })
     }
 
     pub fn is_zero(&self) -> bool {
@@ -81,9 +88,14 @@ impl NetworkState {
         }
     }
 
-    pub fn next_clock(&mut self) -> u64 {
-        self.logical_clock = self.logical_clock.saturating_add(1);
-        self.logical_clock
+    pub fn next_clock(&mut self) -> Result<u64, RuntimeError> {
+        let next = self.logical_clock.checked_add(1).ok_or_else(|| {
+            RuntimeError::new(RuntimeErrorKind::InvalidOperation(
+                "logical clock overflow".to_string(),
+            ))
+        })?;
+        self.logical_clock = next;
+        Ok(next)
     }
 
     pub fn push_event(&mut self, event: Event) {
@@ -96,5 +108,34 @@ impl NetworkState {
 impl Default for NetworkState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+
+#[cfg(test)]
+mod checked_state_regressions {
+    use super::{CertificationState, NetworkState, VectorState};
+    use crate::ast::VectorType;
+
+    #[test]
+    fn vector_magnitude_rejects_overflow() {
+        let vector = VectorState {
+            name: "overflow".to_string(),
+            vector_type: VectorType::Free,
+            components: vec![u128::MAX, 1],
+            owner: None,
+            meta: Default::default(),
+            certification: CertificationState::Pending,
+            auth_ratio: "0.0000".to_string(),
+        };
+        assert!(vector.magnitude().is_err());
+    }
+
+    #[test]
+    fn logical_clock_rejects_overflow_without_mutation() {
+        let mut state = NetworkState::new();
+        state.logical_clock = u64::MAX;
+        assert!(state.next_clock().is_err());
+        assert_eq!(state.logical_clock, u64::MAX);
     }
 }
