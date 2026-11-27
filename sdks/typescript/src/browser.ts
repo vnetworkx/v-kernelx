@@ -14,6 +14,15 @@ import type {
 export { blake3Hex } from "./blake3.js";
 export { canonicalJsonBytes, canonicalJsonString, sortJsonValue } from "./canonical.js";
 
+type BrowserNonceStorage = {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+};
+
+type BrowserNonceLockManager = {
+  request<T>(name: string, callback: () => Promise<T>): Promise<T>;
+};
+
 const ED25519_PKCS8_PREFIX = new Uint8Array([
   0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06,
   0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
@@ -243,7 +252,63 @@ export class BrowserVectorNetworkClient {
     readonly baseUrl: string,
     readonly identity: { display_name: string; participant_key: KeypairMaterial; node_key: KeypairMaterial },
     readonly expectedNetworkId: string | null = null,
+    private readonly nonceStorage: BrowserNonceStorage | null = null,
+    private readonly nonceLockManager: BrowserNonceLockManager | null = null,
   ) {}
+
+  async reserveNonce(): Promise<number> {
+    const networkId = this.resolvedNetworkId();
+    const actorPubkey = this.identity.participant_key.public_key_hex;
+    const key = blake3Hex(`${networkId}::${actorPubkey}`);
+    let storage = this.nonceStorage;
+    let lockManager = this.nonceLockManager;
+    try {
+      storage = storage ?? globalThis.localStorage;
+      lockManager = lockManager ?? (globalThis.navigator?.locks as unknown as BrowserNonceLockManager | undefined) ?? null;
+    } catch {
+      throw new Error("Browser nonce persistence is unavailable; refusing to send a request with an ephemeral nonce");
+    }
+    if (!storage || typeof storage.getItem !== "function" || typeof storage.setItem !== "function") {
+      throw new Error("Browser localStorage is unavailable; refusing to send a request with an ephemeral nonce");
+    }
+    if (!lockManager || typeof lockManager.request !== "function") {
+      throw new Error("Browser Web Locks API is unavailable; refusing to risk duplicate request nonces across tabs");
+    }
+    const storageKey = `vnetwork:request-nonce:v1:${key}`;
+    return lockManager.request(`vnetwork-request-nonce-${key}`, async () => {
+      let current = this.nonce;
+      const raw = storage!.getItem(storageKey);
+      if (raw !== null) {
+        let stored: any;
+        try {
+          stored = JSON.parse(raw);
+        } catch {
+          throw new Error("Persisted browser request nonce state is corrupt");
+        }
+        if (
+          stored.version !== 1 ||
+          stored.network_id !== networkId ||
+          stored.actor_pubkey !== actorPubkey ||
+          !Number.isSafeInteger(stored.next_nonce) ||
+          stored.next_nonce < 1
+        ) {
+          throw new Error("Persisted browser request nonce state does not match this network/participant");
+        }
+        current = Math.max(current, stored.next_nonce);
+      }
+      if (!Number.isSafeInteger(current) || current < 1 || current >= Number.MAX_SAFE_INTEGER) {
+        throw new Error("Request nonce exhausted JavaScript's safe integer range");
+      }
+      storage!.setItem(storageKey, JSON.stringify({
+        version: 1,
+        network_id: networkId,
+        actor_pubkey: actorPubkey,
+        next_nonce: current + 1,
+      }));
+      this.nonce = current + 1;
+      return current;
+    });
+  }
 
   async connect(): Promise<NetworkInfo> {
     const info = await this.getJson<NetworkInfo>("/v1/network/info");
@@ -307,7 +372,7 @@ export class BrowserVectorNetworkClient {
     if (!this.connectedNetworkId) await this.connect();
     const networkId = this.resolvedNetworkId();
     const requestId = `req_${globalThis.crypto.randomUUID().replace(/-/g, "")}`;
-    const nonce = this.nonce++;
+    const nonce = await this.reserveNonce();
     const msg = canonicalJsonBytes(
       canonicalProgramSubmitObject({
         actorPubkey: this.identity.participant_key.public_key_hex,
@@ -396,7 +461,7 @@ export class BrowserVectorNetworkClient {
     if (!this.connectedNetworkId) await this.connect();
     const networkId = this.resolvedNetworkId();
     const requestId = `req_${globalThis.crypto.randomUUID().replace(/-/g, "")}`;
-    const nonce = this.nonce++;
+    const nonce = await this.reserveNonce();
     const timestampMs = Date.now();
     const payloadHash = blake3Hex(canonicalJsonBytes(operation));
     const signingBytes = canonicalJsonBytes({
