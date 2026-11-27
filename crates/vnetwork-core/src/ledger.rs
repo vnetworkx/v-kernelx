@@ -140,13 +140,20 @@ pub fn compute_hierarchy_commitments(
 
     let mut region_commitments = BTreeMap::new();
     for (rid, region) in &state.regions {
-        let parent_commitment = if region.space_id.is_empty() {
+        let parent_commitment = if region.space_id.is_empty() && region.ghost {
             network_commitment.as_str()
+        } else if region.space_id.is_empty() {
+            return Err(VNetworkError::Validation(format!(
+                "non-Ghost Region `{rid}` is missing its parent Space"
+            )));
         } else {
             space_commitments
                 .get(&region.space_id)
                 .map(String::as_str)
-                .unwrap_or(network_commitment.as_str())
+                .ok_or_else(|| VNetworkError::Validation(format!(
+                    "Region `{rid}` references missing parent Space `{}`",
+                    region.space_id
+                )))?
         };
         let evs = events_by_entity.get(rid.as_str()).cloned().unwrap_or_default();
         let commit = blake3_hex(&canonical_json_bytes(&serde_json::json!({
@@ -160,13 +167,20 @@ pub fn compute_hierarchy_commitments(
 
     let mut wallet_commitments = BTreeMap::new();
     for (wid, wallet) in &state.wallets {
-        let parent_commitment = if wallet.region_id.is_empty() {
+        let parent_commitment = if wallet.region_id.is_empty() && wallet.ghost {
             network_commitment.as_str()
+        } else if wallet.region_id.is_empty() {
+            return Err(VNetworkError::Validation(format!(
+                "non-Ghost Wallet `{wid}` is missing its parent Region"
+            )));
         } else {
             region_commitments
                 .get(&wallet.region_id)
                 .map(String::as_str)
-                .unwrap_or(network_commitment.as_str())
+                .ok_or_else(|| VNetworkError::Validation(format!(
+                    "Wallet `{wid}` references missing parent Region `{}`",
+                    wallet.region_id
+                )))?
         };
         let evs = events_by_entity.get(wid.as_str()).cloned().unwrap_or_default();
         let commit = blake3_hex(&canonical_json_bytes(&serde_json::json!({
@@ -180,13 +194,20 @@ pub fn compute_hierarchy_commitments(
 
     let mut token_commitments = BTreeMap::new();
     for (tid, token) in &state.tokens {
-        let parent_commitment = if token.wallet_id.is_empty() {
+        let parent_commitment = if token.wallet_id.is_empty() && token.ghost {
             network_commitment.as_str()
+        } else if token.wallet_id.is_empty() {
+            return Err(VNetworkError::Validation(format!(
+                "non-Ghost Token `{tid}` is missing its parent Wallet"
+            )));
         } else {
             wallet_commitments
                 .get(&token.wallet_id)
                 .map(String::as_str)
-                .unwrap_or(network_commitment.as_str())
+                .ok_or_else(|| VNetworkError::Validation(format!(
+                    "Token `{tid}` references missing parent Wallet `{}`",
+                    token.wallet_id
+                )))?
         };
         let evs = events_by_entity.get(tid.as_str()).cloned().unwrap_or_default();
         let commit = blake3_hex(&canonical_json_bytes(&serde_json::json!({
@@ -385,4 +406,94 @@ pub fn build_verified_ledger_proof_report(
 
 pub fn build_ledger_proof_report(state: &NetworkLedgerState) -> VResult<LedgerProofReport> {
     build_verified_ledger_proof_report(state, None)
+}
+
+
+#[cfg(test)]
+mod hierarchy_commitment_regressions {
+    use super::compute_hierarchy_commitments;
+    use crate::state::{GenesisConfig, NetworkLedgerState};
+    use std::collections::BTreeMap;
+    use vnetwork_types::*;
+
+    fn empty_state() -> NetworkLedgerState {
+        let validator = KeypairMaterial::generate("hierarchy-commitment-test");
+        let genesis = GenesisConfig::for_profile(
+            NetworkProfile::Development,
+            "hierarchy-commitment-regression",
+            "Hierarchy commitment regression",
+            vec![ConsensusValidator {
+                validator_id: "validator-1".to_string(),
+                node_id: "node-1".to_string(),
+                validator_pubkey_hex: validator.public_key_hex,
+                weight: 100,
+                active: true,
+                joined_epoch: 1,
+            }],
+        );
+        NetworkLedgerState::try_new(&genesis).expect("valid genesis")
+    }
+
+    #[test]
+    fn parentless_ghost_region_is_committed_to_network_root() {
+        let mut state = empty_state();
+        state.regions.insert("ghost-region".to_string(), RegionEntity {
+            region_id: "ghost-region".to_string(),
+            space_id: String::new(),
+            name: "Ghost Region".to_string(),
+            prefix: None,
+            title: None,
+            visibility: Visibility::Private,
+            section: 0,
+            ghost: true,
+            auth_ratio_bps: 0,
+            creator_pubkey: "test-owner".to_string(),
+            created_at_ms: 1,
+            version: 1,
+            metadata: BTreeMap::new(),
+        });
+        let summary = compute_hierarchy_commitments(&state, "root", "events")
+            .expect("parentless Ghost Region is a supported Network child");
+        assert!(summary.region_commitments.contains_key("ghost-region"));
+    }
+
+    #[test]
+    fn ordinary_region_with_missing_parent_is_rejected_not_attached_to_network() {
+        let mut state = empty_state();
+        state.regions.insert("orphan-region".to_string(), RegionEntity {
+            region_id: "orphan-region".to_string(),
+            space_id: "missing-space".to_string(),
+            name: "Orphan Region".to_string(),
+            prefix: None,
+            title: None,
+            visibility: Visibility::Private,
+            section: 0,
+            ghost: false,
+            auth_ratio_bps: 0,
+            creator_pubkey: "test-owner".to_string(),
+            created_at_ms: 1,
+            version: 1,
+            metadata: BTreeMap::new(),
+        });
+        assert!(compute_hierarchy_commitments(&state, "root", "events").is_err());
+    }
+
+    #[test]
+    fn ordinary_wallet_with_missing_parent_is_rejected() {
+        let mut state = empty_state();
+        state.wallets.insert("orphan-wallet".to_string(), WalletEntity {
+            wallet_id: "orphan-wallet".to_string(),
+            name: "Orphan Wallet".to_string(),
+            region_id: "missing-region".to_string(),
+            space_id: "missing-space".to_string(),
+            ghost: false,
+            owner_pubkey: "test-owner".to_string(),
+            authorized_keys: BTreeMap::new(),
+            approval_threshold: 1,
+            receive_policy: WalletReceivePolicy::default(),
+            created_at_ms: 1,
+            version: 1,
+        });
+        assert!(compute_hierarchy_commitments(&state, "root", "events").is_err());
+    }
 }
