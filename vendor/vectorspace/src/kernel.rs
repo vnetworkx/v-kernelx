@@ -469,7 +469,7 @@ fn execute_kernel_op_inner(state: &mut NetworkState, op: KernelOp) -> Result<Ker
                 true,
                 "kernel",
                 "transfer-proof",
-            )?
+            )?;
 
             Ok(KernelResult {
                 output: Some(format!("transfer {source}->{destination} amount={amount} drain={drain}")),
