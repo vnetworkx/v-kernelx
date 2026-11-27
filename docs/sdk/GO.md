@@ -18,3 +18,7 @@ go -C examples/go run .
 - `client.Join(scopes)` — dual-signed challenge-response network participation join.
 - `client.SubmitProgram(fileName, source, modules)` / `client.SubmitVxFile(path)` — resolves `.vdx` imports, computes BLAKE3 hashes, signs, and submits `.vx` program to BFT consensus.
 - `client.VerifyReconstruction(kind, id)` — validates deterministic event-sourced entity reconstruction.
+
+## Durable request nonces
+
+Use `client.ReserveNonce()` when managing request envelopes directly; it returns an error if it cannot persist the reservation. `SubmitProgram` uses this path automatically. The default counter is stored per network and participant under `~/.vnetwork/nonces`. Set `client.NonceStorePath` to use a custom file. `NextNonce()` remains as a compatibility wrapper and panics on persistence failure; new code should use `ReserveNonce()`.
