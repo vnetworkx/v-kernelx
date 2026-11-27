@@ -219,7 +219,7 @@ export function normalizeVerificationStatus(raw) {
 
 export class BrowserVectorNetworkClient {
   constructor(baseUrl, identity, expectedNetworkId = null, nonceStorage = null, nonceLockManager = null) {
-    this.baseUrl = baseUrl.replace(/\\/+$/, "");
+    this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.identity = identity;
     this.expectedNetworkId = expectedNetworkId;
     this.connectedNetworkId = null;
