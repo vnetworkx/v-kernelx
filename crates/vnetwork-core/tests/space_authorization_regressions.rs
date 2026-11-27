@@ -108,3 +108,24 @@ fn expired_or_revoked_governance_cannot_create_space() {
         assert!(state.spaces.is_empty());
     }
 }
+
+
+#[test]
+fn failed_network_transition_does_not_leak_partial_space_mutation() {
+    let (mut state, actor) = state_with_participant("network_governance");
+    state.logical_clock = u64::MAX;
+    let before = state.clone();
+    let result = apply_network_operation_with_policy(
+        &mut state,
+        false,
+        &NetworkOperation::CreateSpace {
+            name: "must-not-commit".to_string(),
+            visibility: "PUBLIC".to_string(),
+            ghost: false,
+        },
+        &actor.public_key_hex,
+        10,
+    );
+    assert!(result.is_err());
+    assert_eq!(state, before);
+}
