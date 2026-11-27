@@ -14,9 +14,15 @@ pub async fn run_program_submit(
     if let Some(net) = &state.network_id {
         client = client.with_expected_network(net);
     }
-    let sub = client.submit_vx_file(&file).await?;
-    state.nonce = client.next_nonce();
+    // Reserve and persist the nonce before sending the signed request. A timeout
+    // may occur after the node commits it; saving only after a successful response
+    // would then reuse a consumed nonce on the next CLI invocation.
+    state.nonce = state
+        .nonce
+        .checked_add(1)
+        .ok_or("CLI request nonce exhausted")?;
     save_cli_state(&state)?;
+    let sub = client.submit_vx_file(&file).await?;
     println!("{}", serde_json::to_string_pretty(&sub)?);
     Ok(())
 }
