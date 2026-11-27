@@ -22,3 +22,7 @@ client.join(["NETWORK", "SPACE", "REGION", "WALLET", "TOKEN"])
 sub = client.submit_vx_file("examples/vector-language/create-token.vx")
 print(sub["status"], sub["final_state_root"])
 ```
+
+## Durable request nonces
+
+The Python client persists nonce reservations per network and participant under `~/.vnetwork/nonces` before sending signed writes. A custom file may be supplied with `nonce_store_path=...` when constructing `VectorNetworkClient`. Reservation is persisted before the HTTP operation, so a lost response will not reset the counter on process restart.
