@@ -28,6 +28,9 @@ jobs:
         uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           components: rustfmt
+      - name: Format check
+        run: cargo fmt --all --check
+
   rust:
     name: Rust checks (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -55,9 +58,6 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.7.5
-
-      - name: Format check
-        run: cargo fmt --all --check
 
       - name: Check
         run: cargo check --workspace --all-targets --all-features
