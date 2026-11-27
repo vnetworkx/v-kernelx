@@ -21,7 +21,7 @@ pub fn issue_participant_challenge(
         network_id: state.network_id.clone(),
         nonce,
         issued_at_ms: timestamp_ms,
-        expires_at_ms: timestamp_ms.checked_add(300_000).unwrap_or(u64::MAX),
+        expires_at_ms: timestamp_ms.saturating_add(300_000),
     };
     state.challenges.insert(challenge_id, challenge.clone());
     challenge
