@@ -4,6 +4,8 @@ use crate::state::NetworkLedgerState;
 use std::collections::BTreeMap;
 use vnetwork_types::*;
 
+// The explicit parameters mirror the canonical signed payload fields.
+#[allow(clippy::too_many_arguments)]
 pub fn canonical_wallet_pop_bytes(
     network_id: &str,
     wallet_id: &str,
