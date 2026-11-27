@@ -116,6 +116,22 @@ fn has_network_governance_authority(
     })
 }
 
+/// Require an active, explicit Network-governance grant. Plain Network membership
+/// is not enough to create the first Space or administer Network membership.
+pub fn require_network_governance_at(
+    state: &NetworkLedgerState,
+    actor_pubkey: &str,
+    now_ms: u64,
+) -> VResult<()> {
+    if has_network_governance_authority(state, actor_pubkey, now_ms) {
+        Ok(())
+    } else {
+        Err(VNetworkError::Authorization(format!(
+            "actor `{actor_pubkey}` lacks active Network governance authority"
+        )))
+    }
+}
+
 fn is_active_participant(state: &NetworkLedgerState, pubkey: &str) -> bool {
     state.participants.values().any(|participant| {
         participant.public_key_hex == pubkey && participant.status == ParticipationStatus::Active
@@ -205,12 +221,14 @@ fn can_authorize_join_scope(
     // Preserve the existing genesis onboarding path, but never treat validator
     // status alone as ongoing authority. Genesis authorization is an explicit,
     // signed, one-time join grant and remains subject to consensus commitment.
-    auth.target_id.is_none()
+    state.height == 0
+        && auth.target_id.is_none()
         && auth.authorization_basis.trim().to_ascii_lowercase().starts_with("genesis")
-        && state
-            .validators
-            .iter()
-            .any(|validator| validator.active && validator.validator_pubkey_hex == auth.grantor_pubkey)
+        && state.validators.iter().any(|validator| {
+            validator.active
+                && validator.joined_epoch == state.validator_epoch
+                && validator.validator_pubkey_hex == auth.grantor_pubkey
+        })
 }
 
 pub fn verify_and_register_participant(
@@ -250,6 +268,21 @@ pub fn verify_and_register_participant(
 
     let participant_id = derive_participant_id(&req.participant_pubkey);
     let node_id = derive_node_id(&req.node_pubkey);
+
+    // Enrollment must never overwrite historical identity records. Reinstatement
+    // and key rotation require their own authorized, auditable transitions.
+    if state.participants.contains_key(&participant_id) {
+        return Err(VNetworkError::Authorization(
+            "participant identity already exists; rejoining requires explicit governance reinstatement"
+                .to_string(),
+        ));
+    }
+    if state.nodes.contains_key(&node_id) {
+        return Err(VNetworkError::Authorization(
+            "node identity already exists; key reuse requires an authorized identity-rotation transition"
+                .to_string(),
+        ));
+    }
 
     // Open enrollment creates membership only. It never grants governance.
     let mut grants = vec![ScopeGrant {
