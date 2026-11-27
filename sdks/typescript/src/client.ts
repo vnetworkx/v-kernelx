@@ -25,10 +25,10 @@ import type {
 const IMPORT_RE = /^\s*import\s+"([^"]+)"(?:\s+(?:blake3|sha256)\s+"([^"]+)")?(?:\s+as\s+[A-Za-z0-9_]+)?\s*;/gm;
 const MAX_IMPORT_MODULES = 64;
 
-async function reserveDurableNonce(filePath: string, networkId: string, actorPubkey: string, minimumNextNonce: number): Promise<number> {
+async function reserveDurableNonce(filePath: string, networkId: string, actorPubkey: string, minimumNextNonce: number, restrictDirectory: boolean): Promise<number> {
   const dir = path.dirname(filePath);
   await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-  await fs.chmod(dir, 0o700).catch(() => {});
+  if (restrictDirectory) await fs.chmod(dir, 0o700).catch(() => {});
   const lockPath = `${filePath}.lock`;
   let lockHandle: Awaited<ReturnType<typeof fs.open>> | null = null;
 
@@ -178,8 +178,9 @@ export class VectorNetworkClient {
     const networkId = this.resolvedNetworkId();
     const actorPubkey = this.identity.participant_key.public_key_hex;
     const key = crypto.createHash("sha256").update(`${networkId}::${actorPubkey}`).digest("hex");
+    const useDefaultStore = this.nonceStorePath === null;
     const storePath = this.nonceStorePath ?? path.join(os.homedir(), ".vnetwork", "nonces", `${key}.json`);
-    const reserved = await reserveDurableNonce(storePath, networkId, actorPubkey, this.nonce);
+    const reserved = await reserveDurableNonce(storePath, networkId, actorPubkey, this.nonce, useDefaultStore);
     this.nonce = reserved + 1;
     return reserved;
   }
