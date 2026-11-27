@@ -561,7 +561,16 @@ pub fn apply_execute_contract(
                 "amount": amount.to_string(),
             }));
         } else if matches!(norm_action.as_str(), "deactivate" | "close") {
-            let nonzero_escrow: u128 = contract.escrow_balances.values().copied().sum();
+            let nonzero_escrow = contract.escrow_balances.values().try_fold(
+                0u128,
+                |total, amount| {
+                    total.checked_add(*amount).ok_or_else(|| {
+                        VNetworkError::Validation(
+                            "contract escrow total overflow".to_string(),
+                        )
+                    })
+                },
+            )?;
             if nonzero_escrow > 0 {
                 return Err(VNetworkError::Validation(
                     "cannot close contract while escrow balances remain non-zero".to_string(),
