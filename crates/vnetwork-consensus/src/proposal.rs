@@ -1,6 +1,5 @@
 use crate::eligibility::verify_proposer_eligibility;
 use crate::membership::ValidatorMembership;
-use vnetwork_core::authorization::record_nonce_and_request;
 use vnetwork_core::language::validator_verify_program_bundle;
 use vnetwork_core::replay::apply_event_to_state;
 use vnetwork_core::state::{GenesisConfig, NetworkLedgerState};
@@ -118,8 +117,38 @@ pub fn validate_proposal_against_state(
         }
         apply_event_to_state(&mut staged, ev)?;
     }
-    if let Some((actor, req_id, nonce)) = &proposal.nonce_binding {
-        record_nonce_and_request(&mut staged, req_id, actor, *nonce);
+    match &proposal.nonce_binding {
+        Some((actor, request_id, nonce)) => {
+            let nonce_events: Vec<&LedgerEvent> = proposal
+                .events
+                .iter()
+                .filter(|event| event.operation == "REQUEST_NONCE_COMMIT")
+                .collect();
+            if nonce_events.len() != 1 {
+                return Err(VNetworkError::Consensus(
+                    "signed request proposal must contain exactly one REQUEST_NONCE_COMMIT event"
+                        .to_string(),
+                ));
+            }
+            let event = nonce_events[0];
+            if event.payload.get("actor_pubkey").and_then(|v| v.as_str()) != Some(actor.as_str())
+                || event.payload.get("request_id").and_then(|v| v.as_str()) != Some(request_id.as_str())
+                || event.payload.get("nonce").and_then(|v| v.as_u64()) != Some(*nonce)
+                || staged.actor_nonces.get(actor) != Some(nonce)
+                || !staged.seen_request_ids.contains(request_id)
+            {
+                return Err(VNetworkError::Consensus(
+                    "proposal nonce binding is not proven by its committed event".to_string(),
+                ));
+            }
+        }
+        None => {
+            if proposal.events.iter().any(|event| event.operation == "REQUEST_NONCE_COMMIT") {
+                return Err(VNetworkError::Consensus(
+                    "proposal contains a request nonce event without a nonce binding".to_string(),
+                ));
+            }
+        }
     }
     staged.height = proposal.height;
     let computed_post = staged.compute_state_root()?;
