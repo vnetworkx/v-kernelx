@@ -27,6 +27,84 @@ pub fn issue_participant_challenge(
     challenge
 }
 
+pub fn verify_participant_join_intent(
+    challenge: &ParticipantChallenge,
+    req: &JoinNetworkRequest,
+    network_id: &str,
+    timestamp_ms: u64,
+) -> VResult<()> {
+    if challenge.challenge_id != req.challenge_id
+        || challenge.network_id != network_id
+        || challenge.nonce.len() != 64
+        || !challenge.nonce.bytes().all(|b| b.is_ascii_hexdigit())
+        || challenge.challenge_id != format!("chl_{}", &challenge.nonce[..24])
+        || challenge.expires_at_ms != challenge.issued_at_ms.saturating_add(300_000)
+        || timestamp_ms < challenge.issued_at_ms
+        || timestamp_ms > challenge.expires_at_ms
+    {
+        return Err(VNetworkError::Authorization(
+            "participant join challenge metadata is invalid, expired, or for another network"
+                .to_string(),
+        ));
+    }
+    if req.participant_pubkey == req.node_pubkey {
+        return Err(VNetworkError::Authorization(
+            "participant key and node identity key must be distinct".to_string(),
+        ));
+    }
+
+    let msg = canonical_join_signing_bytes(
+        challenge,
+        &req.participant_pubkey,
+        &req.node_pubkey,
+        &req.requested_scopes,
+    )?;
+    verify_ed25519(&req.participant_pubkey, &msg, &req.participant_signature)?;
+    verify_ed25519(&req.node_pubkey, &msg, &req.node_signature)
+}
+
+/// Add the original participant and node join signatures to the proposal event
+/// stream so every validator can verify the enrollment rather than trusting the
+/// proposer's PARTICIPANT_JOIN state payload.
+pub fn commit_participant_join_intent_event(
+    state: &mut NetworkLedgerState,
+    challenge: &ParticipantChallenge,
+    req: &JoinNetworkRequest,
+    timestamp_ms: u64,
+) -> VResult<LedgerEvent> {
+    verify_participant_join_intent(challenge, req, &state.network_id, timestamp_ms)?;
+    let payload = serde_json::json!({
+        "challenge": challenge,
+        "request": req,
+    });
+    let before_hash = state.compute_state_root()?;
+    let after_hash = blake3_hex(&canonical_json_bytes(&payload)?);
+    state.logical_clock = state
+        .logical_clock
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
+    let sequence = (state.events.len() as u64)
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
+    let parents = state.latest_event_hash().into_iter().collect();
+    let event = LedgerEvent::build(
+        sequence,
+        parents,
+        &state.network_id,
+        "request",
+        &challenge.challenge_id,
+        "PARTICIPANT_JOIN_INTENT",
+        &req.participant_pubkey,
+        state.logical_clock,
+        timestamp_ms,
+        payload,
+        before_hash,
+        after_hash,
+    )?;
+    state.events.push(event.clone());
+    Ok(event)
+}
+
 pub fn canonical_join_signing_bytes(
     challenge: &ParticipantChallenge,
     participant_pubkey: &str,
@@ -247,26 +325,13 @@ pub fn verify_and_register_participant(
         return Err(VNetworkError::Authorization("participant challenge expired".to_string()));
     }
 
-    if req.participant_pubkey == req.node_pubkey {
-        return Err(VNetworkError::Authorization(
-            "participant key and node identity key must be distinct".to_string(),
-        ));
-    }
+    verify_participant_join_intent(&challenge, req, &state.network_id, timestamp_ms)?;
 
     // Never allow a join request to self-promote directly to ValidatorNode
     let effective_node_kind = match req.node_kind {
         NodeKind::ValidatorNode => NodeKind::FullNode,
         other => other,
     };
-
-    let msg = canonical_join_signing_bytes(
-        &challenge,
-        &req.participant_pubkey,
-        &req.node_pubkey,
-        &req.requested_scopes,
-    )?;
-    verify_ed25519(&req.participant_pubkey, &msg, &req.participant_signature)?;
-    verify_ed25519(&req.node_pubkey, &msg, &req.node_signature)?;
 
     let participant_id = derive_participant_id(&req.participant_pubkey);
     let node_id = derive_node_id(&req.node_pubkey);
