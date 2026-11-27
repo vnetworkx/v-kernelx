@@ -61,6 +61,27 @@ pub fn apply_network_operation_with_policy(
     actor_pubkey: &str,
     timestamp_ms: u64,
 ) -> VResult<TransitionOutcome> {
+    // Operations may touch multiple ledgers (balances, entities, escrow, and
+    // event history). Commit the working state only after every step succeeds.
+    let mut staged = state.clone();
+    let outcome = apply_network_operation_inner(
+        &mut staged,
+        allow_bootstrap_atlas,
+        op,
+        actor_pubkey,
+        timestamp_ms,
+    )?;
+    *state = staged;
+    Ok(outcome)
+}
+
+fn apply_network_operation_inner(
+    state: &mut NetworkLedgerState,
+    allow_bootstrap_atlas: bool,
+    op: &NetworkOperation,
+    actor_pubkey: &str,
+    timestamp_ms: u64,
+) -> VResult<TransitionOutcome> {
     validate_operation_preconditions_with_policy(state, allow_bootstrap_atlas, op)?;
     let mut events = Vec::new();
     let mut created_entities = Vec::new();
