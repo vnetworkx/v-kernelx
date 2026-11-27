@@ -41,7 +41,7 @@ if [[ ! -d "$ROOT/vendor/vectorspace/src" || ! -f "$ROOT/vendor/vectorspace/Carg
 fi
 
 python3 - "$ROOT" <<'PY'
-import pathlib, re, sys, tomllib
+import hashlib, pathlib, re, sys, tomllib
 
 root = pathlib.Path(sys.argv[1])
 root_cargo = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))
@@ -65,6 +65,33 @@ for path in sdk_checks:
     txt = path.read_text(encoding="utf-8")
     if expected_lang_version not in txt:
         raise SystemExit(f"ERROR: {path} does not match expected language version {expected_lang_version}")
+
+# Verify the complete vendored snapshot, not just the version string. Git blob
+# object IDs are SHA-1 over "blob <length>\\0<content>", matching GitHub's tree API.
+vendor_root = root / "vendor" / "vectorspace"
+manifest_path = vendor_root / "SOURCE_MANIFEST.sha1"
+if not manifest_path.is_file():
+    raise SystemExit("ERROR: missing vendor/vectorspace/SOURCE_MANIFEST.sha1")
+expected = {}
+for line in manifest_path.read_text(encoding="utf-8").splitlines():
+    if not line.strip():
+        continue
+    digest, rel = line.split("  ", 1)
+    expected[rel] = digest
+actual_paths = {
+    path.relative_to(vendor_root).as_posix()
+    for path in vendor_root.rglob("*")
+    if path.is_file() and path != manifest_path
+}
+if actual_paths != set(expected):
+    missing = sorted(set(expected) - actual_paths)
+    unexpected = sorted(actual_paths - set(expected))
+    raise SystemExit(f"ERROR: vendored file set differs from manifest; missing={missing}, unexpected={unexpected}")
+for rel, expected_sha in expected.items():
+    data = (vendor_root / rel).read_bytes()
+    actual_sha = hashlib.sha1(f"blob {len(data)}\\0".encode("ascii") + data).hexdigest()
+    if actual_sha != expected_sha:
+        raise SystemExit(f"ERROR: vendored source drift at {rel}: expected {expected_sha}, got {actual_sha}")
 
 adapter_txt = (root / "crates" / "vnetwork-core" / "src" / "language" / "adapter.rs").read_text(encoding="utf-8")
 if "v_langx" not in adapter_txt:
