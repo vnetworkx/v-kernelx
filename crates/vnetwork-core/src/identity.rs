@@ -863,4 +863,90 @@ mod onboarding_regressions {
         assert_eq!(state.participants.len(), 1);
         assert_eq!(state.nodes.len(), 1);
     }
+
+    fn add_governance_participant(state: &mut NetworkLedgerState, keypair: &KeypairMaterial) {
+        let participant_id = derive_participant_id(&keypair.public_key_hex);
+        let mut scope = ParticipationScope {
+            levels: BTreeSet::new(),
+            grants: vec![ScopeGrant {
+                level: ParticipationLevel::Network,
+                target_id: None,
+                granted_at_ms: 1,
+                grantor_pubkey: keypair.public_key_hex.clone(),
+                expires_at_ms: None,
+                authorization_basis: "network_governance".to_string(),
+                revoked: false,
+            }],
+            validator_eligible: false,
+        };
+        scope.recompute_levels(2);
+        state.participants.insert(
+            participant_id.clone(),
+            ParticipantRecord {
+                participant_id,
+                public_key_hex: keypair.public_key_hex.clone(),
+                node_id: "governance-node".to_string(),
+                node_pubkey_hex: "governance-node-key".to_string(),
+                display_name: "governance".to_string(),
+                node_kind: NodeKind::FullNode,
+                status: ParticipationStatus::Active,
+                scope,
+                joined_at_ms: 1,
+                last_seen_ms: 1,
+            },
+        );
+    }
+
+    #[test]
+    fn reinstatement_restores_only_network_membership_and_requires_governance() {
+        use super::apply_reinstate_participant;
+
+        let (mut state, _) = test_state();
+        let target_key = KeypairMaterial::generate("revoked-target");
+        let target_node_key = KeypairMaterial::generate("revoked-target-node");
+        let join = join_request(&mut state, &target_key, &target_node_key, 10);
+        let (target, node, _) =
+            verify_and_register_participant(&mut state, &join, 10).expect("initial join");
+        let target_id = target.participant_id.clone();
+
+        let target_record = state.participants.get_mut(&target_id).unwrap();
+        target_record.status = ParticipationStatus::Revoked;
+        for grant in &mut target_record.scope.grants {
+            grant.revoked = true;
+        }
+        let governance_key = KeypairMaterial::generate("reinstatement-governance");
+        add_governance_participant(&mut state, &governance_key);
+
+        let (restored, restored_node, event) = apply_reinstate_participant(
+            &mut state,
+            &target_id,
+            &governance_key.public_key_hex,
+            20,
+        )
+        .expect("explicit governance reinstatement");
+        assert_eq!(restored.status, ParticipationStatus::Active);
+        assert!(restored.scope.has_active_scope(ParticipationLevel::Network, None, 20));
+        assert!(!restored.scope.has_active_scope(ParticipationLevel::Space, None, 20));
+        assert!(!restored.scope.has_active_scope(ParticipationLevel::Region, None, 20));
+        assert!(!restored.scope.has_active_scope(ParticipationLevel::Wallet, None, 20));
+        assert!(!restored.scope.validator_eligible);
+        assert_eq!(restored_node.node_id, node.node_id);
+        assert!(!restored_node.healthy);
+        assert!(!restored_node.validator_eligible);
+        assert_eq!(event.operation, "PARTICIPANT_REINSTATE");
+
+        let before_unauthorized = state.clone();
+        let unauthorized = KeypairMaterial::generate("non-governance-reinstatement");
+        assert!(matches!(
+            apply_reinstate_participant(
+                &mut state,
+                &target_id,
+                &unauthorized.public_key_hex,
+                21,
+            ),
+            Err(VNetworkError::Authorization(_))
+        ));
+        assert_eq!(state, before_unauthorized);
+    }
+
 }
