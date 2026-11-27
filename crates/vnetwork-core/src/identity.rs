@@ -688,8 +688,8 @@ mod onboarding_regressions {
             node_kind: NodeKind::FullNode,
             requested_scopes,
             advertised_addresses: Vec::new(),
-            participant_signature: participant.sign(&message),
-            node_signature: node.sign(&message),
+            participant_signature: participant.sign(&message).expect("participant test signature"),
+            node_signature: node.sign(&message).expect("node test signature"),
             scope_authorizations: Vec::new(),
         }
     }
