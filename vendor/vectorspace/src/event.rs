@@ -72,6 +72,7 @@ pub fn derive_timestamp(logical_clock: u64) -> u64 {
     1_700_000_000 + logical_clock
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn canonical_event_payload(
     eid: &str,
     parent_hashes: &[String],
