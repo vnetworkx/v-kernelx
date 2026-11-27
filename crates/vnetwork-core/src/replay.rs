@@ -1,3 +1,4 @@
+use crate::authorization::{record_nonce_and_request, verify_non_replay};
 use crate::events::verify_event_chain;
 use crate::loans::{loan_escrow_wallet_id, move_loan_escrow_balance};
 use crate::state::{GenesisConfig, NetworkLedgerState};
@@ -31,6 +32,41 @@ pub fn replay_from_events(
 
 pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) -> VResult<()> {
     match ev.operation.as_str() {
+        "REQUEST_NONCE_COMMIT" => {
+            if ev.network_id != state.network_id || ev.entity_kind != "request" {
+                return Err(VNetworkError::ProfileMismatch(
+                    "request nonce event belongs to a different network or entity kind".to_string(),
+                ));
+            }
+            let actor_pubkey = ev
+                .payload
+                .get("actor_pubkey")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| VNetworkError::Serialization(
+                    "missing actor_pubkey in REQUEST_NONCE_COMMIT".to_string(),
+                ))?;
+            let request_id = ev
+                .payload
+                .get("request_id")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| VNetworkError::Serialization(
+                    "missing request_id in REQUEST_NONCE_COMMIT".to_string(),
+                ))?;
+            let nonce = ev
+                .payload
+                .get("nonce")
+                .and_then(|value| value.as_u64())
+                .ok_or_else(|| VNetworkError::Serialization(
+                    "missing or invalid nonce in REQUEST_NONCE_COMMIT".to_string(),
+                ))?;
+            if actor_pubkey != ev.actor_pubkey || request_id != ev.entity_id || request_id.trim().is_empty() {
+                return Err(VNetworkError::Validation(
+                    "request nonce event payload does not match its event envelope".to_string(),
+                ));
+            }
+            verify_non_replay(state, request_id, actor_pubkey, nonce, &ev.network_id)?;
+            record_nonce_and_request(state, request_id, actor_pubkey, nonce);
+        }
         "PARTICIPANT_JOIN" | "PARTICIPANT_SCOPE_GRANT" | "PARTICIPANT_SCOPE_REVOKE" => {
             if let Some(p_val) = ev.payload.get("participant") {
                 let participant: ParticipantRecord = serde_json::from_value(p_val.clone())
@@ -404,9 +440,6 @@ pub fn verify_replay_equivalence(
 ) -> VResult<ReplayVerificationReport> {
     let mut replayed = replay_from_events(genesis, &live_state.events)?;
     replayed.height = live_state.height;
-    replayed.actor_nonces = live_state.actor_nonces.clone();
-    replayed.seen_request_ids = live_state.seen_request_ids.clone();
-    replayed.used_wallet_pop_nonces = live_state.used_wallet_pop_nonces.clone();
     if !live_state.validator_membership_history.is_empty()
         || live_state.validator_epoch != genesis.genesis_epoch
     {
