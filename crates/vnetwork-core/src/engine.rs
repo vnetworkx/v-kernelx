@@ -1,4 +1,6 @@
-use crate::authorization::{validate_signed_envelope, verify_non_replay};
+use crate::authorization::{
+    commit_signed_operation_intent_event, validate_signed_envelope, verify_non_replay,
+};
 use crate::consensus_gate::commit_verified_proposal;
 use crate::identity::{issue_participant_challenge, verify_and_register_participant, JoinNetworkRequest};
 use crate::language::{
@@ -320,6 +322,12 @@ impl ProtocolEngine {
             .checked_add(1)
             .ok_or_else(|| VNetworkError::Validation("height overflow".to_string()))?;
         let vset_hash = self.validator_set_hash()?;
+        let intent_event = commit_signed_operation_intent_event(
+            &mut staged,
+            envelope,
+            op,
+            timestamp_ms,
+        )?;
         let mut outcome = apply_network_operation_with_genesis(
             &mut staged,
             &self.genesis,
@@ -327,6 +335,7 @@ impl ProtocolEngine {
             &envelope.actor_pubkey,
             timestamp_ms,
         )?;
+        outcome.events.insert(0, intent_event);
         let nonce_event = crate::authorization::commit_request_nonce_event(
             &mut staged,
             &envelope.request_id,
