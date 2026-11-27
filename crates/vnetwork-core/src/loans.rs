@@ -566,7 +566,7 @@ pub fn apply_execute_loan(
         &state.network_id,
         "loan",
         &loan.loan_id,
-        &format!("LOAN_{}", norm.to_ascii_uppercase()),
+        format!("LOAN_{}", norm.to_ascii_uppercase()),
         actor_pubkey,
         state.logical_clock,
         timestamp_ms,
