@@ -466,6 +466,27 @@ fn test_wallet_pop_replay_expiry_revocation_multisig_and_ghost_isolation() {
     let env_ghost = sign_envelope(&outsider, "vector-devnet-invariants", 1, "req_ghost_outsider", 602, &ghost_op);
     assert!(engine.stage_signed_operation(&env_ghost, &ghost_op, "val_1", |b| val_kp.sign(b), 602).is_err());
 
+    // A loan that has already matured cannot be funded retroactively.
+    let expired_loan_id = commit(NetworkOperation::CreateLoan {
+        name: "ExpiredUnfundedLoan".to_string(),
+        token_id: tok.clone(),
+        lender_wallet_id: w_ms.clone(),
+        borrower_wallet_id: w_dst.clone(),
+        principal: 50,
+        collateral: 0,
+        interest_bps: 0,
+        maturity_at_ms: Some(650),
+    });
+    assert!(apply_execute_loan(
+        &mut engine.state,
+        &expired_loan_id,
+        "fund",
+        50,
+        &owner_kp.public_key_hex,
+        650,
+    ).is_err());
+    assert_eq!(engine.state.loans.get(&expired_loan_id).unwrap().status, LoanStatus::Created);
+
     // Loan collateral maturity enforcement
     let loan_id = commit(NetworkOperation::CreateLoan {
         name: "TimedLoan".to_string(),
