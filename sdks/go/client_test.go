@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -104,5 +106,62 @@ func TestClientEndpointsParityAndSignedOperations(t *testing.T) {
 	}
 	if _, err := client.ExecuteLoan("lon_1", "draw", 50); err != nil {
 		t.Fatalf("ExecuteLoan failed: %v", err)
+	}
+}
+
+
+func TestDurableNonceReservationsSurviveRestartAndSerializeClients(t *testing.T) {
+	identity, err := GenerateIdentity("go-durable-nonce")
+	if err != nil {
+		t.Fatalf("GenerateIdentity failed: %v", err)
+	}
+	storePath := filepath.Join(t.TempDir(), "request-nonce.json")
+	clients := []*Client{
+		NewClient("http://127.0.0.1:8080", identity, "nonce-network"),
+		NewClient("http://127.0.0.1:8080", identity, "nonce-network"),
+	}
+	for _, client := range clients {
+		client.ConnectedNetworkID = "nonce-network"
+		client.NonceStorePath = storePath
+	}
+
+	reserved := make(chan uint64, len(clients))
+	errors := make(chan error, len(clients))
+	var wg sync.WaitGroup
+	for _, client := range clients {
+		wg.Add(1)
+		go func(c *Client) {
+			defer wg.Done()
+			nonce, reserveErr := c.ReserveNonce()
+			if reserveErr != nil {
+				errors <- reserveErr
+				return
+			}
+			reserved <- nonce
+		}(client)
+	}
+	wg.Wait()
+	close(reserved)
+	close(errors)
+	for reserveErr := range errors {
+		t.Fatalf("ReserveNonce failed: %v", reserveErr)
+	}
+	got := map[uint64]bool{}
+	for nonce := range reserved {
+		got[nonce] = true
+	}
+	if len(got) != 2 || !got[1] || !got[2] {
+		t.Fatalf("concurrent clients should reserve unique nonces 1 and 2, got %v", got)
+	}
+
+	restarted := NewClient("http://127.0.0.1:8080", identity, "nonce-network")
+	restarted.ConnectedNetworkID = "nonce-network"
+	restarted.NonceStorePath = storePath
+	nonce, err := restarted.ReserveNonce()
+	if err != nil {
+		t.Fatalf("ReserveNonce after restart failed: %v", err)
+	}
+	if nonce != 3 {
+		t.Fatalf("expected persisted next nonce 3 after restart, got %d", nonce)
 	}
 }
