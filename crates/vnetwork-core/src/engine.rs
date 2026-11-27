@@ -2,7 +2,10 @@ use crate::authorization::{
     commit_signed_operation_intent_event, validate_signed_envelope, verify_non_replay,
 };
 use crate::consensus_gate::commit_verified_proposal;
-use crate::identity::{issue_participant_challenge, verify_and_register_participant, JoinNetworkRequest};
+use crate::identity::{
+    commit_participant_join_intent_event, issue_participant_challenge,
+    verify_and_register_participant, JoinNetworkRequest,
+};
 use crate::language::{
     build_program_submission, compile_vx_source, execute_compiled_program_staged,
     SubmitProgramRequest,
@@ -84,6 +87,11 @@ impl ProtocolEngine {
             .checked_add(1)
             .ok_or_else(|| VNetworkError::Validation("height overflow".to_string()))?;
         let vset_hash = self.validator_set_hash()?;
+        let challenge = staged.challenges.get(&req.challenge_id).cloned().ok_or_else(|| {
+            VNetworkError::Authorization("unknown or already used challenge_id".to_string())
+        })?;
+        let intent_event =
+            commit_participant_join_intent_event(&mut staged, &challenge, req, timestamp_ms)?;
         let (participant, node, event) =
             verify_and_register_participant(&mut staged, req, timestamp_ms)?;
         staged.height = next_height;
@@ -110,7 +118,7 @@ impl ProtocolEngine {
             post_state_root: post_root.clone(),
             proposal_digest: String::new(),
             operation_scope: "PARTICIPANT_JOIN".to_string(),
-            events: vec![event.clone()],
+            events: vec![intent_event.clone(), event.clone()],
             program_id: None,
             tx_id: Some(tx_id.clone()),
             program_source_bundle: None,
@@ -129,7 +137,7 @@ impl ProtocolEngine {
             actor_pubkey: req.participant_pubkey.clone(),
             operation: "PARTICIPANT_JOIN".to_string(),
             status: ProgramLifecycleStatus::AwaitingConsensus,
-            event_ids: vec![event.event_id],
+            event_ids: vec![intent_event.event_id, event.event_id],
             certificate_id: None,
             state_root: post_root,
             error: None,
