@@ -47,7 +47,7 @@ jobs:
         uses: swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.7.5
 
       - name: Format check
-        run: cargo fmt --all
+        run: cargo fmt --all --check
 
       - name: Lint
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
