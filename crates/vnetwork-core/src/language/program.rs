@@ -180,6 +180,26 @@ fn execute_single_compiled_op(
                 .unwrap_or("participant");
             outs.push(format!("participant scope verified: {pname}"));
         }
+        "PARTICIPANT_REINSTATE" => {
+            let target_participant_id = op
+                .params
+                .get("participant_id")
+                .or_else(|| op.params.get("participant"))
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| VNetworkError::Validation(
+                    "PARTICIPANT_REINSTATE requires participant_id".to_string(),
+                ))?
+                .to_string();
+            let net_op = NetworkOperation::ReinstateParticipant {
+                target_participant_id,
+            };
+            let outcome = apply_network_operation_with_genesis(
+                state, genesis, &net_op, actor_pubkey, timestamp_ms,
+            )?;
+            events.extend(outcome.events);
+            created.extend(outcome.created_entities);
+            outs.extend(outcome.outputs);
+        }
         "SPACE_CREATE" => {
             let sym = op
                 .params
