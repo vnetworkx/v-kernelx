@@ -596,6 +596,116 @@ pub fn apply_revoke_participant_scope(
     Ok((participant, event))
 }
 
+/// Reinstate a revoked participant under explicit Network governance.
+///
+/// Only baseline Network membership is restored. All prior scoped grants remain
+/// revoked and validator eligibility is never restored by this operation.
+pub fn apply_reinstate_participant(
+    state: &mut NetworkLedgerState,
+    target_participant_ref: &str,
+    actor_pubkey: &str,
+    timestamp_ms: u64,
+) -> VResult<(ParticipantRecord, NodeRecord, LedgerEvent)> {
+    require_network_governance_at(state, actor_pubkey, timestamp_ms)?;
+
+    let mut participant = state
+        .participants
+        .get(target_participant_ref)
+        .or_else(|| {
+            state
+                .participants
+                .values()
+                .find(|record| record.public_key_hex == target_participant_ref)
+        })
+        .cloned()
+        .ok_or_else(|| {
+            VNetworkError::NotFound(format!(
+                "participant `{target_participant_ref}` not found"
+            ))
+        })?;
+
+    if participant.status != ParticipationStatus::Revoked {
+        return Err(VNetworkError::Validation(
+            "only a revoked participant can be reinstated".to_string(),
+        ));
+    }
+
+    let mut node = state
+        .nodes
+        .get(&participant.node_id)
+        .cloned()
+        .ok_or_else(|| {
+            VNetworkError::Validation(format!(
+                "participant `{}` cannot be reinstated because its node record is missing",
+                participant.participant_id
+            ))
+        })?;
+    if node.participant_id.as_deref() != Some(participant.participant_id.as_str())
+        || node.node_pubkey_hex != participant.node_pubkey_hex
+    {
+        return Err(VNetworkError::Validation(
+            "participant and node identity records do not match".to_string(),
+        ));
+    }
+
+    let before_hash = blake3_hex(&canonical_json_bytes(&participant)?);
+    participant.status = ParticipationStatus::Active;
+    participant.scope.grants.push(ScopeGrant {
+        level: ParticipationLevel::Network,
+        target_id: None,
+        granted_at_ms: timestamp_ms,
+        grantor_pubkey: actor_pubkey.to_string(),
+        expires_at_ms: None,
+        authorization_basis: "governance_reinstatement".to_string(),
+        revoked: false,
+    });
+    participant.scope.validator_eligible = false;
+    participant.scope.recompute_levels(timestamp_ms);
+    participant.last_seen_ms = timestamp_ms;
+
+    node.scopes = participant.scope.levels.iter().copied().collect();
+    node.validator_eligible = false;
+    node.healthy = false;
+    node.sync_height = state.height;
+    node.last_seen_ms = timestamp_ms;
+
+    let next_clock = state
+        .logical_clock
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
+    let sequence = (state.events.len() as u64)
+        .checked_add(1)
+        .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
+    let parents = state.latest_event_hash().into_iter().collect();
+    let after_hash = blake3_hex(&canonical_json_bytes(&participant)?);
+    let event = LedgerEvent::build(
+        sequence,
+        parents,
+        &state.network_id,
+        "participant",
+        &participant.participant_id,
+        "PARTICIPANT_REINSTATE",
+        actor_pubkey,
+        next_clock,
+        timestamp_ms,
+        serde_json::json!({
+            "participant": participant,
+            "node": node,
+            "restored_scope": "NETWORK",
+            "validator_eligible": false,
+        }),
+        before_hash,
+        after_hash,
+    )?;
+
+    state.logical_clock = next_clock;
+    state.participants.insert(participant.participant_id.clone(), participant.clone());
+    state.nodes.insert(node.node_id.clone(), node.clone());
+    state.events.push(event.clone());
+
+    Ok((participant, node, event))
+}
+
 pub fn require_participant_scope_at(
     state: &NetworkLedgerState,
     actor_pubkey: &str,
