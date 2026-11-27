@@ -117,7 +117,7 @@ pub fn apply_create_token(
                 || state
                     .regions
                     .get(&wallet.region_id)
-                    .map_or(false, |r| r.creator_pubkey == actor_pubkey)
+                    .is_some_and(|r| r.creator_pubkey == actor_pubkey)
                 || (wallet.ghost
                     && wallet.region_id.is_empty()
                     && require_participant_scope_at(
