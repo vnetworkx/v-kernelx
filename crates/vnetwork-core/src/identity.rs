@@ -963,6 +963,12 @@ mod onboarding_regressions {
         ));
         assert!(!restored.scope.has_active_scope(ParticipationLevel::Region, None, 20));
         assert!(!restored.scope.has_active_scope(ParticipationLevel::Wallet, None, 20));
+        assert!(!restored.scope.has_active_scope(ParticipationLevel::Token, None, 20));
+        assert!(restored.scope.grants.iter().filter(|grant| {
+            grant.granted_at_ms < 20
+        }).all(|grant| grant.revoked));
+        assert_eq!(restored.scope.levels.len(), 1);
+        assert!(restored.scope.levels.contains(&ParticipationLevel::Network));
         assert!(!restored.scope.validator_eligible);
         assert_eq!(restored_node.node_id, node.node_id);
         assert!(!restored_node.healthy);
