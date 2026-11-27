@@ -218,11 +218,13 @@ export function normalizeVerificationStatus(raw) {
 }
 
 export class BrowserVectorNetworkClient {
-  constructor(baseUrl, identity, expectedNetworkId = null) {
-    this.baseUrl = baseUrl.replace(/\/+$/, "");
+  constructor(baseUrl, identity, expectedNetworkId = null, nonceStorage = null, nonceLockManager = null) {
+    this.baseUrl = baseUrl.replace(/\\/+$/, "");
     this.identity = identity;
     this.expectedNetworkId = expectedNetworkId;
     this.connectedNetworkId = null;
+    this.nonceStorage = nonceStorage;
+    this.nonceLockManager = nonceLockManager;
     this.nonce = 1;
   }
 
@@ -244,6 +246,60 @@ export class BrowserVectorNetworkClient {
       throw new Error("Client must call connect() before write operations");
     }
     return net;
+  }
+
+  async reserveNonce() {
+    const networkId = this.resolvedNetworkId();
+    const actorPubkey = this.identity.participant_key.public_key_hex;
+    const key = blake3Hex(`${networkId}::${actorPubkey}`);
+    let storage = this.nonceStorage;
+    let lockManager = this.nonceLockManager;
+    try {
+      storage = storage ?? globalThis.localStorage;
+      lockManager = lockManager ?? globalThis.navigator?.locks ?? null;
+    } catch {
+      throw new Error("Browser nonce persistence is unavailable; refusing to send a request with an ephemeral nonce");
+    }
+    if (!storage || typeof storage.getItem !== "function" || typeof storage.setItem !== "function") {
+      throw new Error("Browser localStorage is unavailable; refusing to send a request with an ephemeral nonce");
+    }
+    if (!lockManager || typeof lockManager.request !== "function") {
+      throw new Error("Browser Web Locks API is unavailable; refusing to risk duplicate request nonces across tabs");
+    }
+    const storageKey = `vnetwork:request-nonce:v1:${key}`;
+    return lockManager.request(`vnetwork-request-nonce-${key}`, async () => {
+      let current = this.nonce;
+      const raw = storage.getItem(storageKey);
+      if (raw !== null) {
+        let stored;
+        try {
+          stored = JSON.parse(raw);
+        } catch {
+          throw new Error("Persisted browser request nonce state is corrupt");
+        }
+        if (
+          stored.version !== 1 ||
+          stored.network_id !== networkId ||
+          stored.actor_pubkey !== actorPubkey ||
+          !Number.isSafeInteger(stored.next_nonce) ||
+          stored.next_nonce < 1
+        ) {
+          throw new Error("Persisted browser request nonce state does not match this network/participant");
+        }
+        current = Math.max(current, stored.next_nonce);
+      }
+      if (!Number.isSafeInteger(current) || current < 1 || current >= Number.MAX_SAFE_INTEGER) {
+        throw new Error("Request nonce exhausted JavaScript's safe integer range");
+      }
+      storage.setItem(storageKey, JSON.stringify({
+        version: 1,
+        network_id: networkId,
+        actor_pubkey: actorPubkey,
+        next_nonce: current + 1,
+      }));
+      this.nonce = current + 1;
+      return current;
+    });
   }
 
   async join(scopes = ["NETWORK", "SPACE", "REGION", "WALLET", "TOKEN"], scopeAuthorizations = []) {
