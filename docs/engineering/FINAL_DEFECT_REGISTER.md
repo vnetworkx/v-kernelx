@@ -41,3 +41,21 @@ A subsequent source review found additional issues not captured by the original 
 The standalone `vnetworkx/vectorspace` runtime has a separate upstream PR with checked vector arithmetic, zero-vector/self-transfer validation, and transactional execution. Its Rust CI passed on commit `c182e775034370bd8910b669017d0e02e038ed93`. The kernel's current multi-platform Rust and cross-SDK checks are still pending; the status of an earlier run must not be substituted for the latest head.
 
 The follow-up audit is ongoing. In particular, full multi-node P2P durability/upgrade acceptance, complete vContracts failure/refund semantics, and live testnet recovery remain deployment-blocking verification areas until exercised in an appropriate Rust/Go/Docker environment.
+
+
+## Critical Consensus Revalidation Finding — 2026-11-27
+
+A follow-up review of the validator pre-vote path found a release-blocking issue that was not covered by AD-01 through AD-09:
+
+| Follow-up | Defect | Required correction | Verification / Status |
+|---|---|---|---|
+| AD-10 — P0 | For ordinary signed API operations (non-.vx), proposal validators verify event hashes and replay event payloads, but the proposal does not carry the original signed NetworkOperation and SignedRequestEnvelope. Consequently, validators cannot independently re-run operation authorization and semantic preconditions before voting. | Bind the canonical operation and actor-signed envelope to the proposal/committed event, then have every validator verify the actor signature, payload hash, nonce and replay guard, re-execute the operation against its pre-state, and compare the exact generated event sequence and post-state root. Add adversarial tests for forged scope grants/revocations and other privileged transitions. | Confirmed by source inspection of vnetwork-consensus/src/proposal.rs, vnetwork-core/src/engine.rs, vnetwork-core/src/consensus_gate.rs and vnetwork-core/src/replay.rs. Not fixed. **P0 — release blocked.** |
+
+The existing quorum certificate checks prove that sufficient validator keys signed a proposal digest; they do not compensate for validators failing to independently validate the operation that the digest represents. The finding does not mean an arbitrary non-validator can commit unilaterally: the attacker still needs to act through a valid proposer path and obtain a quorum certificate. It means honest validators may approve an unauthorized state transition because the ordinary-operation validation path currently checks the resulting events rather than re-executing the authorized command.
+
+## CI Status Clarification — 2026-11-27
+
+- The 2026-11-27 run 46048013247 had the cross-language/config job pass, including the browser nonce persistence test after the JS browser client helper was added.
+- The same run failed the strict Rust formatting check across many Rust files; the previous workflow had been running cargo fmt --all, which mutates the CI checkout and is not a real formatting check.
+- The workflow was changed to run formatting as a separate job so that formatting failure no longer prevents Rust cargo check, tests and release build jobs from executing. The new run must be inspected before claiming Rust compilation or test success.
+- The earlier Clippy errors in token.rs and wallet.rs were addressed in source, but have not yet been re-verified by a completed CI run.
