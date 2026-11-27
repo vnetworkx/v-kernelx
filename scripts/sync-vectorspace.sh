@@ -67,7 +67,7 @@ for path in sdk_checks:
         raise SystemExit(f"ERROR: {path} does not match expected language version {expected_lang_version}")
 
 # Verify the complete vendored snapshot, not just the version string. Git blob
-# object IDs are SHA-1 over "blob <length>\\0<content>", matching GitHub's tree API.
+# object IDs are SHA-1 over "blob <length>\0<content>", matching GitHub's tree API.
 vendor_root = root / "vendor" / "vectorspace"
 manifest_path = vendor_root / "SOURCE_MANIFEST.sha1"
 if not manifest_path.is_file():
@@ -89,7 +89,7 @@ if actual_paths != set(expected):
     raise SystemExit(f"ERROR: vendored file set differs from manifest; missing={missing}, unexpected={unexpected}")
 for rel, expected_sha in expected.items():
     data = (vendor_root / rel).read_bytes()
-    actual_sha = hashlib.sha1(f"blob {len(data)}\\0".encode("ascii") + data).hexdigest()
+    actual_sha = hashlib.sha1(f"blob {len(data)}\0".encode("ascii") + data).hexdigest()
     if actual_sha != expected_sha:
         raise SystemExit(f"ERROR: vendored source drift at {rel}: expected {expected_sha}, got {actual_sha}")
 
