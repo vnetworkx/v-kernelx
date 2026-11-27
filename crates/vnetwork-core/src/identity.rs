@@ -95,6 +95,35 @@ pub struct JoinNetworkRequest {
     pub scope_authorizations: Vec<SignedScopeAuthorization>,
 }
 
+const NETWORK_GOVERNANCE_BASES: [&str; 2] = ["network_governance", "genesis_governance"];
+
+fn has_network_governance_authority(
+    state: &NetworkLedgerState,
+    grantor_pubkey: &str,
+    now_ms: u64,
+) -> bool {
+    state.participants.values().any(|participant| {
+        participant.public_key_hex == grantor_pubkey
+            && participant.status == ParticipationStatus::Active
+            && participant.scope.grants.iter().any(|grant| {
+                grant.level == ParticipationLevel::Network
+                    && grant.target_id.is_none()
+                    && grant.is_active_at(now_ms)
+                    && NETWORK_GOVERNANCE_BASES
+                        .iter()
+                        .any(|basis| grant.authorization_basis.eq_ignore_ascii_case(basis))
+            })
+    })
+}
+
+fn is_active_participant(state: &NetworkLedgerState, pubkey: &str) -> bool {
+    state.participants.values().any(|participant| {
+        participant.public_key_hex == pubkey && participant.status == ParticipationStatus::Active
+    })
+}
+
+/// Returns whether a participant can delegate/revoke the specified authority.
+/// A normal open-enrollment NETWORK grant is membership only, never governance.
 fn grantor_can_delegate_level(
     state: &NetworkLedgerState,
     grantor_pubkey: &str,
@@ -102,37 +131,58 @@ fn grantor_can_delegate_level(
     target_id: Option<&str>,
     now_ms: u64,
 ) -> bool {
-    if grantor_pubkey.trim().is_empty() {
+    if grantor_pubkey.trim().is_empty() || !is_active_participant(state, grantor_pubkey) {
         return false;
     }
+
     match level {
-        ParticipationLevel::Network => state.participants.values().any(|p| {
-            p.public_key_hex == grantor_pubkey
-                && p.status == ParticipationStatus::Active
-                && p.scope.has_active_scope(ParticipationLevel::Network, None, now_ms)
-        }),
-        ParticipationLevel::Space => state.participants.values().any(|p| {
-            p.public_key_hex == grantor_pubkey
-                && p.status == ParticipationStatus::Active
-                && p.scope.has_active_scope(ParticipationLevel::Space, target_id, now_ms)
-        }),
-        ParticipationLevel::Region => state.spaces.values().any(|s| {
-            s.owner_pubkey == grantor_pubkey
-                && target_id.map_or(false, |tid| tid == s.space_id)
-        }),
-        ParticipationLevel::Wallet => {
-            state.regions.values().any(|r| {
-                r.creator_pubkey == grantor_pubkey
-                    && target_id.map_or(false, |tid| tid == r.region_id)
-            }) || state.wallets.values().any(|w| {
-                w.owner_pubkey == grantor_pubkey
-                    && target_id.map_or(false, |tid| tid == w.wallet_id)
+        ParticipationLevel::Network => {
+            // Network membership is intentionally insufficient. Only an explicit,
+            // active governance grant confers authority over membership transitions.
+            target_id.is_none()
+                && has_network_governance_authority(state, grantor_pubkey, now_ms)
+        }
+        ParticipationLevel::Space => {
+            let Some(space_id) = target_id else {
+                return false;
+            };
+            state.participants.values().any(|participant| {
+                participant.public_key_hex == grantor_pubkey
+                    && participant.status == ParticipationStatus::Active
+                    && participant.scope.has_active_scope(
+                        ParticipationLevel::Space,
+                        Some(space_id),
+                        now_ms,
+                    )
             })
         }
-        ParticipationLevel::Token => state.wallets.values().any(|w| {
-            w.owner_pubkey == grantor_pubkey
-                && target_id.map_or(false, |tid| tid == w.wallet_id)
-        }),
+        ParticipationLevel::Region => {
+            let Some(space_id) = target_id else {
+                return false;
+            };
+            state
+                .spaces
+                .values()
+                .any(|space| space.owner_pubkey == grantor_pubkey && space.space_id == space_id)
+        }
+        ParticipationLevel::Wallet => {
+            let Some(entity_id) = target_id else {
+                return false;
+            };
+            state.regions.values().any(|region| {
+                region.creator_pubkey == grantor_pubkey && region.region_id == entity_id
+            }) || state.wallets.values().any(|wallet| {
+                wallet.owner_pubkey == grantor_pubkey && wallet.wallet_id == entity_id
+            })
+        }
+        ParticipationLevel::Token => {
+            let Some(wallet_id) = target_id else {
+                return false;
+            };
+            state.wallets.values().any(|wallet| {
+                wallet.owner_pubkey == grantor_pubkey && wallet.wallet_id == wallet_id
+            })
+        }
     }
 }
 
@@ -151,14 +201,16 @@ fn can_authorize_join_scope(
     ) {
         return true;
     }
-    // Genesis bootstrap validator onboarding is only valid during JoinNetworkRequest when
-    // targeting no existing entity and explicitly declaring a genesis authorization_basis.
+
+    // Preserve the existing genesis onboarding path, but never treat validator
+    // status alone as ongoing authority. Genesis authorization is an explicit,
+    // signed, one-time join grant and remains subject to consensus commitment.
     auth.target_id.is_none()
         && auth.authorization_basis.trim().to_ascii_lowercase().starts_with("genesis")
         && state
             .validators
             .iter()
-            .any(|v| v.active && v.validator_pubkey_hex == auth.grantor_pubkey)
+            .any(|validator| validator.active && validator.validator_pubkey_hex == auth.grantor_pubkey)
 }
 
 pub fn verify_and_register_participant(
@@ -199,7 +251,7 @@ pub fn verify_and_register_participant(
     let participant_id = derive_participant_id(&req.participant_pubkey);
     let node_id = derive_node_id(&req.node_pubkey);
 
-    // Open join grants Network scope ONLY; any elevated scope requires an explicit verified ScopeAuthorization.
+    // Open enrollment creates membership only. It never grants governance.
     let mut grants = vec![ScopeGrant {
         level: ParticipationLevel::Network,
         target_id: None,
@@ -338,7 +390,7 @@ pub fn apply_grant_participant_scope(
     }
     if !grantor_can_delegate_level(state, actor_pubkey, level, target_id.as_deref(), timestamp_ms) {
         return Err(VNetworkError::Authorization(format!(
-            "actor `{actor_pubkey}` is not authorized to grant `{}` scope",
+            "actor `{actor_pubkey}` is not authorized to grant `{}` scope for the requested target",
             level.as_str()
         )));
     }
@@ -427,7 +479,7 @@ pub fn apply_revoke_participant_scope(
     })?;
     if !grantor_can_delegate_level(state, actor_pubkey, level, target_id, timestamp_ms) {
         return Err(VNetworkError::Authorization(format!(
-            "actor `{actor_pubkey}` is not authorized to revoke `{}` scope",
+            "actor `{actor_pubkey}` is not authorized to revoke `{}` scope for the requested target",
             level.as_str()
         )));
     }
@@ -448,24 +500,27 @@ pub fn apply_revoke_participant_scope(
 
     let before_hash = blake3_hex(&canonical_json_bytes(&participant)?);
     let mut matched = false;
-    for g in &mut participant.scope.grants {
-        if g.level == level && !g.revoked {
-            let target_matches = match target_id {
-                None => true,
-                Some(t) => g.target_id.as_deref() == Some(t) || g.target_id.is_none(),
-            };
-            if target_matches {
-                g.revoked = true;
-                matched = true;
-            }
+    for grant in &mut participant.scope.grants {
+        // Exact target matching is intentional: a targeted revocation must never
+        // consume an unscoped baseline grant or another entity's authorization.
+        if grant.level == level && !grant.revoked && grant.target_id.as_deref() == target_id {
+            grant.revoked = true;
+            matched = true;
         }
     }
     if !matched {
         return Err(VNetworkError::NotFound(format!(
-            "no active `{}` grant found for participant `{}`",
+            "no active `{}` grant found for participant `{}` at the requested target",
             level.as_str(),
             participant.participant_id
         )));
+    }
+
+    // NETWORK scope revocation is the membership-removal transition. It can only
+    // be performed by an explicit governance authority, checked above. Marking
+    // status revoked also invalidates any remaining scopes and node credentials.
+    if level == ParticipationLevel::Network {
+        participant.status = ParticipationStatus::Revoked;
     }
     participant.scope.recompute_levels(timestamp_ms);
     participant.last_seen_ms = timestamp_ms;
