@@ -25,6 +25,7 @@ import {
   generateBrowserKeypair as jsBrowserGenerateKeypair,
   signBrowserEd25519 as jsBrowserSign,
   verifyBrowserEd25519 as jsBrowserVerify,
+  BrowserVectorNetworkClient as JsBrowserVectorNetworkClient,
 } from "../../sdks/javascript/browser.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -214,6 +215,46 @@ test("Node SDK persists and serializes request nonce reservations across client 
   } finally {
     await fs.rm(tmpRoot, { recursive: true, force: true });
   }
+});
+
+test("Browser SDK persists nonce reservations across tabs and page restarts", async () => {
+  const identity = JsIdentity.fromKeys(
+    "browser-nonce-test",
+    "1111111111111111111111111111111111111111111111111111111111111111",
+    "2222222222222222222222222222222222222222222222222222222222222222",
+  );
+  const values = new Map();
+  const storage = {
+    getItem(key) { return values.has(key) ? values.get(key) : null; },
+    setItem(key, value) { values.set(key, String(value)); },
+  };
+  let lockQueue = Promise.resolve();
+  const lockManager = {
+    request(_name, callback) {
+      const result = lockQueue.then(callback);
+      lockQueue = result.then(() => undefined, () => undefined);
+      return result;
+    },
+  };
+  const clients = [
+    new JsBrowserVectorNetworkClient("https://node.invalid", identity, "browser-network", storage, lockManager),
+    new JsBrowserVectorNetworkClient("https://node.invalid", identity, "browser-network", storage, lockManager),
+  ];
+  for (const client of clients) client.connectedNetworkId = "browser-network";
+  const reserved = await Promise.all(clients.map((client) => client.reserveNonce()));
+  assert.deepEqual(reserved.sort((a, b) => a - b), [1, 2]);
+
+  const restarted = new JsBrowserVectorNetworkClient(
+    "https://node.invalid", identity, "browser-network", storage, lockManager,
+  );
+  restarted.connectedNetworkId = "browser-network";
+  assert.equal(await restarted.reserveNonce(), 3);
+  const entry = [...values.entries()][0];
+  const saved = JSON.parse(entry[1]);
+  assert.equal(saved.version, 1);
+  assert.equal(saved.network_id, "browser-network");
+  assert.equal(saved.actor_pubkey, identity.participant_key.public_key_hex);
+  assert.equal(saved.next_nonce, 4);
 });
 
 test("Negative crypto parity: rejects weak pubkeys, tampered fields, and malformed signatures", async () => {
