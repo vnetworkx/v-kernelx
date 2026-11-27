@@ -177,3 +177,29 @@ impl Default for Runtime {
         Self::new()
     }
 }
+
+
+#[cfg(test)]
+mod checked_magnitude_query_regressions {
+    use super::Runtime;
+    use crate::ast::VectorType;
+    use crate::state::{CertificationState, VectorState};
+
+    #[test]
+    fn magnitude_query_propagates_overflow_error() {
+        let mut runtime = Runtime::new();
+        runtime.state.vectors.insert(
+            "overflow".to_string(),
+            VectorState {
+                name: "overflow".to_string(),
+                vector_type: VectorType::Free,
+                components: vec![u128::MAX, 1],
+                owner: None,
+                meta: Default::default(),
+                certification: CertificationState::Pending,
+                auth_ratio: "0.0000".to_string(),
+            },
+        );
+        assert!(runtime.resolve_query("overflow.magnitude").is_err());
+    }
+}
