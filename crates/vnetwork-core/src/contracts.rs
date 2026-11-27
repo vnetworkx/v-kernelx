@@ -101,7 +101,7 @@ pub fn apply_create_contract(
     for v in rules.values() {
         reject_nondeterministic_keys(v)?;
     }
-    for (k, _) in &rules {
+    for k in rules.keys() {
         let low = k.trim().to_ascii_lowercase();
         if matches!(
             low.as_str(),
