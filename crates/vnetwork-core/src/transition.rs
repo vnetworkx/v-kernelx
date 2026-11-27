@@ -1,5 +1,5 @@
 use crate::contracts::{apply_create_contract, apply_execute_contract};
-use crate::identity::{apply_grant_participant_scope, apply_revoke_participant_scope};
+use crate::identity::{apply_grant_participant_scope, apply_reinstate_participant, apply_revoke_participant_scope};
 use crate::loans::{apply_create_loan, apply_execute_loan};
 use crate::region::apply_create_region;
 use crate::space::apply_create_space;
@@ -292,6 +292,21 @@ fn apply_network_operation_inner(
             outputs.push(format!(
                 "participant scope revoked: {} level={level}",
                 participant.participant_id
+            ));
+            events.push(ev);
+        }
+        NetworkOperation::ReinstateParticipant {
+            target_participant_id,
+        } => {
+            let (participant, node, ev) = apply_reinstate_participant(
+                state,
+                target_participant_id,
+                actor_pubkey,
+                timestamp_ms,
+            )?;
+            outputs.push(format!(
+                "participant reinstated with Network-only membership: {} ({})",
+                participant.participant_id, node.node_id
             ));
             events.push(ev);
         }
