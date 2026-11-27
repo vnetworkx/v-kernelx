@@ -67,7 +67,8 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
             verify_non_replay(state, request_id, actor_pubkey, nonce, &ev.network_id)?;
             record_nonce_and_request(state, request_id, actor_pubkey, nonce);
         }
-        "PARTICIPANT_JOIN" | "PARTICIPANT_SCOPE_GRANT" | "PARTICIPANT_SCOPE_REVOKE" => {
+        "PARTICIPANT_JOIN" | "PARTICIPANT_SCOPE_GRANT" | "PARTICIPANT_SCOPE_REVOKE"
+        | "PARTICIPANT_REINSTATE" => {
             if let Some(p_val) = ev.payload.get("participant") {
                 let participant: ParticipantRecord = serde_json::from_value(p_val.clone())
                     .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
