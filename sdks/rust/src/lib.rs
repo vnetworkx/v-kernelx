@@ -1,5 +1,6 @@
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
@@ -372,9 +373,9 @@ impl VectorNetworkClient {
                     .ok_or_else(|| VNetworkError::Storage(
                         "cannot resolve home directory for durable nonce store".to_string()
                     ))?;
-                let key = blake3::hash(format!("{network_id}::{actor_pubkey}").as_bytes())
-                    .to_hex()
-                    .to_string();
+                let key = hex::encode(Sha256::digest(
+                    format!("{network_id}::{actor_pubkey}").as_bytes(),
+                ));
                 home.join(".vnetwork").join("nonces").join(format!("{key}.json"))
             }
         };
