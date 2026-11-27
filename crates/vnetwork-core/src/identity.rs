@@ -636,3 +636,121 @@ pub fn require_participant_scope(
 ) -> VResult<()> {
     require_participant_scope_at(state, actor_pubkey, required_level, None, 0)
 }
+
+
+#[cfg(test)]
+mod onboarding_regressions {
+    use super::{
+        can_authorize_join_scope, canonical_join_signing_bytes, issue_participant_challenge,
+        verify_and_register_participant, JoinNetworkRequest, SignedScopeAuthorization,
+    };
+    use crate::state::{GenesisConfig, NetworkLedgerState};
+    use vnetwork_types::*;
+
+    fn test_state() -> (NetworkLedgerState, KeypairMaterial) {
+        let validator = KeypairMaterial::generate("onboarding-validator");
+        let genesis = GenesisConfig::for_profile(
+            NetworkProfile::Development,
+            "onboarding-regression",
+            "Onboarding Regression",
+            vec![ConsensusValidator {
+                validator_id: "validator-1".to_string(),
+                node_id: "node-1".to_string(),
+                validator_pubkey_hex: validator.public_key_hex.clone(),
+                weight: 100,
+                active: true,
+                joined_epoch: 1,
+            }],
+        );
+        (NetworkLedgerState::try_new(&genesis).expect("valid genesis"), validator)
+    }
+
+    fn join_request(
+        state: &mut NetworkLedgerState,
+        participant: &KeypairMaterial,
+        node: &KeypairMaterial,
+        timestamp_ms: u64,
+    ) -> JoinNetworkRequest {
+        let challenge = issue_participant_challenge(state, timestamp_ms);
+        let requested_scopes = Vec::new();
+        let message = canonical_join_signing_bytes(
+            &challenge,
+            &participant.public_key_hex,
+            &node.public_key_hex,
+            &requested_scopes,
+        )
+        .expect("canonical join message");
+        JoinNetworkRequest {
+            challenge_id: challenge.challenge_id,
+            participant_pubkey: participant.public_key_hex.clone(),
+            node_pubkey: node.public_key_hex.clone(),
+            display_name: "regression-participant".to_string(),
+            node_kind: NodeKind::FullNode,
+            requested_scopes,
+            advertised_addresses: Vec::new(),
+            participant_signature: participant.sign(&message),
+            node_signature: node.sign(&message),
+            scope_authorizations: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn genesis_validator_join_delegation_is_only_available_at_bootstrap() {
+        let (mut state, validator) = test_state();
+        let authorization = SignedScopeAuthorization {
+            target_participant_pubkey: "participant".to_string(),
+            grantor_pubkey: validator.public_key_hex,
+            scopes: vec![ParticipationLevel::Network],
+            target_id: None,
+            expires_at_ms: None,
+            authorization_basis: "genesis_test".to_string(),
+            signature: String::new(),
+        };
+        assert!(can_authorize_join_scope(
+            &state,
+            &authorization,
+            ParticipationLevel::Network,
+            1,
+        ));
+        state.height = 1;
+        assert!(!can_authorize_join_scope(
+            &state,
+            &authorization,
+            ParticipationLevel::Network,
+            1,
+        ));
+    }
+
+    #[test]
+    fn enrollment_cannot_overwrite_existing_participant_identity() {
+        let (mut state, _) = test_state();
+        let participant = KeypairMaterial::generate("repeat-participant");
+        let node = KeypairMaterial::generate("repeat-node");
+        let first = join_request(&mut state, &participant, &node, 10);
+        verify_and_register_participant(&mut state, &first, 10).expect("first join succeeds");
+        let second = join_request(&mut state, &participant, &node, 20);
+        assert!(matches!(
+            verify_and_register_participant(&mut state, &second, 20),
+            Err(VNetworkError::Authorization(_))
+        ));
+        assert_eq!(state.participants.len(), 1);
+        assert_eq!(state.nodes.len(), 1);
+    }
+
+    #[test]
+    fn enrollment_cannot_overwrite_existing_node_identity() {
+        let (mut state, _) = test_state();
+        let first_participant = KeypairMaterial::generate("first-node-owner");
+        let second_participant = KeypairMaterial::generate("second-node-owner");
+        let node = KeypairMaterial::generate("reused-node");
+        let first = join_request(&mut state, &first_participant, &node, 10);
+        verify_and_register_participant(&mut state, &first, 10).expect("first join succeeds");
+        let second = join_request(&mut state, &second_participant, &node, 20);
+        assert!(matches!(
+            verify_and_register_participant(&mut state, &second, 20),
+            Err(VNetworkError::Authorization(_))
+        ));
+        assert_eq!(state.participants.len(), 1);
+        assert_eq!(state.nodes.len(), 1);
+    }
+}
