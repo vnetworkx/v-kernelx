@@ -43,7 +43,7 @@ async function reserveDurableNonce(filePath: string, networkId: string, actorPub
       try {
         const stat = await fs.stat(lockPath);
         if (Date.now() - stat.mtimeMs > 30_000) {
-          let ownerPid = null;
+          let ownerPid: number | null = null;
           try {
             const owner = JSON.parse(await fs.readFile(lockPath, "utf8"));
             ownerPid = Number.isSafeInteger(owner.pid) ? owner.pid : null;
@@ -86,7 +86,7 @@ async function reserveDurableNonce(filePath: string, networkId: string, actorPub
         throw new Error(`Invalid or mismatched durable nonce state at ${filePath}`);
       }
       current = Math.max(current, stored.next_nonce);
-    } catch (error) {
+    } catch (error: any) {
       if (error.code !== "ENOENT") throw error;
     }
 
