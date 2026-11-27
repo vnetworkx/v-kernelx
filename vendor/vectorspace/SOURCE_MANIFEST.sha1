@@ -24,7 +24,7 @@ dbdbfa6d3246a6c780a7c7e0276d6c1c22b73970  python/vectorspace/prototype.py
 1dad612e0350c64e5cd54799d6f63fa380035b87  src/error.rs
 f21e529107814b907ea36442d871d710704dde2b  src/event.rs
 5a1e56494ae1f0cfe84fe07049adab2f6b33f148  src/kernel.rs
-9e51fe17cd3d2781dd4fcc6ed25e2a7c310ccc7c  src/lexer.rs
+80d3534be3518783ce837edc26c0435a11116920  src/lexer.rs
 8385a6de45621251d6e3faee8e8080f29310c4ae  src/lib.rs
 6469d8bc9a18bb87b028600a9317c237532ac7a8  src/main.rs
 c477d268b55c111d7ce33fcb78d45a27ba7e032e  src/parser.rs
