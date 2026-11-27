@@ -4,6 +4,9 @@ use vnetwork_core::authorization::{
     commit_request_nonce_event, commit_signed_operation_intent_event, validate_signed_envelope,
 };
 use vnetwork_core::language::validator_verify_program_bundle;
+use vnetwork_core::identity::{
+    commit_participant_join_intent_event, verify_and_register_participant, JoinNetworkRequest,
+};
 use vnetwork_core::replay::apply_event_to_state;
 use vnetwork_core::state::{GenesisConfig, NetworkLedgerState};
 use vnetwork_core::transition::apply_network_operation_with_genesis;
@@ -109,6 +112,96 @@ pub fn validate_proposal_against_state(
             )
         })?;
         validator_verify_program_bundle(state, genesis, bundle, proposal, actor_pubkey)?;
+    }
+
+    if proposal.nonce_binding.is_none()
+        && proposal.program_source_bundle.is_none()
+        && proposal.operation_scope == "PARTICIPANT_JOIN"
+    {
+        let intent_events: Vec<&LedgerEvent> = proposal
+            .events
+            .iter()
+            .filter(|event| event.operation == "PARTICIPANT_JOIN_INTENT")
+            .collect();
+        if intent_events.len() != 1 {
+            return Err(VNetworkError::Consensus(
+                "participant join proposal must contain exactly one PARTICIPANT_JOIN_INTENT"
+                    .to_string(),
+            ));
+        }
+        let intent = intent_events[0];
+        let challenge: ParticipantChallenge = serde_json::from_value(
+            intent.payload.get("challenge").cloned().ok_or_else(|| {
+                VNetworkError::Serialization(
+                    "missing challenge in PARTICIPANT_JOIN_INTENT".to_string(),
+                )
+            })?,
+        )
+        .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
+        let request: JoinNetworkRequest = serde_json::from_value(
+            intent.payload.get("request").cloned().ok_or_else(|| {
+                VNetworkError::Serialization(
+                    "missing request in PARTICIPANT_JOIN_INTENT".to_string(),
+                )
+            })?,
+        )
+        .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
+        if intent.network_id != state.network_id
+            || intent.entity_id != challenge.challenge_id
+            || intent.actor_pubkey != request.participant_pubkey
+            || request.challenge_id != challenge.challenge_id
+        {
+            return Err(VNetworkError::Consensus(
+                "participant join intent does not match proposal network/identity metadata"
+                    .to_string(),
+            ));
+        }
+
+        // Challenges are short-lived transport state and are intentionally not
+        // part of the replicated state root. Rehydrate the signed challenge
+        // carried by the join intent, then run the normal enrollment validator.
+        let mut expected = state.clone();
+        if let Some(existing) = expected.challenges.get(&challenge.challenge_id) {
+            if existing != &challenge {
+                return Err(VNetworkError::Consensus(
+                    "participant join challenge conflicts with local challenge state".to_string(),
+                ));
+            }
+        } else {
+            expected
+                .challenges
+                .insert(challenge.challenge_id.clone(), challenge.clone());
+        }
+        let expected_intent = commit_participant_join_intent_event(
+            &mut expected,
+            &challenge,
+            &request,
+            proposal.timestamp_ms,
+        )?;
+        if expected_intent.event_id != intent.event_id
+            || expected_intent.event_hash != intent.event_hash
+        {
+            return Err(VNetworkError::Consensus(
+                "PARTICIPANT_JOIN_INTENT is not the deterministic signed join event".to_string(),
+            ));
+        }
+        verify_and_register_participant(&mut expected, &request, proposal.timestamp_ms)?;
+        let generated_events = &expected.events[state.events.len()..];
+        if generated_events != proposal.events.as_slice() {
+            return Err(VNetworkError::Consensus(
+                "participant join proposal events do not match verified challenge enrollment"
+                    .to_string(),
+            ));
+        }
+        expected.height = proposal.height;
+        let computed_post = expected.compute_state_root()?;
+        if computed_post != proposal.post_state_root {
+            return Err(VNetworkError::Consensus(format!(
+                "re-executed join post_state_root '{}' != proposal '{}'",
+                computed_post, proposal.post_state_root
+            )));
+        }
+        return Ok(());
     }
 
     if let Some((bound_actor, bound_request, bound_nonce)) = proposal.nonce_binding.as_ref() {
@@ -267,9 +360,10 @@ pub fn validate_proposal_against_state(
             if proposal.events.iter().any(|event| {
                 event.operation == "REQUEST_NONCE_COMMIT"
                     || event.operation == "SIGNED_OPERATION_INTENT"
+                    || event.operation == "PARTICIPANT_JOIN_INTENT"
             }) {
                 return Err(VNetworkError::Consensus(
-                    "proposal contains a signed-request event without a nonce binding".to_string(),
+                    "proposal contains a signed-request event without its required binding".to_string(),
                 ));
             }
         }
