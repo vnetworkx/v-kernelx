@@ -182,6 +182,39 @@ test("Large u128 decimal string amounts preserve exact precision without precisi
   );
 });
 
+test("Node SDK persists and serializes request nonce reservations across client restarts", async () => {
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "vnetwork_sdk_nonce_"));
+  try {
+    const identity = JsIdentity.fromKeys(
+      "nonce-test",
+      "1111111111111111111111111111111111111111111111111111111111111111",
+      "2222222222222222222222222222222222222222222222222222222222222222",
+    );
+    const storePath = path.join(tmpRoot, "request-nonce.json");
+    const clients = [
+      new JsVectorNetworkClient("http://127.0.0.1:8080", identity, "nonce-test-network", storePath),
+      new JsVectorNetworkClient("http://127.0.0.1:8080", identity, "nonce-test-network", storePath),
+    ];
+    for (const client of clients) client.connectedNetworkId = "nonce-test-network";
+    const reserved = await Promise.all(clients.map((client) => client.reserveNonce()));
+    assert.deepEqual(reserved.sort((a, b) => a - b), [1, 2]);
+
+    const restarted = new JsVectorNetworkClient(
+      "http://127.0.0.1:8080", identity, "nonce-test-network", storePath,
+    );
+    restarted.connectedNetworkId = "nonce-test-network";
+    assert.equal(await restarted.reserveNonce(), 3);
+
+    const saved = JSON.parse(await fs.readFile(storePath, "utf8"));
+    assert.equal(saved.version, 1);
+    assert.equal(saved.network_id, "nonce-test-network");
+    assert.equal(saved.actor_pubkey, identity.participant_key.public_key_hex);
+    assert.equal(saved.next_nonce, 4);
+  } finally {
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  }
+});
+
 test("Negative crypto parity: rejects weak pubkeys, tampered fields, and malformed signatures", async () => {
   const ident = JsIdentity.fromKeys(
     "neg",
