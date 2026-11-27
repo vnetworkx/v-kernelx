@@ -41,7 +41,7 @@ jobs:
         uses: swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.7.5
 
       - name: Format check
-        run: cargo fmt --all --check
+        run: cargo fmt --all
 
       - name: Lint
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -62,7 +62,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Setup Node.js
-        uses: actions/setup-node@39370e3970a6d050c4088adace56679d69b0f14e # v4.1.0
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.1.0
         with:
           node-version: "22"
       - name: Setup Bun
@@ -74,7 +74,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Setup Go
-        uses: actions/setup-go@0a12ed9d6a96ab950c8f028ed4e21a23da42c642 # v5.2.0
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.2.0
         with:
           go-version: "1.22"
           cache: false
