@@ -115,7 +115,10 @@ def _reserve_durable_nonce(
             raise VectorNetworkError("Request nonce exhausted safe integer range")
         temp_fd, temp_name = tempfile.mkstemp(prefix=file_path.name + ".tmp-", dir=str(directory))
         try:
-            os.fchmod(temp_fd, 0o600)
+            if hasattr(os, "fchmod"):
+                os.fchmod(temp_fd, 0o600)
+            else:
+                os.chmod(temp_name, 0o600)
             with os.fdopen(temp_fd, "w", encoding="utf-8") as temp_file:
                 json.dump(
                     {
