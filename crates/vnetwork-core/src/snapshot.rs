@@ -52,6 +52,7 @@ pub struct CertifiedCheckpoint {
 }
 
 impl CertifiedCheckpoint {
+    #[allow(clippy::too_many_arguments)]
     fn compute_checkpoint_seed_id(
         network_id: &str,
         genesis_commitment: &str,
