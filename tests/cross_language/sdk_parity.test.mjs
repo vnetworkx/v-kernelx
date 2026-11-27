@@ -13,6 +13,7 @@ import {
   loadModulesForSource as jsLoadModules,
   signEd25519 as jsSignEd25519,
   verifyEd25519 as jsVerifyEd25519,
+  VectorNetworkClient as JsVectorNetworkClient,
 } from "../../sdks/javascript/index.js";
 import {
   browserKeypairFromPrivateHex as jsBrowserFromPriv,
