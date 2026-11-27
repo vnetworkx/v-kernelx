@@ -8,6 +8,8 @@
 ## Separation of Responsibilities
 
 `vendor/vectorspace` (`v_langx`) is strictly the **language frontend**:
+
+> **Security boundary:** the frontend's local event demo uses FNV-1a-128 and placeholder `signature` fields. They are deterministic checksums, not cryptographic signatures, actor authentication, or consensus proofs. The frontend is not an authoritative ledger or durable store. Production signatures, authorization, replay protection, persistence, and finality are provided only by the kernel / consensus / storage layers.
 - Source loading, lexing, parsing, AST, semantic validation, type checking, `.vdx` import hash verification, and deterministic compilation into `CompiledProgram`.
 - It is **never** an authoritative network or ledger. All compiled operations are revalidated, authorized, and committed through `vnetwork-core` + `vnetwork-consensus`.
 
