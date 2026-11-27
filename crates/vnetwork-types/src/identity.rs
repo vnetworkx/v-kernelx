@@ -346,6 +346,7 @@ impl fmt::Debug for EncryptedKeyEnvelope {
 }
 
 impl EncryptedKeyEnvelope {
+    #[allow(clippy::too_many_arguments)]
     pub fn aad_bytes(
         envelope_version: u16,
         cipher: &str,
