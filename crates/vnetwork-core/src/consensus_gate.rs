@@ -492,12 +492,14 @@ pub fn commit_verified_proposal(
     Ok(computed_post)
 }
 
+type ValidatorEpochReplay = (u64, Vec<ConsensusValidator>, BTreeMap<u64, Vec<ConsensusValidator>>);
+
 pub fn replay_validator_epoch_history(
     genesis_validators: &[ConsensusValidator],
     genesis_epoch: u64,
     ctx: &ConsensusVerificationContext,
     transitions: &[ValidatorEpochTransition],
-) -> VResult<(u64, Vec<ConsensusValidator>, BTreeMap<u64, Vec<ConsensusValidator>>)> {
+) -> VResult<ValidatorEpochReplay> {
     if genesis_epoch == 0 {
         return Err(VNetworkError::Consensus(
             "genesis_epoch must be >= 1".to_string(),
