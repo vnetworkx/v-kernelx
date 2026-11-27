@@ -26,11 +26,13 @@ export async function GET() {
     const vec = (b.vector ?? {}) as Record<string, unknown>;
     const tok = tokenById.get(tid);
     const authRatioAu = Number(vec.auth_ratio_au ?? 0);
+    const explicitSpaceId = typeof tok?.space_id === "string" ? tok.space_id : null;
+    const ownerPubkey = typeof b.owner_pubkey === "string" ? b.owner_pubkey : null;
     return {
       schema: "vector-token-balance/v1",
       vectorId: `${tid}::${wid}`,
-      ownerPubkey: wid,
-      spaceId: String(tok?.space_id ?? tok?.region_id ?? ""),
+      ownerPubkey,
+      spaceId: explicitSpaceId,
       vectorType: tok ? `${String(tok.symbol ?? "TOKEN")} (${String(tok.name ?? "")})` : tid,
       status: wid.startsWith("ghost_custody::") ? "GHOST_CUSTODY" : wid.startsWith("escrow::") ? "ESCROW" : "ACTIVE",
       components: [
@@ -43,11 +45,11 @@ export async function GET() {
         wallet_id: wid,
       },
       certification: {
-        certified: authRatioAu >= 700,
+        certified: null,
         authRatio: authRatioAu,
-        threshold: 700,
-        lastCheckedAtMs: Number(b.updated_at_ms ?? 0),
-        reason: null,
+        threshold: null,
+        lastCheckedAtMs: null,
+        reason: "Certification evidence is not provided by the authoritative snapshot",
       },
       projection: null,
       origin: null,
