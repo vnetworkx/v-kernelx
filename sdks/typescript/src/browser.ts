@@ -264,7 +264,7 @@ export class BrowserVectorNetworkClient {
     let lockManager = this.nonceLockManager;
     try {
       storage = storage ?? globalThis.localStorage;
-      lockManager = lockManager ?? (globalThis.navigator?.locks as unknown as BrowserNonceLockManager | undefined) ?? null;
+      lockManager = lockManager ?? ((globalThis.navigator as unknown as { locks?: BrowserNonceLockManager } | undefined)?.locks ?? null);
     } catch {
       throw new Error("Browser nonce persistence is unavailable; refusing to send a request with an ephemeral nonce");
     }
