@@ -1,4 +1,4 @@
-use crate::identity::require_participant_scope_at;
+use crate::identity::require_network_governance_at;
 use crate::state::NetworkLedgerState;
 use std::collections::BTreeMap;
 use vnetwork_types::*;
@@ -12,13 +12,7 @@ pub fn apply_create_space(
     metadata: BTreeMap<String, String>,
     timestamp_ms: u64,
 ) -> VResult<(SpaceEntity, LedgerEvent)> {
-    require_participant_scope_at(
-        state,
-        actor_pubkey,
-        ParticipationLevel::Space,
-        None,
-        timestamp_ms,
-    )?;
+    require_network_governance_at(state, actor_pubkey, timestamp_ms)?;
 
     let clean_name = name.trim();
     if clean_name.is_empty() {
