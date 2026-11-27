@@ -27,12 +27,13 @@ pub async fn manage_scope(
 ) -> ApiResult<Json<TransactionReceipt>> {
     match &req.operation {
         NetworkOperation::GrantParticipantScope { .. }
-        | NetworkOperation::RevokeParticipantScope { .. } => {}
+        | NetworkOperation::RevokeParticipantScope { .. }
+        | NetworkOperation::ReinstateParticipant { .. } => {}
         _ => {
             return Err(ApiError::new(
                 StatusCode::BAD_REQUEST,
                 "INVALID_SCOPE_OP",
-                "endpoint requires GrantParticipantScope or RevokeParticipantScope operation",
+                "endpoint requires a participant scope grant, revocation, or reinstatement operation",
             ));
         }
     }
