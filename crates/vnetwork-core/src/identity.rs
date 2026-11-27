@@ -750,6 +750,7 @@ pub fn require_participant_scope(
 
 #[cfg(test)]
 mod onboarding_regressions {
+    use std::collections::BTreeSet;
     use super::{
         can_authorize_join_scope, canonical_join_signing_bytes, issue_participant_challenge,
         verify_and_register_participant, JoinNetworkRequest, SignedScopeAuthorization,
