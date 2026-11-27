@@ -221,9 +221,11 @@ fn can_authorize_join_scope(
     // Preserve the existing genesis onboarding path, but never treat validator
     // status alone as ongoing authority. Genesis authorization is an explicit,
     // signed, one-time join grant and remains subject to consensus commitment.
-    state.height == 0
+    level == ParticipationLevel::Network
+        && state.height == 0
+        && state.participants.is_empty()
         && auth.target_id.is_none()
-        && auth.authorization_basis.trim().to_ascii_lowercase().starts_with("genesis")
+        && auth.authorization_basis.eq_ignore_ascii_case("genesis_governance")
         && state.validators.iter().any(|validator| {
             validator.active
                 && validator.joined_epoch == state.validator_epoch
@@ -650,6 +652,12 @@ pub fn apply_reinstate_participant(
 
     let before_hash = blake3_hex(&canonical_json_bytes(&participant)?);
     participant.status = ParticipationStatus::Active;
+    // A reinstatement is intentionally least-privilege. Old scoped grants may
+    // outlive a participant-status revocation, so revoke every historical grant
+    // before adding the single fresh Network membership grant.
+    for grant in &mut participant.scope.grants {
+        grant.revoked = true;
+    }
     participant.scope.grants.push(ScopeGrant {
         level: ParticipationLevel::Network,
         target_id: None,
@@ -814,11 +822,26 @@ mod onboarding_regressions {
             scopes: vec![ParticipationLevel::Network],
             target_id: None,
             expires_at_ms: None,
-            authorization_basis: "genesis_test".to_string(),
+            authorization_basis: "genesis_governance".to_string(),
             signature: String::new(),
         };
         assert!(can_authorize_join_scope(
             &state,
+            &authorization,
+            ParticipationLevel::Network,
+            1,
+        ));
+        assert!(!can_authorize_join_scope(
+            &state,
+            &authorization,
+            ParticipationLevel::Space,
+            1,
+        ));
+        let mut occupied_state = state.clone();
+        let already_joined = KeypairMaterial::generate("already-joined-bootstrap");
+        add_governance_participant(&mut occupied_state, &already_joined);
+        assert!(!can_authorize_join_scope(
+            &occupied_state,
             &authorization,
             ParticipationLevel::Network,
             1,
