@@ -129,17 +129,12 @@ impl TransferScope {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(tag = "status", content = "bps", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ScopeDrainRate {
+    #[default]
     Unconfigured,
     ConfiguredBps(u16),
-}
-
-impl Default for ScopeDrainRate {
-    fn default() -> Self {
-        Self::Unconfigured
-    }
 }
 
 impl ScopeDrainRate {
