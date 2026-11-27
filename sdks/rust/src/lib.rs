@@ -1101,3 +1101,67 @@ async fn parse_json_response(resp: reqwest::Response) -> VResult<serde_json::Val
     }
     Ok(val)
 }
+
+
+#[cfg(test)]
+mod durable_nonce_regressions {
+    use super::{ClientIdentity, VectorNetworkClient};
+    use std::path::PathBuf;
+
+    fn temp_nonce_path(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "vnetwork-sdk-rust-{label}-{}-{}.json",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ))
+    }
+
+    fn client(identity: ClientIdentity, path: PathBuf) -> VectorNetworkClient {
+        let mut client = VectorNetworkClient::new("http://127.0.0.1:8080", identity)
+            .with_expected_network("nonce-test-network")
+            .with_nonce_store(path);
+        client.connected_network_id = Some("nonce-test-network".to_string());
+        client
+    }
+
+    #[test]
+    fn nonce_reservations_survive_client_restart() {
+        let identity = ClientIdentity::generate("rust-nonce-test");
+        let path = temp_nonce_path("restart");
+        let first = client(identity.clone(), path.clone());
+        assert_eq!(first.reserve_nonce().expect("first nonce"), 1);
+        assert_eq!(first.reserve_nonce().expect("second nonce"), 2);
+
+        let restarted = client(identity, path.clone());
+        assert_eq!(restarted.reserve_nonce().expect("restarted nonce"), 3);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(format!("{}.lock", path.display()));
+    }
+
+    #[test]
+    fn separate_clients_do_not_reserve_duplicate_nonces() {
+        let identity = ClientIdentity::generate("rust-nonce-concurrency");
+        let path = temp_nonce_path("concurrent");
+        let first = client(identity.clone(), path.clone());
+        let second = client(identity, path.clone());
+        let a = first.reserve_nonce().expect("first reservation");
+        let b = second.reserve_nonce().expect("second reservation");
+        assert_ne!(a, b);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(format!("{}.lock", path.display()));
+    }
+
+    #[test]
+    fn durable_nonce_state_is_bound_to_network_and_participant() {
+        let identity = ClientIdentity::generate("rust-nonce-binding");
+        let path = temp_nonce_path("binding");
+        let original = client(identity.clone(), path.clone());
+        assert_eq!(original.reserve_nonce().unwrap(), 1);
+
+        let mut wrong_network = client(identity, path.clone());
+        wrong_network.connected_network_id = Some("different-network".to_string());
+        assert!(wrong_network.reserve_nonce().is_err());
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(format!("{}.lock", path.display()));
+    }
+}
