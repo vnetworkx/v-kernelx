@@ -91,3 +91,10 @@ impl NetworkState {
         self.events.push(event);
     }
 }
+
+
+impl Default for NetworkState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
