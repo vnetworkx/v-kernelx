@@ -87,8 +87,13 @@ fn component_allocation(components: &[u128], amount: u128) -> Result<Vec<u128>, 
             ))
         })?;
     }
-    if total == 0 || amount == 0 {
+    if amount == 0 {
         return Ok(vec![0; components.len()]);
+    }
+    if total == 0 {
+        return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation(
+            "cannot allocate a positive amount from a zero vector".to_string(),
+        )));
     }
 
     let mut floors = Vec::with_capacity(components.len());
@@ -130,6 +135,11 @@ fn component_allocation(components: &[u128], amount: u128) -> Result<Vec<u128>, 
         })?;
         remaining -= 1;
     }
+    if remaining != 0 {
+        return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation(
+            "component allocation could not distribute the requested amount".to_string(),
+        )));
+    }
 
     Ok(floors)
 }
@@ -165,6 +175,7 @@ fn vector_add_strict(components: &[u128], addition: &[u128]) -> Result<Vec<u128>
     Ok(out)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn canonical_record(
     state: &mut NetworkState,
     entity_id: &str,
@@ -245,6 +256,7 @@ fn canonical_record(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_state_event(
     state: &mut NetworkState,
     entity_id: &str,
@@ -360,6 +372,11 @@ pub fn execute_kernel_op(state: &mut NetworkState, op: KernelOp) -> Result<Kerne
             Ok(KernelResult { output: Some(format!("certify {target} -> {certified}")), record: Some(event) })
         }
         KernelOp::Transfer { source, destination, amount, drain, policy } => {
+            if source == destination {
+                return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation(
+                    "self-transfer is not supported".to_string(),
+                )));
+            }
             let (source_type, dest_type, before_source, before_dest) = {
                 let source_vec = state
                     .vectors
