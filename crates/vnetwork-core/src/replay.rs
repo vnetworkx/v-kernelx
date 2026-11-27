@@ -32,6 +32,36 @@ pub fn replay_from_events(
 
 pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) -> VResult<()> {
     match ev.operation.as_str() {
+        "SIGNED_OPERATION_INTENT" => {
+            if ev.network_id != state.network_id || ev.entity_kind != "request" {
+                return Err(VNetworkError::ProfileMismatch(
+                    "signed operation intent belongs to a different network or entity kind".to_string(),
+                ));
+            }
+            let envelope: SignedRequestEnvelope = serde_json::from_value(
+                ev.payload.get("envelope").cloned().ok_or_else(|| {
+                    VNetworkError::Serialization("missing envelope in SIGNED_OPERATION_INTENT".to_string())
+                })?,
+            )
+            .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
+            let operation: NetworkOperation = serde_json::from_value(
+                ev.payload.get("operation").cloned().ok_or_else(|| {
+                    VNetworkError::Serialization("missing operation in SIGNED_OPERATION_INTENT".to_string())
+                })?,
+            )
+            .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
+            envelope.verify()?;
+            let operation_hash = blake3_hex(&canonical_json_bytes(&operation)?);
+            if envelope.network_id != ev.network_id
+                || envelope.request_id != ev.entity_id
+                || envelope.actor_pubkey != ev.actor_pubkey
+                || envelope.payload_hash != operation_hash
+            {
+                return Err(VNetworkError::Validation(
+                    "signed operation intent does not match its authenticated event envelope".to_string(),
+                ));
+            }
+        }
         "REQUEST_NONCE_COMMIT" => {
             if ev.network_id != state.network_id || ev.entity_kind != "request" {
                 return Err(VNetworkError::ProfileMismatch(
