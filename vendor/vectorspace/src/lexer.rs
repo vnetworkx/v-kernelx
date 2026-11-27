@@ -256,7 +256,7 @@ impl<'a> Iterator for Lexer<'a> {
 pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
     let mut lexer = Lexer::new(src);
     let mut tokens = Vec::new();
-    while let Some(item) = lexer.next() {
+    for item in lexer.by_ref() {
         tokens.push(item?);
     }
     let len = src.len();
