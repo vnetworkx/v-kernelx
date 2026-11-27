@@ -287,14 +287,17 @@ pub fn apply_execute_contract(
         )));
     }
     if contract.min_auth_ratio_bps > 0 {
-        if let Some(reg_id) = &contract.region_id {
-            let reg = verify_region_exists(state, reg_id)?;
-            if reg.auth_ratio_bps < contract.min_auth_ratio_bps {
-                return Err(VNetworkError::Authorization(format!(
-                    "region auth_ratio_bps {} < required {}",
-                    reg.auth_ratio_bps, contract.min_auth_ratio_bps
-                )));
-            }
+        let reg_id = contract.region_id.as_deref().ok_or_else(|| {
+            VNetworkError::Authorization(
+                "contract requires a minimum AuthRatio but is not bound to a Region".to_string(),
+            )
+        })?;
+        let reg = verify_region_exists(state, reg_id)?;
+        if reg.auth_ratio_bps < contract.min_auth_ratio_bps {
+            return Err(VNetworkError::Authorization(format!(
+                "region auth_ratio_bps {} < required {}",
+                reg.auth_ratio_bps, contract.min_auth_ratio_bps
+            )));
         }
     }
 
