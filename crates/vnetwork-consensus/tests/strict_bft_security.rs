@@ -10,6 +10,7 @@ use vnetwork_core::identity::{
     canonical_join_signing_bytes, issue_participant_challenge, verify_and_register_participant,
     JoinNetworkRequest,
 };
+use vnetwork_core::engine::ProtocolEngine;
 use vnetwork_core::state::{GenesisConfig, NetworkLedgerState, ValidatorEpochTransition};
 use vnetwork_types::*;
 
@@ -538,4 +539,56 @@ fn ordinary_signed_operation_is_reexecuted_before_validator_vote() {
         validate_proposal_against_state(&state, &genesis, &membership, &proposal).is_err(),
         "validators must reject a signed but unauthorized operation before voting"
     );
+}
+
+
+#[test]
+fn validator_reexecutes_and_accepts_a_valid_signed_participant_join() {
+    let (validator_keys, validators) = make_validators(4, 1);
+    let genesis = GenesisConfig::for_profile(
+        NetworkProfile::Testnet,
+        "vector-testnet-join-validation",
+        "Join Validation Test",
+        validators.clone(),
+    );
+    let membership =
+        ValidatorMembership::try_new(validators.clone(), DEFAULT_BFT_QUORUM_BPS).unwrap();
+    let mut engine = ProtocolEngine::new(genesis.clone());
+    let actor = KeypairMaterial::generate("join-member");
+    let node = KeypairMaterial::generate("join-node");
+    let challenge = engine.issue_challenge(3_000);
+    let scopes = vec![ParticipationLevel::Network];
+    let join_bytes = canonical_join_signing_bytes(
+        &challenge,
+        &actor.public_key_hex,
+        &node.public_key_hex,
+        &scopes,
+    )
+    .unwrap();
+    let request = JoinNetworkRequest {
+        challenge_id: challenge.challenge_id.clone(),
+        participant_pubkey: actor.public_key_hex.clone(),
+        node_pubkey: node.public_key_hex.clone(),
+        display_name: "join-member".to_string(),
+        node_kind: NodeKind::FullNode,
+        requested_scopes: scopes,
+        advertised_addresses: vec![],
+        participant_signature: actor.sign(&join_bytes).unwrap(),
+        node_signature: node.sign(&join_bytes).unwrap(),
+        scope_authorizations: vec![],
+    };
+
+    let (_, _, proposal, _) = engine
+        .stage_participant_join(
+            &request,
+            &validators[0].validator_id,
+            |bytes| validator_keys[0].sign(bytes),
+            3_001,
+        )
+        .unwrap();
+
+    assert_eq!(proposal.events.len(), 2);
+    assert_eq!(proposal.events[0].operation, "PARTICIPANT_JOIN_INTENT");
+    assert_eq!(proposal.events[1].operation, "PARTICIPANT_JOIN");
+    validate_proposal_against_state(&engine.state, &genesis, &membership, &proposal).unwrap();
 }
