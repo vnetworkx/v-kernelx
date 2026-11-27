@@ -330,7 +330,7 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
             }
         }
         "LOAN_CREATE" | "LOAN_FUND" | "LOAN_DRAW" | "LOAN_REPAY" | "LOAN_DEFAULT"
-        | "LOAN_LIQUIDATE" => {
+        | "LOAN_LIQUIDATE" | "LOAN_CANCEL" => {
             let loan: VLoanEntity = serde_json::from_value(ev.payload.clone())
                 .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
             let c_token = if loan.collateral_token_id.is_empty() {
@@ -376,6 +376,19 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
                     c_token,
                     &escrow_id,
                     &loan.lender_wallet_id,
+                    prev_collateral,
+                    ev.timestamp_ms,
+                )?;
+            } else if ev.operation == "LOAN_CANCEL"
+                && loan.status == LoanStatus::Cancelled
+                && prev_collateral > 0
+                && loan.collateral_locked == 0
+            {
+                move_loan_escrow_balance(
+                    state,
+                    c_token,
+                    &escrow_id,
+                    &loan.borrower_wallet_id,
                     prev_collateral,
                     ev.timestamp_ms,
                 )?;
