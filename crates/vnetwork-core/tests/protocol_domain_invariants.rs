@@ -478,10 +478,13 @@ fn test_wallet_pop_replay_expiry_revocation_multisig_and_ghost_isolation() {
         maturity_at_ms: Some(10_000),
     });
     apply_execute_loan(&mut engine.state, &loan_id, "fund", 100, &owner_kp.public_key_hex, 700).unwrap();
-    // Liquidating before maturity_at_ms (10_000) MUST fail
+    // Further facility draws stop at maturity, even while the loan remains Active.
+    assert!(apply_execute_loan(&mut engine.state, &loan_id, "draw", 10, &owner_kp.public_key_hex, 10_000).is_err());
+    // Liquidation requires the explicit default transition, both before and at maturity.
     assert!(apply_execute_loan(&mut engine.state, &loan_id, "liquidate", 0, &owner_kp.public_key_hex, 9_999).is_err());
-    // Liquidating at maturity seizes collateral atomically with supply conserved
-    let (liq_loan, _) = apply_execute_loan(&mut engine.state, &loan_id, "liquidate", 0, &owner_kp.public_key_hex, 10_000).unwrap();
+    assert!(apply_execute_loan(&mut engine.state, &loan_id, "liquidate", 0, &owner_kp.public_key_hex, 10_000).is_err());
+    apply_execute_loan(&mut engine.state, &loan_id, "default", 0, &owner_kp.public_key_hex, 10_000).unwrap();
+    let (liq_loan, _) = apply_execute_loan(&mut engine.state, &loan_id, "liquidate", 0, &owner_kp.public_key_hex, 10_001).unwrap();
     assert_eq!(liq_loan.status, LoanStatus::Liquidated);
     assert_eq!(liq_loan.collateral_locked, 0);
     assert!(verify_token_supply_conservation(&engine.state, &tok).unwrap());
