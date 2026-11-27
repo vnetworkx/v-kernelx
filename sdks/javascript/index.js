@@ -99,7 +99,7 @@ async function reserveDurableNonce(filePath, networkId, actorPubkey, minimumNext
         network_id: networkId,
         actor_pubkey: actorPubkey,
         next_nonce: nextNonce,
-      }) + "\\n");
+      }) + "\n");
       await tempHandle.sync();
     } finally {
       await tempHandle.close();
