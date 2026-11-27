@@ -48,3 +48,10 @@ impl Context {
         self.fields.get(key)
     }
 }
+
+
+impl Default for Context {
+    fn default() -> Self {
+        Self::new()
+    }
+}
