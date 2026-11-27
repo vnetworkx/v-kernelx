@@ -277,7 +277,7 @@ export class BrowserVectorNetworkClient {
     if (!this.connectedNetworkId) await this.connect();
     const networkId = this.resolvedNetworkId();
     const requestId = `req_${globalThis.crypto.randomUUID().replace(/-/g, "")}`;
-    const nonce = this.nonce++;
+    const nonce = await this.reserveNonce();
     const msg = canonicalJsonBytes(
       canonicalProgramSubmitObject({
         actorPubkey: this.identity.participant_key.public_key_hex,
@@ -349,7 +349,7 @@ export class BrowserVectorNetworkClient {
     if (!this.connectedNetworkId) await this.connect();
     const networkId = this.resolvedNetworkId();
     const requestId = `req_${globalThis.crypto.randomUUID().replace(/-/g, "")}`;
-    const nonce = this.nonce++;
+    const nonce = await this.reserveNonce();
     const timestampMs = Date.now();
     const payloadHash = blake3Hex(canonicalJsonBytes(operation));
     const signingBytes = canonicalJsonBytes({
