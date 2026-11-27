@@ -935,9 +935,15 @@ mod onboarding_regressions {
 
         let target_record = state.participants.get_mut(&target_id).unwrap();
         target_record.status = ParticipationStatus::Revoked;
-        for grant in &mut target_record.scope.grants {
-            grant.revoked = true;
-        }
+        target_record.scope.grants.push(ScopeGrant {
+            level: ParticipationLevel::Space,
+            target_id: Some("previously-authorized-space".to_string()),
+            granted_at_ms: 11,
+            grantor_pubkey: target_key.public_key_hex.clone(),
+            expires_at_ms: None,
+            authorization_basis: "historical_space_grant".to_string(),
+            revoked: false,
+        });
         let governance_key = KeypairMaterial::generate("reinstatement-governance");
         add_governance_participant(&mut state, &governance_key);
 
@@ -950,7 +956,11 @@ mod onboarding_regressions {
         .expect("explicit governance reinstatement");
         assert_eq!(restored.status, ParticipationStatus::Active);
         assert!(restored.scope.has_active_scope(ParticipationLevel::Network, None, 20));
-        assert!(!restored.scope.has_active_scope(ParticipationLevel::Space, None, 20));
+        assert!(!restored.scope.has_active_scope(
+            ParticipationLevel::Space,
+            Some("previously-authorized-space"),
+            20,
+        ));
         assert!(!restored.scope.has_active_scope(ParticipationLevel::Region, None, 20));
         assert!(!restored.scope.has_active_scope(ParticipationLevel::Wallet, None, 20));
         assert!(!restored.scope.validator_eligible);
