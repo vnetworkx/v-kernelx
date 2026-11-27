@@ -320,19 +320,21 @@ impl ProtocolEngine {
             .checked_add(1)
             .ok_or_else(|| VNetworkError::Validation("height overflow".to_string()))?;
         let vset_hash = self.validator_set_hash()?;
-        let outcome = apply_network_operation_with_genesis(
+        let mut outcome = apply_network_operation_with_genesis(
             &mut staged,
             &self.genesis,
             op,
             &envelope.actor_pubkey,
             timestamp_ms,
         )?;
-        crate::authorization::record_nonce_and_request(
+        let nonce_event = crate::authorization::commit_request_nonce_event(
             &mut staged,
             &envelope.request_id,
             &envelope.actor_pubkey,
             envelope.nonce,
-        );
+            timestamp_ms,
+        )?;
+        outcome.events.push(nonce_event);
         staged.height = next_height;
         let post_root = staged.compute_state_root()?;
         let tx_id = format!(
