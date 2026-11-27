@@ -225,6 +225,11 @@ pub fn apply_execute_loan(
 
     match norm.as_str() {
         "fund" => {
+            if loan.maturity_at_ms.is_some_and(|maturity| timestamp_ms >= maturity) {
+                return Err(VNetworkError::Validation(
+                    "cannot fund a loan at or after its maturity".to_string(),
+                ));
+            }
             if loan.status != LoanStatus::Created {
                 return Err(VNetworkError::Validation("loan already funded".to_string()));
             }
@@ -264,6 +269,11 @@ pub fn apply_execute_loan(
             loan.status = LoanStatus::Active;
         }
         "draw" => {
+            if loan.maturity_at_ms.is_some_and(|maturity| timestamp_ms >= maturity) {
+                return Err(VNetworkError::Validation(
+                    "cannot draw against a loan at or after its maturity".to_string(),
+                ));
+            }
             if loan.status != LoanStatus::Created && loan.status != LoanStatus::Active {
                 return Err(VNetworkError::Validation(
                     "loan cannot be drawn after settlement or liquidation".to_string(),
@@ -442,18 +452,11 @@ pub fn apply_execute_loan(
                 None,
                 timestamp_ms,
             )?;
-            let matured = loan.maturity_at_ms.is_some_and(|mat| timestamp_ms >= mat);
-            if !matured && !loan.defaulted {
-                return Err(VNetworkError::Validation(match loan.maturity_at_ms {
-                    Some(mat) => format!(
-                        "cannot liquidate loan `{}` before maturity_at_ms {mat}",
-                        loan.name
-                    ),
-                    None => format!(
-                        "cannot liquidate loan `{}` without maturity_at_ms or active default",
-                        loan.name
-                    ),
-                }));
+            if !loan.defaulted {
+                return Err(VNetworkError::Validation(
+                    "loan must complete the explicit default transition before liquidation"
+                        .to_string(),
+                ));
             }
             if loan.collateral_locked > 0 {
                 let escrow_id = loan_escrow_wallet_id(&loan.loan_id);
