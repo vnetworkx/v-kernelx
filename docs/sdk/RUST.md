@@ -34,3 +34,7 @@ cargo run --manifest-path examples/rust/Cargo.toml
 - `client.submit_vx_file(path)` / `client.submit_program(name, src, modules)` — resolves pinned `.vdx` imports, verifies local BLAKE3 hashes, signs, and submits `/v1/programs/submit`.
 - `client.verify_reconstruction(kind, id)` — verifies `/v1/reconstruct/{kind}/{id}` proof equivalence.
 - `client.subscribe_events()` — connects to `/v1/ws` WebSocket feed.
+
+## Durable request nonces
+
+The Rust client persists request nonce reservations per network and participant under `~/.vnetwork/nonces` before signing and sending writes. Use `reserve_nonce()` when constructing custom signed requests; it returns storage errors rather than silently reusing an in-memory value. A custom nonce file can be selected with `with_nonce_store(path)`. The legacy `next_nonce()` method remains for source compatibility and panics if durable reservation fails.
