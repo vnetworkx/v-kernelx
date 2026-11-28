@@ -176,10 +176,11 @@ fn test_production_tls_and_address_validation() {
 
 #[test]
 fn test_validate_against_genesis_detects_conflicts() {
+    let validator = KeypairMaterial::generate("validator");
     let val = ConsensusValidator {
         validator_id: "val_1".to_string(),
         node_id: "nod_1".to_string(),
-        validator_pubkey_hex: KeypairMaterial::generate("validator").public_key_hex,
+        validator_pubkey_hex: validator.public_key_hex.clone(),
         weight: 100,
         active: true,
         joined_epoch: 1,
