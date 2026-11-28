@@ -21,21 +21,16 @@ pub const DOM_EQUIVOCATION_RECORD_V1: &str = "vnetwork/equivocation-record/v1";
 pub const DOM_EQUIVOCATION_INCIDENT_V1: &str = "vnetwork/equivocation-incident/v1";
 pub const DOM_TRANSFER_APPROVAL_V1: &str = "vnetwork/transfer-approval/v1";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum VerificationStatus {
     Verified,
+    #[default]
     Unverified,
     Invalid,
     Unavailable,
     Unknown,
     Pending,
-}
-
-impl Default for VerificationStatus {
-    fn default() -> Self {
-        Self::Unverified
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

@@ -3,6 +3,14 @@ use vnetwork_core::consensus_gate::{
     replay_validator_epoch_history, verify_membership_chain_from_genesis,
     verify_quorum_certificate_strict,
 };
+use vnetwork_core::authorization::{
+    commit_request_nonce_event, commit_signed_operation_intent_event,
+};
+use vnetwork_core::identity::{
+    canonical_join_signing_bytes, issue_participant_challenge, verify_and_register_participant,
+    JoinNetworkRequest,
+};
+use vnetwork_core::engine::ProtocolEngine;
 use vnetwork_core::state::{GenesisConfig, NetworkLedgerState, ValidatorEpochTransition};
 use vnetwork_types::*;
 
@@ -401,4 +409,186 @@ fn test_proposal_digest_tampering_and_genesis_membership_chain() {
         &rogue_vals
     )
     .is_err());
+}
+
+
+#[test]
+fn ordinary_signed_operation_is_reexecuted_before_validator_vote() {
+    let (validator_keys, validators) = make_validators(4, 1);
+    let genesis = GenesisConfig::for_profile(
+        NetworkProfile::Testnet,
+        "vector-testnet-semantic-validation",
+        "Semantic Validation Test",
+        validators.clone(),
+    );
+    let membership =
+        ValidatorMembership::try_new(validators.clone(), DEFAULT_BFT_QUORUM_BPS).unwrap();
+    let mut state = NetworkLedgerState::try_new(&genesis).unwrap();
+
+    // Enroll a normal member through the real signed challenge path. Open
+    // enrollment gives Network membership, but it does not confer governance.
+    let actor = KeypairMaterial::generate("ordinary-member");
+    let node = KeypairMaterial::generate("ordinary-node");
+    let challenge = issue_participant_challenge(&mut state, 1_000);
+    let requested_scopes = vec![ParticipationLevel::Network];
+    let join_bytes = canonical_join_signing_bytes(
+        &challenge,
+        &actor.public_key_hex,
+        &node.public_key_hex,
+        &requested_scopes,
+    )
+    .unwrap();
+    let join = JoinNetworkRequest {
+        challenge_id: challenge.challenge_id,
+        participant_pubkey: actor.public_key_hex.clone(),
+        node_pubkey: node.public_key_hex.clone(),
+        display_name: "ordinary-member".to_string(),
+        node_kind: NodeKind::FullNode,
+        requested_scopes,
+        advertised_addresses: vec![],
+        participant_signature: actor.sign(&join_bytes).unwrap(),
+        node_signature: node.sign(&join_bytes).unwrap(),
+        scope_authorizations: vec![],
+    };
+    verify_and_register_participant(&mut state, &join, 1_001).unwrap();
+
+    // The member signs a syntactically valid operation that they are not
+    // authorized to perform. A malicious proposer can construct a plausible
+    // event-only post-state, but honest validators must re-run the operation.
+    let operation = NetworkOperation::CreateSpace {
+        name: "Unauthorized Space".to_string(),
+        visibility: "public".to_string(),
+        ghost: false,
+    };
+    let request_id = "req_unauthorized_space".to_string();
+    let network_id = state.network_id.clone();
+    let payload_hash = blake3_hex(&canonical_json_bytes(&operation).unwrap());
+    let signing_bytes = SignedRequestEnvelope::canonical_signing_bytes(
+        &network_id,
+        &request_id,
+        &actor.public_key_hex,
+        1,
+        2_000,
+        &payload_hash,
+    )
+    .unwrap();
+    let envelope = SignedRequestEnvelope {
+        request_id: request_id.clone(),
+        network_id: network_id.clone(),
+        actor_pubkey: actor.public_key_hex.clone(),
+        nonce: 1,
+        timestamp_ms: 2_000,
+        signature: actor.sign(&signing_bytes).unwrap(),
+        payload_hash,
+    };
+
+    // Forge the proposer-supplied events without applying CreateSpace. This
+    // would pass a replay-only validator, because the resulting state root is
+    // internally consistent with these events.
+    let mut forged_state = state.clone();
+    let intent = commit_signed_operation_intent_event(
+        &mut forged_state,
+        &envelope,
+        &operation,
+        2_000,
+    )
+    .unwrap();
+    let nonce_event = commit_request_nonce_event(
+        &mut forged_state,
+        &request_id,
+        &actor.public_key_hex,
+        1,
+        2_000,
+    )
+    .unwrap();
+    forged_state.height = state.height + 1;
+    let post_state_root = forged_state.compute_state_root().unwrap();
+
+    let mut proposal = ConsensusProposal {
+        proposal_id: String::new(),
+        proposal_version: PROPOSAL_VERSION,
+        network_id: network_id.clone(),
+        genesis_commitment: genesis.commitment_hash().unwrap(),
+        protocol_version: PROTOCOL_VERSION.to_string(),
+        height: state.height + 1,
+        round: 1,
+        epoch: state.validator_epoch,
+        validator_set_hash: membership.validator_set_hash().unwrap(),
+        consensus_parameters_hash: genesis.consensus_parameters.parameters_hash().unwrap(),
+        proposer_validator_id: validators[0].validator_id.clone(),
+        parent_commitment: state.expected_parent_commitment(),
+        pre_state_root: state.compute_state_root().unwrap(),
+        post_state_root,
+        proposal_digest: String::new(),
+        operation_scope: "CreateSpace".to_string(),
+        events: vec![intent, nonce_event],
+        program_id: None,
+        tx_id: Some("tx_unauthorized_space".to_string()),
+        program_source_bundle: None,
+        nonce_binding: Some((actor.public_key_hex.clone(), request_id, 1)),
+        execution_params: Default::default(),
+        timestamp_ms: 2_000,
+        proposer_signature: String::new(),
+    };
+    proposal.finalize_digest_and_id().unwrap();
+    proposal.proposer_signature = validator_keys[0]
+        .sign(&proposal.canonical_signing_bytes().unwrap())
+        .unwrap();
+
+    assert!(
+        validate_proposal_against_state(&state, &genesis, &membership, &proposal).is_err(),
+        "validators must reject a signed but unauthorized operation before voting"
+    );
+}
+
+
+#[test]
+fn validator_reexecutes_and_accepts_a_valid_signed_participant_join() {
+    let (validator_keys, validators) = make_validators(4, 1);
+    let genesis = GenesisConfig::for_profile(
+        NetworkProfile::Testnet,
+        "vector-testnet-join-validation",
+        "Join Validation Test",
+        validators.clone(),
+    );
+    let membership =
+        ValidatorMembership::try_new(validators.clone(), DEFAULT_BFT_QUORUM_BPS).unwrap();
+    let mut engine = ProtocolEngine::new(genesis.clone());
+    let actor = KeypairMaterial::generate("join-member");
+    let node = KeypairMaterial::generate("join-node");
+    let challenge = engine.issue_challenge(3_000);
+    let scopes = vec![ParticipationLevel::Network];
+    let join_bytes = canonical_join_signing_bytes(
+        &challenge,
+        &actor.public_key_hex,
+        &node.public_key_hex,
+        &scopes,
+    )
+    .unwrap();
+    let request = JoinNetworkRequest {
+        challenge_id: challenge.challenge_id.clone(),
+        participant_pubkey: actor.public_key_hex.clone(),
+        node_pubkey: node.public_key_hex.clone(),
+        display_name: "join-member".to_string(),
+        node_kind: NodeKind::FullNode,
+        requested_scopes: scopes,
+        advertised_addresses: vec![],
+        participant_signature: actor.sign(&join_bytes).unwrap(),
+        node_signature: node.sign(&join_bytes).unwrap(),
+        scope_authorizations: vec![],
+    };
+
+    let (_, _, proposal, _) = engine
+        .stage_participant_join(
+            &request,
+            &validators[0].validator_id,
+            |bytes| validator_keys[0].sign(bytes),
+            3_001,
+        )
+        .unwrap();
+
+    assert_eq!(proposal.events.len(), 2);
+    assert_eq!(proposal.events[0].operation, "PARTICIPANT_JOIN_INTENT");
+    assert_eq!(proposal.events[1].operation, "PARTICIPANT_JOIN");
+    validate_proposal_against_state(&engine.state, &genesis, &membership, &proposal).unwrap();
 }

@@ -39,7 +39,7 @@ pub fn events_for_entity<'a>(
         .events
         .iter()
         .filter(|e| {
-            let kind_ok = entity_kind.map_or(true, |k| e.entity_kind == k);
+            let kind_ok = entity_kind.is_none_or(|k| e.entity_kind == k);
             kind_ok && e.entity_id == entity_id
         })
         .collect()

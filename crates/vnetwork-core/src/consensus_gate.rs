@@ -1,4 +1,3 @@
-use crate::authorization::record_nonce_and_request;
 use crate::replay::apply_event_to_state;
 use crate::state::{NetworkLedgerState, ValidatorEpochTransition};
 use std::collections::{BTreeMap, BTreeSet};
@@ -439,8 +438,41 @@ pub fn commit_verified_proposal(
             "executed proposal event IDs diverge from certified QC".to_string(),
         ));
     }
-    if let Some((actor_pubkey, request_id, nonce)) = &proposal.nonce_binding {
-        record_nonce_and_request(&mut staged, request_id, actor_pubkey, *nonce);
+    match &proposal.nonce_binding {
+        Some((actor_pubkey, request_id, nonce)) => {
+            let nonce_events: Vec<&LedgerEvent> = proposal
+                .events
+                .iter()
+                .filter(|event| event.operation == "REQUEST_NONCE_COMMIT")
+                .collect();
+            if nonce_events.len() != 1 {
+                return Err(VNetworkError::Consensus(
+                    "signed request proposal must contain exactly one REQUEST_NONCE_COMMIT event"
+                        .to_string(),
+                ));
+            }
+            let event = nonce_events[0];
+            let event_actor = event.payload.get("actor_pubkey").and_then(|v| v.as_str());
+            let event_request = event.payload.get("request_id").and_then(|v| v.as_str());
+            let event_nonce = event.payload.get("nonce").and_then(|v| v.as_u64());
+            if event_actor != Some(actor_pubkey.as_str())
+                || event_request != Some(request_id.as_str())
+                || event_nonce != Some(*nonce)
+                || staged.actor_nonces.get(actor_pubkey) != Some(nonce)
+                || !staged.seen_request_ids.contains(request_id)
+            {
+                return Err(VNetworkError::Consensus(
+                    "proposal nonce binding is not proven by its committed event".to_string(),
+                ));
+            }
+        }
+        None => {
+            if proposal.events.iter().any(|event| event.operation == "REQUEST_NONCE_COMMIT") {
+                return Err(VNetworkError::Consensus(
+                    "proposal contains a request nonce event without a nonce binding".to_string(),
+                ));
+            }
+        }
     }
     staged.height = proposal.height;
     let computed_post = staged.compute_state_root()?;
@@ -460,12 +492,14 @@ pub fn commit_verified_proposal(
     Ok(computed_post)
 }
 
+type ValidatorEpochReplay = (u64, Vec<ConsensusValidator>, BTreeMap<u64, Vec<ConsensusValidator>>);
+
 pub fn replay_validator_epoch_history(
     genesis_validators: &[ConsensusValidator],
     genesis_epoch: u64,
     ctx: &ConsensusVerificationContext,
     transitions: &[ValidatorEpochTransition],
-) -> VResult<(u64, Vec<ConsensusValidator>, BTreeMap<u64, Vec<ConsensusValidator>>)> {
+) -> VResult<ValidatorEpochReplay> {
     if genesis_epoch == 0 {
         return Err(VNetworkError::Consensus(
             "genesis_epoch must be >= 1".to_string(),

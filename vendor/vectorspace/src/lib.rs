@@ -1,3 +1,7 @@
+// RuntimeError intentionally carries structured diagnostics by value across the
+// language frontend API; keeping this stable is preferred to boxing each error.
+#![allow(clippy::result_large_err)]
+
 pub mod ast;
 pub mod compiler;
 pub mod error;

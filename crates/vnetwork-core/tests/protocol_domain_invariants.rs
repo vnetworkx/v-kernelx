@@ -466,6 +466,38 @@ fn test_wallet_pop_replay_expiry_revocation_multisig_and_ghost_isolation() {
     let env_ghost = sign_envelope(&outsider, "vector-devnet-invariants", 1, "req_ghost_outsider", 602, &ghost_op);
     assert!(engine.stage_signed_operation(&env_ghost, &ghost_op, "val_1", |b| val_kp.sign(b), 602).is_err());
 
+    // A loan that has already matured cannot be funded retroactively.
+    let expired_loan_id = commit(NetworkOperation::CreateLoan {
+        name: "ExpiredUnfundedLoan".to_string(),
+        token_id: tok.clone(),
+        lender_wallet_id: w_ms.clone(),
+        borrower_wallet_id: w_dst.clone(),
+        principal: 50,
+        collateral: 1,
+        interest_bps: 0,
+        maturity_at_ms: Some(650),
+    });
+    assert!(apply_execute_loan(
+        &mut engine.state,
+        &expired_loan_id,
+        "fund",
+        50,
+        &owner_kp.public_key_hex,
+        650,
+    ).is_err());
+    assert_eq!(engine.state.loans.get(&expired_loan_id).unwrap().status, LoanStatus::Created);
+    let (cancelled, _) = apply_execute_loan(
+        &mut engine.state,
+        &expired_loan_id,
+        "cancel",
+        0,
+        &owner_kp.public_key_hex,
+        651,
+    ).unwrap();
+    assert_eq!(cancelled.status, LoanStatus::Cancelled);
+    assert_eq!(cancelled.collateral_locked, 0);
+    assert!(verify_token_supply_conservation(&engine.state, &tok).unwrap());
+
     // Loan collateral maturity enforcement
     let loan_id = commit(NetworkOperation::CreateLoan {
         name: "TimedLoan".to_string(),
@@ -478,10 +510,13 @@ fn test_wallet_pop_replay_expiry_revocation_multisig_and_ghost_isolation() {
         maturity_at_ms: Some(10_000),
     });
     apply_execute_loan(&mut engine.state, &loan_id, "fund", 100, &owner_kp.public_key_hex, 700).unwrap();
-    // Liquidating before maturity_at_ms (10_000) MUST fail
+    // Further facility draws stop at maturity, even while the loan remains Active.
+    assert!(apply_execute_loan(&mut engine.state, &loan_id, "draw", 10, &owner_kp.public_key_hex, 10_000).is_err());
+    // Liquidation requires the explicit default transition, both before and at maturity.
     assert!(apply_execute_loan(&mut engine.state, &loan_id, "liquidate", 0, &owner_kp.public_key_hex, 9_999).is_err());
-    // Liquidating at maturity seizes collateral atomically with supply conserved
-    let (liq_loan, _) = apply_execute_loan(&mut engine.state, &loan_id, "liquidate", 0, &owner_kp.public_key_hex, 10_000).unwrap();
+    assert!(apply_execute_loan(&mut engine.state, &loan_id, "liquidate", 0, &owner_kp.public_key_hex, 10_000).is_err());
+    apply_execute_loan(&mut engine.state, &loan_id, "default", 0, &owner_kp.public_key_hex, 10_000).unwrap();
+    let (liq_loan, _) = apply_execute_loan(&mut engine.state, &loan_id, "liquidate", 0, &owner_kp.public_key_hex, 10_001).unwrap();
     assert_eq!(liq_loan.status, LoanStatus::Liquidated);
     assert_eq!(liq_loan.collateral_locked, 0);
     assert!(verify_token_supply_conservation(&engine.state, &tok).unwrap());
@@ -680,6 +715,63 @@ fn test_contract_state_and_escrow_execution_and_loan_draw_maturity_guards() {
     assert_eq!(engine.state.contracts.get(&contract_id).unwrap().state_data.get("counter").unwrap(), "3");
     assert_eq!(engine.state.contracts.get(&contract_id).unwrap().escrow_balances.get(&tok).copied(), Some(1_000));
     assert!(verify_token_supply_conservation(&engine.state, &tok).unwrap());
+
+    // Closing a contract must not wrap the sum of its escrow records.
+    let mut overflow_contract_state = engine.state.clone();
+    let (mut overflow_contract, _) = apply_create_contract(
+        &mut overflow_contract_state,
+        "EscrowOverflowClose",
+        None,
+        BTreeMap::new(),
+        vec![serde_json::json!({ "name": "close" })],
+        &owner_kp.public_key_hex,
+        2_064,
+    ).unwrap();
+    overflow_contract.escrow_balances.insert("token-a".to_string(), u128::MAX);
+    overflow_contract.escrow_balances.insert("token-b".to_string(), 1);
+    overflow_contract_state.contracts.insert(
+        overflow_contract.contract_id.clone(),
+        overflow_contract.clone(),
+    );
+    let overflow_state_before = overflow_contract_state.clone();
+    assert!(matches!(
+        apply_execute_contract(
+            &mut overflow_contract_state,
+            &overflow_contract.contract_id,
+            "close",
+            serde_json::json!({}),
+            &owner_kp.public_key_hex,
+            2_065,
+        ),
+        Err(VNetworkError::Validation(_))
+    ));
+    assert_eq!(overflow_contract_state, overflow_state_before);
+
+    // A contract requiring AuthRatio cannot bypass the gate by omitting its Region.
+    let mut no_region_rules = BTreeMap::new();
+    no_region_rules.insert("min_auth_ratio_bps".to_string(), serde_json::json!(5_000));
+    let mut contract_probe_state = engine.state.clone();
+    let (ungated_contract, _) = apply_create_contract(
+        &mut contract_probe_state,
+        "UngatedAuthRatioContract",
+        None,
+        no_region_rules,
+        vec![serde_json::json!({ "name": "increment" })],
+        &owner_kp.public_key_hex,
+        2_065,
+    ).unwrap();
+    assert!(apply_execute_contract(
+        &mut contract_probe_state,
+        &ungated_contract.contract_id,
+        "increment",
+        serde_json::json!({ "key": "counter", "delta": 1 }),
+        &owner_kp.public_key_hex,
+        2_066,
+    ).is_err());
+    assert_eq!(
+        contract_probe_state.contracts.get(&ungated_contract.contract_id).unwrap().execution_count,
+        0,
+    );
 
     // Loan with missing maturity CANNOT liquidate unless defaulted, and partial draw <= principal
     let no_mat_loan = commit(NetworkOperation::CreateLoan {

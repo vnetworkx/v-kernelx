@@ -1,7 +1,10 @@
 """Official Python client for Vector Network HTTP & WebSocket API."""
 
+import hashlib
 import json
+import os
 import re
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -31,23 +34,152 @@ class VectorNetworkError(RuntimeError):
     pass
 
 
+
+def _reserve_durable_nonce(
+    file_path: Path,
+    network_id: str,
+    actor_pubkey: str,
+    minimum_next_nonce: int,
+    restrict_directory: bool,
+) -> int:
+    file_path = Path(file_path).expanduser()
+    directory = file_path.parent
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if restrict_directory:
+        os.chmod(directory, 0o700)
+    lock_path = Path(str(file_path) + ".lock")
+    lock_fd: Optional[int] = None
+
+    for _ in range(400):
+        try:
+            lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            lock_data = json.dumps({"pid": os.getpid(), "created_at_ms": int(time.time() * 1000)}).encode()
+            os.write(lock_fd, lock_data)
+            os.fsync(lock_fd)
+            break
+        except FileExistsError:
+            try:
+                stat = lock_path.stat()
+                if time.time() - stat.st_mtime > 30:
+                    owner_pid: Optional[int] = None
+                    try:
+                        owner = json.loads(lock_path.read_text(encoding="utf-8"))
+                        pid = owner.get("pid")
+                        if type(pid) is int and pid > 0:
+                            owner_pid = pid
+                    except (OSError, ValueError, TypeError):
+                        pass
+                    owner_alive = False
+                    if owner_pid is not None:
+                        try:
+                            os.kill(owner_pid, 0)
+                            owner_alive = True
+                        except PermissionError:
+                            owner_alive = True
+                        except ProcessLookupError:
+                            owner_alive = False
+                    if not owner_alive:
+                        try:
+                            lock_path.unlink()
+                        except FileNotFoundError:
+                            pass
+                        continue
+            except FileNotFoundError:
+                continue
+            time.sleep(0.025)
+
+    if lock_fd is None:
+        raise VectorNetworkError(
+            f"Timed out acquiring durable nonce lock {lock_path}; refusing to risk nonce reuse"
+        )
+
+    try:
+        current = minimum_next_nonce
+        try:
+            stored = json.loads(file_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            stored = None
+        if stored is not None:
+            if (
+                not isinstance(stored, dict)
+                or stored.get("version") != 1
+                or stored.get("network_id") != network_id
+                or stored.get("actor_pubkey") != actor_pubkey
+                or type(stored.get("next_nonce")) is not int
+                or stored["next_nonce"] < 1
+            ):
+                raise VectorNetworkError(f"Invalid or mismatched durable nonce state at {file_path}")
+            current = max(current, stored["next_nonce"])
+
+        if type(current) is not int or current < 1 or current >= (2**53 - 1):
+            raise VectorNetworkError("Request nonce exhausted safe integer range")
+        temp_fd, temp_name = tempfile.mkstemp(prefix=file_path.name + ".tmp-", dir=str(directory))
+        try:
+            if hasattr(os, "fchmod"):
+                os.fchmod(temp_fd, 0o600)
+            else:
+                os.chmod(temp_name, 0o600)
+            with os.fdopen(temp_fd, "w", encoding="utf-8") as temp_file:
+                json.dump(
+                    {
+                        "version": 1,
+                        "network_id": network_id,
+                        "actor_pubkey": actor_pubkey,
+                        "next_nonce": current + 1,
+                    },
+                    temp_file,
+                    separators=(",", ":"),
+                )
+                temp_file.write("\n")
+                temp_file.flush()
+                os.fsync(temp_file.fileno())
+            os.replace(temp_name, file_path)
+            os.chmod(file_path, 0o600)
+        except Exception:
+            try:
+                os.unlink(temp_name)
+            except FileNotFoundError:
+                pass
+            raise
+        return current
+    finally:
+        os.close(lock_fd)
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
 class VectorNetworkClient:
     def __init__(
         self,
         base_url: str,
         identity: ClientIdentity,
         expected_network_id: Optional[str] = None,
+        nonce_store_path: Optional[str] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.identity = identity
         self.expected_network_id = expected_network_id
         self.connected_network_id: Optional[str] = None
         self._nonce = 1
+        self._nonce_store_path = Path(nonce_store_path).expanduser() if nonce_store_path else None
 
     def next_nonce(self) -> int:
-        n = self._nonce
-        self._nonce += 1
-        return n
+        network_id = self._resolved_network_id()
+        actor_pubkey = self.identity.participant_key.public_key_hex
+        key = hashlib.sha256(f"{network_id}::{actor_pubkey}".encode()).hexdigest()
+        use_default_store = self._nonce_store_path is None
+        store_path = self._nonce_store_path or (Path.home() / ".vnetwork" / "nonces" / f"{key}.json")
+        reserved = _reserve_durable_nonce(
+            store_path,
+            network_id,
+            actor_pubkey,
+            self._nonce,
+            use_default_store,
+        )
+        self._nonce = reserved + 1
+        return reserved
 
     def connect(self) -> Dict[str, Any]:
         info = self.get_json("/v1/network/info")

@@ -197,6 +197,10 @@ export type NetworkOperation =
       };
     }
   | {
+      op: "ReinstateParticipant";
+      payload: { target_participant_id: string };
+    }
+  | {
       op: "CreateToken";
       payload: {
         wallet_id: string;

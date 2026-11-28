@@ -1,6 +1,7 @@
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -94,6 +95,38 @@ class PythonSdkSecurityTests(unittest.TestCase):
                 client.load_modules_for_source(f'import "{outside}";\n', proj)
             with self.assertRaises(VectorNetworkError):
                 client.load_modules_for_source('import "escape.vdx";\n', proj)
+
+    def test_durable_nonce_reservations_survive_restart_and_serialize_clients(self):
+        ident = ClientIdentity.from_keys("py-nonce", "11" * 32, "22" * 32)
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "request-nonce.json"
+            clients = [
+                VectorNetworkClient(
+                    "http://127.0.0.1:8080",
+                    ident,
+                    "nonce-network",
+                    nonce_store_path=str(store_path),
+                )
+                for _ in range(2)
+            ]
+            for client in clients:
+                client.connected_network_id = "nonce-network"
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                reserved = sorted(pool.map(lambda client: client.next_nonce(), clients))
+            self.assertEqual(reserved, [1, 2])
+
+            restarted = VectorNetworkClient(
+                "http://127.0.0.1:8080",
+                ident,
+                "nonce-network",
+                nonce_store_path=str(store_path),
+            )
+            restarted.connected_network_id = "nonce-network"
+            self.assertEqual(restarted.next_nonce(), 3)
+            saved = __import__("json").loads(store_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["network_id"], "nonce-network")
+            self.assertEqual(saved["actor_pubkey"], ident.participant_key.public_key_hex)
+            self.assertEqual(saved["next_nonce"], 4)
 
     def test_contracts_loans_and_explorer_methods_exposed(self):
         ident = ClientIdentity.from_keys("py-parity", "11" * 32, "22" * 32)

@@ -1,5 +1,5 @@
 use crate::contracts::{apply_create_contract, apply_execute_contract};
-use crate::identity::{apply_grant_participant_scope, apply_revoke_participant_scope};
+use crate::identity::{apply_grant_participant_scope, apply_reinstate_participant, apply_revoke_participant_scope};
 use crate::loans::{apply_create_loan, apply_execute_loan};
 use crate::region::apply_create_region;
 use crate::space::apply_create_space;
@@ -55,6 +55,27 @@ pub fn apply_network_operation_with_genesis(
 }
 
 pub fn apply_network_operation_with_policy(
+    state: &mut NetworkLedgerState,
+    allow_bootstrap_atlas: bool,
+    op: &NetworkOperation,
+    actor_pubkey: &str,
+    timestamp_ms: u64,
+) -> VResult<TransitionOutcome> {
+    // Operations may touch multiple ledgers (balances, entities, escrow, and
+    // event history). Commit the working state only after every step succeeds.
+    let mut staged = state.clone();
+    let outcome = apply_network_operation_inner(
+        &mut staged,
+        allow_bootstrap_atlas,
+        op,
+        actor_pubkey,
+        timestamp_ms,
+    )?;
+    *state = staged;
+    Ok(outcome)
+}
+
+fn apply_network_operation_inner(
     state: &mut NetworkLedgerState,
     allow_bootstrap_atlas: bool,
     op: &NetworkOperation,
@@ -271,6 +292,21 @@ pub fn apply_network_operation_with_policy(
             outputs.push(format!(
                 "participant scope revoked: {} level={level}",
                 participant.participant_id
+            ));
+            events.push(ev);
+        }
+        NetworkOperation::ReinstateParticipant {
+            target_participant_id,
+        } => {
+            let (participant, node, ev) = apply_reinstate_participant(
+                state,
+                target_participant_id,
+                actor_pubkey,
+                timestamp_ms,
+            )?;
+            outputs.push(format!(
+                "participant reinstated with Network-only membership: {} ({})",
+                participant.participant_id, node.node_id
             ));
             events.push(ev);
         }

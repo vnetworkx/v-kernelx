@@ -70,6 +70,9 @@ pub enum NetworkOperation {
         level: String,
         target_id: Option<String>,
     },
+    ReinstateParticipant {
+        target_participant_id: String,
+    },
     CreateToken {
         wallet_id: String,
         name: String,

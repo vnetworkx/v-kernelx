@@ -101,7 +101,7 @@ pub fn apply_create_contract(
     for v in rules.values() {
         reject_nondeterministic_keys(v)?;
     }
-    for (k, _) in &rules {
+    for k in rules.keys() {
         let low = k.trim().to_ascii_lowercase();
         if matches!(
             low.as_str(),
@@ -287,14 +287,17 @@ pub fn apply_execute_contract(
         )));
     }
     if contract.min_auth_ratio_bps > 0 {
-        if let Some(reg_id) = &contract.region_id {
-            let reg = verify_region_exists(state, reg_id)?;
-            if reg.auth_ratio_bps < contract.min_auth_ratio_bps {
-                return Err(VNetworkError::Authorization(format!(
-                    "region auth_ratio_bps {} < required {}",
-                    reg.auth_ratio_bps, contract.min_auth_ratio_bps
-                )));
-            }
+        let reg_id = contract.region_id.as_deref().ok_or_else(|| {
+            VNetworkError::Authorization(
+                "contract requires a minimum AuthRatio but is not bound to a Region".to_string(),
+            )
+        })?;
+        let reg = verify_region_exists(state, reg_id)?;
+        if reg.auth_ratio_bps < contract.min_auth_ratio_bps {
+            return Err(VNetworkError::Authorization(format!(
+                "region auth_ratio_bps {} < required {}",
+                reg.auth_ratio_bps, contract.min_auth_ratio_bps
+            )));
         }
     }
 
@@ -558,7 +561,16 @@ pub fn apply_execute_contract(
                 "amount": amount.to_string(),
             }));
         } else if matches!(norm_action.as_str(), "deactivate" | "close") {
-            let nonzero_escrow: u128 = contract.escrow_balances.values().copied().sum();
+            let nonzero_escrow = contract.escrow_balances.values().try_fold(
+                0u128,
+                |total, amount| {
+                    total.checked_add(*amount).ok_or_else(|| {
+                        VNetworkError::Validation(
+                            "contract escrow total overflow".to_string(),
+                        )
+                    })
+                },
+            )?;
             if nonzero_escrow > 0 {
                 return Err(VNetworkError::Validation(
                     "cannot close contract while escrow balances remain non-zero".to_string(),

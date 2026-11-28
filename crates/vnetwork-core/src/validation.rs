@@ -142,6 +142,16 @@ pub fn validate_operation_preconditions_with_policy(
             }
             Ok(())
         }
+        NetworkOperation::ReinstateParticipant {
+            target_participant_id,
+        } => {
+            if target_participant_id.trim().is_empty() {
+                return Err(VNetworkError::Validation(
+                    "target_participant_id is required".to_string(),
+                ));
+            }
+            Ok(())
+        }
         NetworkOperation::GrantParticipantScope {
             target_participant_id,
             level,

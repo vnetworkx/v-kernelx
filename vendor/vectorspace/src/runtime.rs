@@ -41,21 +41,26 @@ impl Runtime {
     }
 
     pub fn execute_ops(&mut self, ops: Vec<KernelOp>) -> Result<ExecutionReport, RuntimeError> {
+        // Apply each program to an isolated working copy. Any failure leaves the
+        // externally visible ledger and event history untouched.
+        let mut working_state = self.state.clone();
         let mut outputs = Vec::new();
         let mut event_hashes = Vec::new();
 
         for op in ops {
             match op {
                 KernelOp::Query { expr } => {
-                    let resolved = self.resolve_query(&expr)?;
+                    let view = Runtime { state: working_state.clone() };
+                    let resolved = view.resolve_query(&expr)?;
                     outputs.push(format!("{expr} => {resolved}"));
                 }
                 KernelOp::Record { expr } => {
-                    let resolved = self.resolve_record(&expr)?;
+                    let view = Runtime { state: working_state.clone() };
+                    let resolved = view.resolve_record(&expr)?;
                     outputs.push(format!("{expr} => {resolved}"));
                 }
                 other => {
-                    let result = execute_kernel_op(&mut self.state, other)?;
+                    let result = execute_kernel_op(&mut working_state, other)?;
                     if let Some(out) = result.output {
                         outputs.push(out);
                     }
@@ -66,6 +71,7 @@ impl Runtime {
             }
         }
 
+        self.state = working_state;
         Ok(ExecutionReport {
             outputs,
             events: event_hashes,
@@ -82,7 +88,7 @@ impl Runtime {
         let tail = &parts[1..];
 
         if let Some(vector) = self.state.vectors.get(head) {
-            return Ok(resolve_vector_query(vector, tail));
+            return resolve_vector_query(vector, tail);
         }
         if let Some(wallet) = self.state.wallets.get(head) {
             return Ok(resolve_wallet_query(wallet, tail));
@@ -111,28 +117,28 @@ impl Runtime {
     }
 }
 
-fn resolve_vector_query(vector: &crate::state::VectorState, tail: &[&str]) -> String {
+fn resolve_vector_query(vector: &crate::state::VectorState, tail: &[&str]) -> Result<String, RuntimeError> {
     match tail {
-        [] => format!(
+        [] => Ok(format!(
             "{}:{} {} certification={:?} auth_ratio={}",
             vector.name,
             vector.vector_type.as_str(),
             crate::event::vector_to_string(&vector.components),
             vector.certification,
             vector.auth_ratio
-        ),
-        ["vector"] => crate::event::vector_to_string(&vector.components),
-        ["type"] => vector.vector_type.as_str().to_string(),
-        ["magnitude"] => vector.magnitude().to_string(),
-        ["certification"] => format!("{:?}", vector.certification),
-        ["auth_ratio"] => vector.auth_ratio.clone(),
-        ["owner"] => vector.owner.clone().unwrap_or_else(|| "unbound".to_string()),
-        _ => format!(
+        )),
+        ["vector"] => Ok(crate::event::vector_to_string(&vector.components)),
+        ["type"] => Ok(vector.vector_type.as_str().to_string()),
+        ["magnitude"] => Ok(vector.magnitude()?.to_string()),
+        ["certification"] => Ok(format!("{:?}", vector.certification)),
+        ["auth_ratio"] => Ok(vector.auth_ratio.clone()),
+        ["owner"] => Ok(vector.owner.clone().unwrap_or_else(|| "unbound".to_string())),
+        _ => Ok(format!(
             "{}:{} {}",
             vector.name,
             vector.vector_type.as_str(),
             crate::event::vector_to_string(&vector.components)
-        ),
+        )),
     }
 }
 
@@ -163,4 +169,37 @@ fn resolve_projection_query(proj: &crate::state::ProjectionState, tail: &[&str])
 
 pub fn render_query_output(query: &str, value: &str) -> String {
     format!("{query} => {value}")
+}
+
+
+impl Default for Runtime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+
+#[cfg(test)]
+mod checked_magnitude_query_regressions {
+    use super::Runtime;
+    use crate::ast::VectorType;
+    use crate::state::{CertificationState, VectorState};
+
+    #[test]
+    fn magnitude_query_propagates_overflow_error() {
+        let mut runtime = Runtime::new();
+        runtime.state.vectors.insert(
+            "overflow".to_string(),
+            VectorState {
+                name: "overflow".to_string(),
+                vector_type: VectorType::Free,
+                components: vec![u128::MAX, 1],
+                owner: None,
+                meta: Default::default(),
+                certification: CertificationState::Pending,
+                auth_ratio: "0.0000".to_string(),
+            },
+        );
+        assert!(runtime.resolve_query("overflow.magnitude").is_err());
+    }
 }

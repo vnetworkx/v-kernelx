@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import os from "node:os";
 import { blake3Hex } from "./blake3.js";
 import { canonicalJsonBytes } from "./canonical.js";
 import {
@@ -20,6 +21,98 @@ export * from "./crypto.js";
 
 const IMPORT_RE = /^\s*import\s+"([^"]+)"(?:\s+(?:blake3|sha256)\s+"([^"]+)")?(?:\s+as\s+[A-Za-z0-9_]+)?\s*;/gm;
 const MAX_IMPORT_MODULES = 64;
+
+async function reserveDurableNonce(filePath, networkId, actorPubkey, minimumNextNonce, restrictDirectory) {
+  const dir = path.dirname(filePath);
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  if (restrictDirectory) await fs.chmod(dir, 0o700).catch(() => {});
+  const lockPath = `${filePath}.lock`;
+  let lockHandle = null;
+
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    try {
+      lockHandle = await fs.open(lockPath, "wx", 0o600);
+      await lockHandle.writeFile(JSON.stringify({ pid: process.pid, created_at_ms: Date.now() }));
+      await lockHandle.sync();
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      try {
+        const stat = await fs.stat(lockPath);
+        if (Date.now() - stat.mtimeMs > 30_000) {
+          let ownerPid = null;
+          try {
+            const owner = JSON.parse(await fs.readFile(lockPath, "utf8"));
+            ownerPid = Number.isSafeInteger(owner.pid) ? owner.pid : null;
+          } catch {}
+          let ownerAlive = false;
+          if (ownerPid !== null) {
+            try {
+              process.kill(ownerPid, 0);
+              ownerAlive = true;
+            } catch (probeError) {
+              ownerAlive = probeError.code !== "ESRCH";
+            }
+          }
+          if (!ownerAlive) {
+            await fs.unlink(lockPath).catch(() => {});
+            continue;
+          }
+        }
+      } catch (statError) {
+        if (statError.code === "ENOENT") continue;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  if (!lockHandle) {
+    throw new Error(`Timed out acquiring durable nonce lock ${lockPath}; refusing to risk nonce reuse`);
+  }
+
+  try {
+    let current = minimumNextNonce;
+    try {
+      const stored = JSON.parse(await fs.readFile(filePath, "utf8"));
+      if (
+        stored.version !== 1 ||
+        stored.network_id !== networkId ||
+        stored.actor_pubkey !== actorPubkey ||
+        !Number.isSafeInteger(stored.next_nonce) ||
+        stored.next_nonce < 1
+      ) {
+        throw new Error(`Invalid or mismatched durable nonce state at ${filePath}`);
+      }
+      current = Math.max(current, stored.next_nonce);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+
+    if (!Number.isSafeInteger(current) || current < 1 || current >= Number.MAX_SAFE_INTEGER) {
+      throw new Error("Request nonce exhausted JavaScript's safe integer range");
+    }
+    const nextNonce = current + 1;
+    const tempPath = `${filePath}.tmp-${process.pid}-${crypto.randomUUID()}`;
+    const tempHandle = await fs.open(tempPath, "wx", 0o600);
+    try {
+      await tempHandle.writeFile(JSON.stringify({
+        version: 1,
+        network_id: networkId,
+        actor_pubkey: actorPubkey,
+        next_nonce: nextNonce,
+      }) + "\n");
+      await tempHandle.sync();
+    } finally {
+      await tempHandle.close();
+    }
+    await fs.rename(tempPath, filePath);
+    await fs.chmod(filePath, 0o600).catch(() => {});
+    return current;
+  } finally {
+    await lockHandle.close();
+    await fs.unlink(lockPath).catch(() => {});
+  }
+}
+
 
 export async function loadModulesForSource(sourceBytes, baseDir) {
   const realBase = await fs.realpath(baseDir);
@@ -61,12 +154,24 @@ export async function loadModulesForSource(sourceBytes, baseDir) {
 }
 
 export class VectorNetworkClient {
-  constructor(baseUrl, identity, expectedNetworkId = null) {
+  constructor(baseUrl, identity, expectedNetworkId = null, nonceStorePath = null) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.identity = identity;
     this.expectedNetworkId = expectedNetworkId;
     this.connectedNetworkId = null;
     this.nonce = 1;
+    this.nonceStorePath = nonceStorePath;
+  }
+
+  async reserveNonce() {
+    const networkId = this.resolvedNetworkId();
+    const actorPubkey = this.identity.participant_key.public_key_hex;
+    const key = crypto.createHash("sha256").update(`${networkId}::${actorPubkey}`).digest("hex");
+    const useDefaultStore = !this.nonceStorePath;
+    const storePath = this.nonceStorePath || path.join(os.homedir(), ".vnetwork", "nonces", `${key}.json`);
+    const reserved = await reserveDurableNonce(storePath, networkId, actorPubkey, this.nonce, useDefaultStore);
+    this.nonce = reserved + 1;
+    return reserved;
   }
 
   async connect() {
@@ -143,7 +248,7 @@ export class VectorNetworkClient {
     if (!this.connectedNetworkId) await this.connect();
     const networkId = this.resolvedNetworkId();
     const requestId = `req_${crypto.randomUUID().replace(/-/g, "")}`;
-    const nonce = this.nonce++;
+    const nonce = await this.reserveNonce();
     const signingObj = canonicalProgramSubmitObject({
       actorPubkey: this.identity.participant_key.public_key_hex,
       fileName,
@@ -214,7 +319,7 @@ export class VectorNetworkClient {
     if (!this.connectedNetworkId) await this.connect();
     const networkId = this.resolvedNetworkId();
     const requestId = `req_${crypto.randomUUID().replace(/-/g, "")}`;
-    const nonce = this.nonce++;
+    const nonce = await this.reserveNonce();
     const timestampMs = Date.now();
     const payloadHash = blake3Hex(canonicalJsonBytes(operation));
     const signingBytes = canonicalJsonBytes({

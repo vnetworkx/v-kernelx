@@ -1,9 +1,15 @@
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fmt;
-use std::path::Path;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
 use v_langx::compiler::{compile_source_with_imports, CompiledProgram, FilesystemModuleResolver};
@@ -187,12 +193,139 @@ pub struct NetworkConnectionInfo {
     pub raw: serde_json::Value,
 }
 
+fn reserve_sdk_nonce_file(
+    file_path: &Path,
+    network_id: &str,
+    actor_pubkey: &str,
+    minimum_next_nonce: u64,
+    restrict_directory: bool,
+) -> VResult<u64> {
+    let directory = file_path.parent().ok_or_else(|| {
+        VNetworkError::Storage("durable nonce file has no parent directory".to_string())
+    })?;
+    fs::create_dir_all(directory)
+        .map_err(|e| VNetworkError::Storage(format!("create nonce directory failed: {e}")))?;
+    if restrict_directory {
+        #[cfg(unix)]
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
+            .map_err(|e| VNetworkError::Storage(format!("secure nonce directory failed: {e}")))?;
+    }
+
+    let lock_path = PathBuf::from(format!("{}.lock", file_path.display()));
+    let mut lock_file: Option<File> = None;
+    for _ in 0..400 {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        match options.open(&lock_path) {
+            Ok(file) => {
+                lock_file = Some(file);
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Err(error) => {
+                return Err(VNetworkError::Storage(format!(
+                    "create durable nonce lock failed: {error}"
+                )));
+            }
+        }
+    }
+    let mut lock_file = lock_file.ok_or_else(|| VNetworkError::Storage(format!(
+        "timed out acquiring durable nonce lock {}; refusing to risk nonce reuse",
+        lock_path.display()
+    )))?;
+    writeln!(lock_file, "{{\"pid\":{}}}", std::process::id())
+        .map_err(|e| VNetworkError::Storage(format!("write nonce lock failed: {e}")))?;
+    lock_file.sync_all()
+        .map_err(|e| VNetworkError::Storage(format!("sync nonce lock failed: {e}")))?;
+
+    let result = (|| -> VResult<u64> {
+        let mut current = minimum_next_nonce;
+        match File::open(file_path) {
+            Ok(mut file) => {
+                let mut raw = String::new();
+                file.read_to_string(&mut raw)
+                    .map_err(|e| VNetworkError::Storage(format!("read nonce state failed: {e}")))?;
+                let stored: serde_json::Value = serde_json::from_str(&raw)
+                    .map_err(|e| VNetworkError::Storage(format!("parse nonce state failed: {e}")))?;
+                let stored_nonce = stored.get("next_nonce").and_then(|v| v.as_u64());
+                if stored.get("version").and_then(|v| v.as_u64()) != Some(1)
+                    || stored.get("network_id").and_then(|v| v.as_str()) != Some(network_id)
+                    || stored.get("actor_pubkey").and_then(|v| v.as_str()) != Some(actor_pubkey)
+                    || stored_nonce.map_or(true, |value| value == 0)
+                {
+                    return Err(VNetworkError::Storage(
+                        "durable nonce state does not match network/participant or is invalid".to_string()
+                    ));
+                }
+                current = current.max(stored_nonce.unwrap());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(VNetworkError::Storage(format!("read nonce state failed: {error}")));
+            }
+        }
+        let next = current.checked_add(1).ok_or_else(|| {
+            VNetworkError::Validation("request nonce exhausted u64 range".to_string())
+        })?;
+        let encoded = serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "network_id": network_id,
+            "actor_pubkey": actor_pubkey,
+            "next_nonce": next,
+        }))
+        .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
+        let temp_path = PathBuf::from(format!(
+            "{}.tmp-{}-{}",
+            file_path.display(),
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut temp = options.open(&temp_path)
+            .map_err(|e| VNetworkError::Storage(format!("create nonce temp file failed: {e}")))?;
+        let write_result = (|| -> std::io::Result<()> {
+            temp.write_all(&encoded)?;
+            temp.write_all(b"\n")?;
+            temp.sync_all()
+        })();
+        if let Err(error) = write_result {
+            let _ = fs::remove_file(&temp_path);
+            return Err(VNetworkError::Storage(format!("write nonce temp file failed: {error}")));
+        }
+        drop(temp);
+        if let Err(error) = fs::rename(&temp_path, file_path) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(VNetworkError::Storage(format!("replace nonce state failed: {error}")));
+        }
+        #[cfg(unix)]
+        fs::set_permissions(file_path, fs::Permissions::from_mode(0o600))
+            .map_err(|e| VNetworkError::Storage(format!("secure nonce file failed: {e}")))?;
+        if let Ok(dir) = File::open(directory) {
+            let _ = dir.sync_all();
+        }
+        Ok(current)
+    })();
+
+    drop(lock_file);
+    let _ = fs::remove_file(&lock_path);
+    result
+}
+
 pub struct VectorNetworkClient {
     base_url: String,
     expected_network_id: Option<String>,
     http: reqwest::Client,
     identity: ClientIdentity,
     nonce: AtomicU64,
+    nonce_store_path: Option<PathBuf>,
+    nonce_lock: Mutex<()>,
     connected_network_id: Option<String>,
 }
 
@@ -205,6 +338,8 @@ impl VectorNetworkClient {
             http: reqwest::Client::new(),
             identity,
             nonce: AtomicU64::new(1),
+            nonce_store_path: None,
+            nonce_lock: Mutex::new(()),
             connected_network_id: None,
         }
     }
@@ -218,8 +353,52 @@ impl VectorNetworkClient {
         &self.identity
     }
 
+    /// Configure a durable nonce file. When omitted, a per-network and
+    /// per-participant file under ~/.vnetwork/nonces is used.
+    pub fn with_nonce_store(mut self, path: impl Into<PathBuf>) -> Self {
+        self.nonce_store_path = Some(path.into());
+        self
+    }
+
+    /// Reserve and persist a unique nonce before constructing a signed request.
+    pub fn reserve_nonce(&self) -> VResult<u64> {
+        let network_id = self.resolved_network_id()?;
+        let actor_pubkey = &self.identity.participant_key.public_key_hex;
+        let store_path = match &self.nonce_store_path {
+            Some(path) => path.clone(),
+            None => {
+                let home = std::env::var_os("HOME")
+                    .or_else(|| std::env::var_os("USERPROFILE"))
+                    .map(PathBuf::from)
+                    .ok_or_else(|| VNetworkError::Storage(
+                        "cannot resolve home directory for durable nonce store".to_string()
+                    ))?;
+                let key = hex::encode(Sha256::digest(
+                    format!("{network_id}::{actor_pubkey}").as_bytes(),
+                ));
+                home.join(".vnetwork").join("nonces").join(format!("{key}.json"))
+            }
+        };
+        let _guard = self.nonce_lock.lock().map_err(|_| {
+            VNetworkError::Storage("durable nonce mutex poisoned".to_string())
+        })?;
+        let reserved = reserve_sdk_nonce_file(
+            &store_path,
+            &network_id,
+            actor_pubkey,
+            self.nonce.load(Ordering::SeqCst),
+            self.nonce_store_path.is_none(),
+        )?;
+        self.nonce.store(reserved.checked_add(1).ok_or_else(|| {
+            VNetworkError::Validation("request nonce exhausted u64 range".to_string())
+        })?, Ordering::SeqCst);
+        Ok(reserved)
+    }
+
+    /// Source-compatible convenience wrapper. Prefer reserve_nonce() in new
+    /// code so storage errors can be propagated instead of panicking.
     pub fn next_nonce(&self) -> u64 {
-        self.nonce.fetch_add(1, Ordering::SeqCst)
+        self.reserve_nonce().expect("failed to reserve durable request nonce")
     }
 
     pub fn set_nonce(&self, next: u64) {
@@ -449,7 +628,7 @@ impl VectorNetworkClient {
         }
         let network_id = self.resolved_network_id()?;
         let request_id = format!("req_{}", uuid::Uuid::new_v4().simple());
-        let nonce = self.next_nonce();
+        let nonce = self.reserve_nonce()?;
         let source_hash = blake3_hex(source_bytes.as_bytes());
         let file_kind = if file_name.ends_with(".vdx") { "vdx" } else { "vx" };
         let mut module_hashes = BTreeMap::new();
@@ -566,7 +745,7 @@ impl VectorNetworkClient {
         }
         let network_id = self.resolved_network_id()?;
         let request_id = format!("req_{}", uuid::Uuid::new_v4().simple());
-        let nonce = self.next_nonce();
+        let nonce = self.reserve_nonce()?;
         let timestamp_ms = now_ms();
         let payload_hash = blake3_hex(&canonical_json_bytes(&operation)?);
         let sign_bytes = SignedRequestEnvelope::canonical_signing_bytes(
@@ -922,4 +1101,68 @@ async fn parse_json_response(resp: reqwest::Response) -> VResult<serde_json::Val
         )));
     }
     Ok(val)
+}
+
+
+#[cfg(test)]
+mod durable_nonce_regressions {
+    use super::{ClientIdentity, VectorNetworkClient};
+    use std::path::PathBuf;
+
+    fn temp_nonce_path(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "vnetwork-sdk-rust-{label}-{}-{}.json",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ))
+    }
+
+    fn client(identity: ClientIdentity, path: PathBuf) -> VectorNetworkClient {
+        let mut client = VectorNetworkClient::new("http://127.0.0.1:8080", identity)
+            .with_expected_network("nonce-test-network")
+            .with_nonce_store(path);
+        client.connected_network_id = Some("nonce-test-network".to_string());
+        client
+    }
+
+    #[test]
+    fn nonce_reservations_survive_client_restart() {
+        let identity = ClientIdentity::generate("rust-nonce-test");
+        let path = temp_nonce_path("restart");
+        let first = client(identity.clone(), path.clone());
+        assert_eq!(first.reserve_nonce().expect("first nonce"), 1);
+        assert_eq!(first.reserve_nonce().expect("second nonce"), 2);
+
+        let restarted = client(identity, path.clone());
+        assert_eq!(restarted.reserve_nonce().expect("restarted nonce"), 3);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(format!("{}.lock", path.display()));
+    }
+
+    #[test]
+    fn separate_clients_do_not_reserve_duplicate_nonces() {
+        let identity = ClientIdentity::generate("rust-nonce-concurrency");
+        let path = temp_nonce_path("concurrent");
+        let first = client(identity.clone(), path.clone());
+        let second = client(identity, path.clone());
+        let a = first.reserve_nonce().expect("first reservation");
+        let b = second.reserve_nonce().expect("second reservation");
+        assert_ne!(a, b);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(format!("{}.lock", path.display()));
+    }
+
+    #[test]
+    fn durable_nonce_state_is_bound_to_network_and_participant() {
+        let identity = ClientIdentity::generate("rust-nonce-binding");
+        let path = temp_nonce_path("binding");
+        let original = client(identity.clone(), path.clone());
+        assert_eq!(original.reserve_nonce().unwrap(), 1);
+
+        let mut wrong_network = client(identity, path.clone());
+        wrong_network.connected_network_id = Some("different-network".to_string());
+        assert!(wrong_network.reserve_nonce().is_err());
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(format!("{}.lock", path.display()));
+    }
 }

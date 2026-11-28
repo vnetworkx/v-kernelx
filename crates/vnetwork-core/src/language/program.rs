@@ -1,4 +1,3 @@
-use crate::authorization::record_nonce_and_request;
 use crate::events::events_for_entity;
 use crate::ledger::build_ledger_proof_report;
 use crate::reconstruction::reconstruct_entity;
@@ -79,7 +78,19 @@ pub fn execute_compiled_program_staged(
     }
 
     if let Some((actor, req_id, nonce)) = nonce_binding {
-        record_nonce_and_request(&mut staged, req_id, actor, nonce);
+        let nonce_event = crate::authorization::commit_request_nonce_event(
+            &mut staged,
+            req_id,
+            actor,
+            nonce,
+            timestamp_ms,
+        )
+        .map_err(|error| ProgramFailure {
+            failed_operation_index: compiled.ops.len().saturating_sub(1),
+            error,
+            lifecycle_status: ProgramLifecycleStatus::Rejected,
+        })?;
+        generated_events.push(nonce_event);
     }
 
     staged.height = base_state.height.checked_add(1).ok_or_else(|| ProgramFailure {
@@ -168,6 +179,26 @@ fn execute_single_compiled_op(
                 .and_then(|v| v.as_str())
                 .unwrap_or("participant");
             outs.push(format!("participant scope verified: {pname}"));
+        }
+        "PARTICIPANT_REINSTATE" => {
+            let target_participant_id = op
+                .params
+                .get("participant_id")
+                .or_else(|| op.params.get("participant"))
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| VNetworkError::Validation(
+                    "PARTICIPANT_REINSTATE requires participant_id".to_string(),
+                ))?
+                .to_string();
+            let net_op = NetworkOperation::ReinstateParticipant {
+                target_participant_id,
+            };
+            let outcome = apply_network_operation_with_genesis(
+                state, genesis, &net_op, actor_pubkey, timestamp_ms,
+            )?;
+            events.extend(outcome.events);
+            created.extend(outcome.created_entities);
+            outs.extend(outcome.outputs);
         }
         "SPACE_CREATE" => {
             let sym = op

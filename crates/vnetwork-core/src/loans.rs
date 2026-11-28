@@ -224,7 +224,68 @@ pub fn apply_execute_loan(
     let norm = action.trim().to_ascii_lowercase();
 
     match norm.as_str() {
+        "cancel" => {
+            if loan.status != LoanStatus::Created || loan.disbursed_amount != 0 {
+                return Err(VNetworkError::Validation(
+                    "only an unfunded Created loan can be cancelled".to_string(),
+                ));
+            }
+            let borrower_authorized = borrower
+                .verify_permission(
+                    actor_pubkey,
+                    WalletPermission::LoanInteract,
+                    Some(&loan.token_id),
+                    None,
+                    timestamp_ms,
+                )
+                .is_ok();
+            let lender_authorized = lender
+                .verify_permission(
+                    actor_pubkey,
+                    WalletPermission::LoanInteract,
+                    Some(&loan.token_id),
+                    None,
+                    timestamp_ms,
+                )
+                .is_ok();
+            if !borrower_authorized && !lender_authorized {
+                return Err(VNetworkError::Authorization(
+                    "loan cancellation requires lender or borrower LoanInteract authorization"
+                        .to_string(),
+                ));
+            }
+            if loan.collateral_locked > 0 {
+                let escrow_id = loan_escrow_wallet_id(&loan.loan_id);
+                let collateral = loan.collateral_locked;
+                let collateral_token = if loan.collateral_token_id.is_empty() {
+                    loan.token_id.as_str()
+                } else {
+                    loan.collateral_token_id.as_str()
+                };
+                move_loan_escrow_balance(
+                    state,
+                    collateral_token,
+                    &escrow_id,
+                    &loan.borrower_wallet_id,
+                    collateral,
+                    timestamp_ms,
+                )?;
+                loan.collateral_locked = 0;
+                if !verify_token_supply_conservation(state, collateral_token)? {
+                    return Err(VNetworkError::Validation(
+                        "token supply conservation check failed releasing cancelled loan collateral"
+                            .to_string(),
+                    ));
+                }
+            }
+            loan.status = LoanStatus::Cancelled;
+        }
         "fund" => {
+            if loan.maturity_at_ms.is_some_and(|maturity| timestamp_ms >= maturity) {
+                return Err(VNetworkError::Validation(
+                    "cannot fund a loan at or after its maturity".to_string(),
+                ));
+            }
             if loan.status != LoanStatus::Created {
                 return Err(VNetworkError::Validation("loan already funded".to_string()));
             }
@@ -264,6 +325,11 @@ pub fn apply_execute_loan(
             loan.status = LoanStatus::Active;
         }
         "draw" => {
+            if loan.maturity_at_ms.is_some_and(|maturity| timestamp_ms >= maturity) {
+                return Err(VNetworkError::Validation(
+                    "cannot draw against a loan at or after its maturity".to_string(),
+                ));
+            }
             if loan.status != LoanStatus::Created && loan.status != LoanStatus::Active {
                 return Err(VNetworkError::Validation(
                     "loan cannot be drawn after settlement or liquidation".to_string(),
@@ -442,18 +508,11 @@ pub fn apply_execute_loan(
                 None,
                 timestamp_ms,
             )?;
-            let matured = loan.maturity_at_ms.is_some_and(|mat| timestamp_ms >= mat);
-            if !matured && !loan.defaulted {
-                return Err(VNetworkError::Validation(match loan.maturity_at_ms {
-                    Some(mat) => format!(
-                        "cannot liquidate loan `{}` before maturity_at_ms {mat}",
-                        loan.name
-                    ),
-                    None => format!(
-                        "cannot liquidate loan `{}` without maturity_at_ms or active default",
-                        loan.name
-                    ),
-                }));
+            if !loan.defaulted {
+                return Err(VNetworkError::Validation(
+                    "loan must complete the explicit default transition before liquidation"
+                        .to_string(),
+                ));
             }
             if loan.collateral_locked > 0 {
                 let escrow_id = loan_escrow_wallet_id(&loan.loan_id);
@@ -507,7 +566,7 @@ pub fn apply_execute_loan(
         &state.network_id,
         "loan",
         &loan.loan_id,
-        &format!("LOAN_{}", norm.to_ascii_uppercase()),
+        format!("LOAN_{}", norm.to_ascii_uppercase()),
         actor_pubkey,
         state.logical_clock,
         timestamp_ms,

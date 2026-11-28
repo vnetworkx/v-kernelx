@@ -13,6 +13,7 @@ import {
   loadModulesForSource as jsLoadModules,
   signEd25519 as jsSignEd25519,
   verifyEd25519 as jsVerifyEd25519,
+  VectorNetworkClient as JsVectorNetworkClient,
 } from "../../sdks/javascript/index.js";
 import {
   browserKeypairFromPrivateHex as jsBrowserFromPriv,
@@ -24,6 +25,7 @@ import {
   generateBrowserKeypair as jsBrowserGenerateKeypair,
   signBrowserEd25519 as jsBrowserSign,
   verifyBrowserEd25519 as jsBrowserVerify,
+  BrowserVectorNetworkClient as JsBrowserVectorNetworkClient,
 } from "../../sdks/javascript/browser.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -180,6 +182,79 @@ test("Large u128 decimal string amounts preserve exact precision without precisi
       amount: "12.34",
     }),
   );
+});
+
+test("Node SDK persists and serializes request nonce reservations across client restarts", async () => {
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "vnetwork_sdk_nonce_"));
+  try {
+    const identity = JsIdentity.fromKeys(
+      "nonce-test",
+      "1111111111111111111111111111111111111111111111111111111111111111",
+      "2222222222222222222222222222222222222222222222222222222222222222",
+    );
+    const storePath = path.join(tmpRoot, "request-nonce.json");
+    const clients = [
+      new JsVectorNetworkClient("http://127.0.0.1:8080", identity, "nonce-test-network", storePath),
+      new JsVectorNetworkClient("http://127.0.0.1:8080", identity, "nonce-test-network", storePath),
+    ];
+    for (const client of clients) client.connectedNetworkId = "nonce-test-network";
+    const reserved = await Promise.all(clients.map((client) => client.reserveNonce()));
+    assert.deepEqual(reserved.sort((a, b) => a - b), [1, 2]);
+
+    const restarted = new JsVectorNetworkClient(
+      "http://127.0.0.1:8080", identity, "nonce-test-network", storePath,
+    );
+    restarted.connectedNetworkId = "nonce-test-network";
+    assert.equal(await restarted.reserveNonce(), 3);
+
+    const saved = JSON.parse(await fs.readFile(storePath, "utf8"));
+    assert.equal(saved.version, 1);
+    assert.equal(saved.network_id, "nonce-test-network");
+    assert.equal(saved.actor_pubkey, identity.participant_key.public_key_hex);
+    assert.equal(saved.next_nonce, 4);
+  } finally {
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test("Browser SDK persists nonce reservations across tabs and page restarts", async () => {
+  const identity = JsIdentity.fromKeys(
+    "browser-nonce-test",
+    "1111111111111111111111111111111111111111111111111111111111111111",
+    "2222222222222222222222222222222222222222222222222222222222222222",
+  );
+  const values = new Map();
+  const storage = {
+    getItem(key) { return values.has(key) ? values.get(key) : null; },
+    setItem(key, value) { values.set(key, String(value)); },
+  };
+  let lockQueue = Promise.resolve();
+  const lockManager = {
+    request(_name, callback) {
+      const result = lockQueue.then(callback);
+      lockQueue = result.then(() => undefined, () => undefined);
+      return result;
+    },
+  };
+  const clients = [
+    new JsBrowserVectorNetworkClient("https://node.invalid", identity, "browser-network", storage, lockManager),
+    new JsBrowserVectorNetworkClient("https://node.invalid", identity, "browser-network", storage, lockManager),
+  ];
+  for (const client of clients) client.connectedNetworkId = "browser-network";
+  const reserved = await Promise.all(clients.map((client) => client.reserveNonce()));
+  assert.deepEqual(reserved.sort((a, b) => a - b), [1, 2]);
+
+  const restarted = new JsBrowserVectorNetworkClient(
+    "https://node.invalid", identity, "browser-network", storage, lockManager,
+  );
+  restarted.connectedNetworkId = "browser-network";
+  assert.equal(await restarted.reserveNonce(), 3);
+  const entry = [...values.entries()][0];
+  const saved = JSON.parse(entry[1]);
+  assert.equal(saved.version, 1);
+  assert.equal(saved.network_id, "browser-network");
+  assert.equal(saved.actor_pubkey, identity.participant_key.public_key_hex);
+  assert.equal(saved.next_nonce, 4);
 });
 
 test("Negative crypto parity: rejects weak pubkeys, tampered fields, and malformed signatures", async () => {

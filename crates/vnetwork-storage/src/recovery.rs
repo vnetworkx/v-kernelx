@@ -167,7 +167,7 @@ pub fn verify_wal_exact_alignment(
     for (idx, (wal_ev, cert_ev)) in wal_events.iter().zip(expected_events.iter()).enumerate() {
         if wal_ev.event_id != cert_ev.event_id
             || wal_ev.event_hash != cert_ev.event_hash
-            || wal_ev.prev_event_hash != cert_ev.prev_event_hash
+            || wal_ev.parent_hashes != cert_ev.parent_hashes
             || wal_ev.sequence != cert_ev.sequence
             || wal_ev.payload_hash != cert_ev.payload_hash
         {

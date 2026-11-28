@@ -11,7 +11,26 @@ on:
 permissions:
   contents: read
 
+# Every PR push creates a new head. Cancel obsolete queued/running matrices so
+# the newest source revision, not a backlog of superseded commits, is verified.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  rust-format:
+    name: Rust formatting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          components: rustfmt
+      - name: Format check
+        run: cargo fmt --all --check
+
   rust:
     name: Rust checks (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -29,7 +48,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@e97e2d88513c861a588a5d810c54d1e7f93a895d # stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           components: clippy, rustfmt
 
@@ -40,12 +59,6 @@ jobs:
       - name: Cache Rust dependencies
         uses: swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.7.5
 
-      - name: Format check
-        run: cargo fmt --all --check
-
-      - name: Lint
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-
       - name: Check
         run: cargo check --workspace --all-targets --all-features
 
@@ -55,6 +68,9 @@ jobs:
       - name: Build release workspace
         run: cargo build --workspace --release
 
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
   cross-sdk-and-scripts:
     name: Cross-language parity & config validation
     runs-on: ubuntu-latest
@@ -62,19 +78,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Setup Node.js
-        uses: actions/setup-node@39370e3970a6d050c4088adace56679d69b0f14e # v4.1.0
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.1.0
         with:
           node-version: "22"
       - name: Setup Bun
-        uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.0.2
         with:
           bun-version: latest
       - name: Setup Python
-        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.3.0
         with:
           python-version: "3.11"
       - name: Setup Go
-        uses: actions/setup-go@0a12ed9d6a96ab950c8f028ed4e21a23da42c642 # v5.2.0
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.2.0
         with:
           go-version: "1.22"
           cache: false

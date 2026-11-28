@@ -144,18 +144,13 @@ impl WalletKeyBinding {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(tag = "mode", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum WalletReceivePolicy {
+    #[default]
     Open,
     Restricted { allowed_senders: BTreeSet<String> },
     Frozen,
-}
-
-impl Default for WalletReceivePolicy {
-    fn default() -> Self {
-        Self::Open
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -349,6 +344,7 @@ pub enum LoanStatus {
     Active,
     Repaid,
     Liquidated,
+    Cancelled,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

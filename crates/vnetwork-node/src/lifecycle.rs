@@ -502,20 +502,24 @@ pub fn build_genesis_from_config(cfg: &NodeConfig, identity: &NodeIdentity) -> V
     Ok(g)
 }
 
+fn requires_shared_genesis(profile: NetworkProfile) -> bool {
+    matches!(profile, NetworkProfile::Testnet | NetworkProfile::Production)
+}
+
 pub async fn start_node_runtime(
     cfg: NodeConfig,
     explicit_genesis: Option<GenesisConfig>,
     shutdown: ShutdownSignal,
 ) -> Result<(NodeHandle, tokio::task::JoinHandle<()>), Box<dyn std::error::Error + Send + Sync>> {
     cfg.validate()?;
-    if cfg.profile == NetworkProfile::Production
+    if requires_shared_genesis(cfg.profile)
         && explicit_genesis.is_none()
         && cfg.genesis_validators.is_empty()
     {
-        return Err(Box::new(VNetworkError::Validation(
-            "PRODUCTION profile requires an explicit genesis_file or configured genesis_validators"
-                .to_string(),
-        )));
+        return Err(Box::new(VNetworkError::Validation(format!(
+            "{} profile requires a shared genesis_file or a configured genesis_validators set; per-node key-derived genesis is development-only",
+            cfg.profile.as_str()
+        ))));
     }
     let passphrase = cfg.resolve_key_passphrase()?;
     let id_opts = crate::identity::NodeIdentityLoadOptions {
@@ -1778,5 +1782,19 @@ impl<'a, A, B> OptPair<&'a A, &'a B> for (&'a Option<A>, &'a Option<B>) {
             (Some(a), Some(b)) => Some((a, b)),
             _ => None,
         }
+    }
+}
+
+
+#[cfg(test)]
+mod shared_genesis_policy_tests {
+    use super::requires_shared_genesis;
+    use vnetwork_types::NetworkProfile;
+
+    #[test]
+    fn testnet_and_production_require_shared_genesis() {
+        assert!(requires_shared_genesis(NetworkProfile::Testnet));
+        assert!(requires_shared_genesis(NetworkProfile::Production));
+        assert!(!requires_shared_genesis(NetworkProfile::Development));
     }
 }

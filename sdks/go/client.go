@@ -3,12 +3,14 @@ package vnetworksdk
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"sync"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -24,6 +26,7 @@ type Client struct {
 	ExpectedNetworkID  string
 	ConnectedNetworkID string
 	HTTPClient         *http.Client
+	NonceStorePath     string
 	nonce              atomic.Uint64
 }
 
@@ -38,8 +41,160 @@ func NewClient(baseURL string, identity ClientIdentity, expectedNetworkID string
 	return c
 }
 
+// ReserveNonce persists the next nonce before returning it, so a lost HTTP
+// response cannot cause the next process to reuse a nonce the node committed.
+func (c *Client) ReserveNonce() (uint64, error) {
+	networkID, err := c.resolvedNetworkID()
+	if err != nil {
+		return 0, err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return 0, fmt.Errorf("resolve user home for durable nonce store: %w", err)
+	}
+	storePath := c.NonceStorePath
+	if storePath == "" {
+		digest := sha256.Sum256([]byte(networkID + "::" + c.Identity.ParticipantKey.PublicKeyHex))
+		storePath = filepath.Join(home, ".vnetwork", "nonces", hex.EncodeToString(digest[:])+".json")
+	}
+	reserved, err := reserveDurableNonce(
+		storePath,
+		networkID,
+		c.Identity.ParticipantKey.PublicKeyHex,
+		c.nonce.Load(),
+		c.NonceStorePath == "",
+	)
+	if err != nil {
+		return 0, err
+	}
+	c.nonce.Store(reserved + 1)
+	return reserved, nil
+}
+
+// NextNonce is retained for source compatibility. New write code should
+// prefer ReserveNonce and handle its persistence error explicitly.
 func (c *Client) NextNonce() uint64 {
-	return c.nonce.Add(1) - 1
+	nonce, err := c.ReserveNonce()
+	if err != nil {
+		panic(fmt.Sprintf("failed to reserve durable Vector Network request nonce: %v", err))
+	}
+	return nonce
+}
+
+var nonceStoreLocks sync.Map
+
+func reserveDurableNonce(
+	filePath, networkID, actorPubkey string,
+	minimumNextNonce uint64,
+	restrictDirectory bool,
+) (uint64, error) {
+	filePath, err := filepath.Abs(filePath)
+	if err != nil {
+		return 0, fmt.Errorf("resolve nonce store path: %w", err)
+	}
+	dir := filepath.Dir(filePath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return 0, fmt.Errorf("create nonce store directory: %w", err)
+	}
+	if restrictDirectory {
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return 0, fmt.Errorf("secure nonce store directory: %w", err)
+		}
+	}
+	lockValue, _ := nonceStoreLocks.LoadOrStore(filePath, &sync.Mutex{})
+	mutex := lockValue.(*sync.Mutex)
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	lockPath := filePath + ".lock"
+	var lockFile *os.File
+	for attempt := 0; attempt < 400; attempt++ {
+		lockFile, err = os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			break
+		}
+		if !os.IsExist(err) {
+			return 0, fmt.Errorf("create durable nonce lock: %w", err)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if lockFile == nil {
+		return 0, fmt.Errorf("timed out acquiring durable nonce lock %s; refusing to risk nonce reuse", lockPath)
+	}
+	defer func() {
+		_ = lockFile.Close()
+		_ = os.Remove(lockPath)
+	}()
+	if _, err := fmt.Fprintf(lockFile, "{\"pid\":%d}", os.Getpid()); err != nil {
+		return 0, fmt.Errorf("write durable nonce lock: %w", err)
+	}
+	if err := lockFile.Sync(); err != nil {
+		return 0, fmt.Errorf("sync durable nonce lock: %w", err)
+	}
+
+	type nonceRecord struct {
+		Version     int    `json:"version"`
+		NetworkID   string `json:"network_id"`
+		ActorPubkey string `json:"actor_pubkey"`
+		NextNonce   uint64 `json:"next_nonce"`
+	}
+	current := minimumNextNonce
+	raw, readErr := os.ReadFile(filePath)
+	if readErr == nil {
+		var stored nonceRecord
+		if err := json.Unmarshal(raw, &stored); err != nil {
+			return 0, fmt.Errorf("parse durable nonce state: %w", err)
+		}
+		if stored.Version != 1 || stored.NetworkID != networkID ||
+			stored.ActorPubkey != actorPubkey || stored.NextNonce == 0 {
+			return 0, fmt.Errorf("durable nonce state does not match network/participant or is invalid")
+		}
+		if stored.NextNonce > current {
+			current = stored.NextNonce
+		}
+	} else if !os.IsNotExist(readErr) {
+		return 0, fmt.Errorf("read durable nonce state: %w", readErr)
+	}
+	if current == 0 || current == ^uint64(0) {
+		return 0, fmt.Errorf("request nonce exhausted uint64 range")
+	}
+	next := nonceRecord{Version: 1, NetworkID: networkID, ActorPubkey: actorPubkey, NextNonce: current + 1}
+	encoded, err := json.Marshal(next)
+	if err != nil {
+		return 0, fmt.Errorf("encode durable nonce state: %w", err)
+	}
+	temp, err := os.CreateTemp(dir, filepath.Base(filePath)+".tmp-*")
+	if err != nil {
+		return 0, fmt.Errorf("create temporary nonce state: %w", err)
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if err := temp.Chmod(0o600); err != nil {
+		_ = temp.Close()
+		return 0, fmt.Errorf("secure temporary nonce state: %w", err)
+	}
+	if _, err := temp.Write(append(encoded, '\n')); err != nil {
+		_ = temp.Close()
+		return 0, fmt.Errorf("write temporary nonce state: %w", err)
+	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return 0, fmt.Errorf("sync temporary nonce state: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return 0, fmt.Errorf("close temporary nonce state: %w", err)
+	}
+	if err := os.Rename(tempPath, filePath); err != nil {
+		return 0, fmt.Errorf("atomically replace durable nonce state: %w", err)
+	}
+	if err := os.Chmod(filePath, 0o600); err != nil {
+		return 0, fmt.Errorf("secure durable nonce state: %w", err)
+	}
+	if dirHandle, err := os.Open(dir); err == nil {
+		_ = dirHandle.Sync()
+		_ = dirHandle.Close()
+	}
+	return current, nil
 }
 
 func newRequestID() string {
@@ -223,7 +378,10 @@ func (c *Client) SubmitProgramWithParams(fileName, sourceBytes string, modules m
 		executionParams = map[string]any{}
 	}
 	requestID := newRequestID()
-	nonce := c.NextNonce()
+	nonce, err := c.ReserveNonce()
+	if err != nil {
+		return sub, err
+	}
 	signingBytes, err := CanonicalJSONBytes(CanonicalProgramSubmitMap(
 		c.Identity.ParticipantKey.PublicKeyHex,
 		fileName,
@@ -325,7 +483,10 @@ func (c *Client) SubmitOperation(operation map[string]any) (map[string]any, erro
 		return nil, err
 	}
 	requestID := newRequestID()
-	nonce := c.NextNonce()
+	nonce, err := c.ReserveNonce()
+	if err != nil {
+		return nil, err
+	}
 	timestampMs := uint64(time.Now().UnixMilli())
 	opBytes, err := CanonicalJSONBytes(operation)
 	if err != nil {
