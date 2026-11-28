@@ -204,6 +204,15 @@ pub fn validate_proposal_against_state(
         return Ok(());
     }
 
+    // A participant join is the only unsigned-binding exception and was
+    // independently authenticated and re-executed above. Every other proposal
+    // must carry an actor-authenticated operation (or a verified .vx bundle).
+    if proposal.nonce_binding.is_none() && proposal.program_source_bundle.is_none() {
+        return Err(VNetworkError::Consensus(
+            "proposal is missing an authenticated operation binding".to_string(),
+        ));
+    }
+
     if let Some((bound_actor, bound_request, bound_nonce)) = proposal.nonce_binding.as_ref() {
         if proposal.program_source_bundle.is_none() {
             let intent_events: Vec<&LedgerEvent> = proposal
@@ -357,15 +366,9 @@ pub fn validate_proposal_against_state(
             }
         }
         None => {
-            if proposal.events.iter().any(|event| {
-                event.operation == "REQUEST_NONCE_COMMIT"
-                    || event.operation == "SIGNED_OPERATION_INTENT"
-                    || event.operation == "PARTICIPANT_JOIN_INTENT"
-            }) {
-                return Err(VNetworkError::Consensus(
-                    "proposal contains a signed-request event without its required binding".to_string(),
-                ));
-            }
+            return Err(VNetworkError::Consensus(
+                "proposal is missing an authenticated operation binding".to_string(),
+            ));
         }
     }
     staged.height = proposal.height;
