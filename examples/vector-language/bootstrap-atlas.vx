@@ -23,7 +23,7 @@ wallet create AtlasDistributionWallet in "ATLAS" {
     name = "Atlas Distribution Wallet";
 }
 
-token create ATLAS in "AtlasTreasuryWallet" {
+token create AtlasToken in "AtlasTreasuryWallet" {
     name = "ATLAS TOKEN";
     symbol = "ATLAS";
     dimensions = 3;
