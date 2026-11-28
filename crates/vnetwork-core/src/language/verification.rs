@@ -14,7 +14,7 @@ pub fn validator_verify_program_bundle(
     proposal: &ConsensusProposal,
     actor_pubkey: &str,
 ) -> VResult<()> {
-    let (bound_actor, _, _) = proposal.nonce_binding.as_ref().ok_or_else(|| {
+    let (bound_actor, bound_request_id, bound_nonce) = proposal.nonce_binding.as_ref().ok_or_else(|| {
         VNetworkError::Consensus(
             "program proposal missing mandatory nonce_binding actor commitment".to_string(),
         )
@@ -30,9 +30,6 @@ pub fn validator_verify_program_bundle(
             "program proposal is missing the submitter's authenticated signature".to_string(),
         )
     })?;
-    let (_, bound_request_id, bound_nonce) = proposal.nonce_binding.as_ref().ok_or_else(|| {
-        VNetworkError::Consensus("program proposal missing nonce binding".to_string())
-    })?;
     let signed_request = SubmitProgramRequest {
         file_name: bundle.file_name.clone(),
         source_bytes: bundle.source_bytes.clone(),
@@ -45,6 +42,16 @@ pub fn validator_verify_program_bundle(
         execution_params: bundle.execution_params.clone(),
     };
     signed_request.verify_signature()?;
+
+    let expected_program_id = derive_program_id(&bundle.source_hash, actor_pubkey, *bound_nonce);
+    if proposal.program_id.as_deref() != Some(expected_program_id.as_str())
+        || proposal.tx_id.as_deref() != Some(expected_program_id.as_str())
+        || proposal.operation_scope != format!("VX_PROGRAM:{}", bundle.file_name)
+    {
+        return Err(VNetworkError::Consensus(
+            "program proposal identity/scope does not match the signed submission".to_string(),
+        ));
+    }
     if bundle.language_version != v_langx::compiler::LANGUAGE_VERSION
         || bundle.compiler_version != v_langx::compiler::COMPILER_VERSION
     {
