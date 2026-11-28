@@ -20,5 +20,7 @@ Clients construct a canonical `SubmitProgramRequest` signing over ALL 12 fields:
 2. `COMPILED` — Real `v-langx` frontend compiled source and verified all `.vdx` dependency hashes.
 3. `STAGED` — Executed on cloned ledger state without mutating externally visible committed state.
 4. `AWAITING_CONSENSUS` — Broadcast as `ConsensusProposal` with the full `ProgramSourceBundle`, the actor's original Ed25519 submitter signature, and `nonce_binding`; the signature is bound into the proposal digest and each validator independently reconstructs/verifies the signed request before recompiling and re-executing.
+
+**Upgrade note:** Proposal version 2 is not wire-compatible with version 1. Upgrade all validators as a coordinated consensus change; do not run a mixed-version validator quorum.
 5. `COMMITTED` — Quorum Certificate (`>= 6667 bps` active validator weight with valid epoch & `validator_set_hash`) verified and persisted atomically to the storage WAL before committed state or finality events are published.
 6. `REJECTED` / `FAILED` — Zero partial state committed; `failed_operation_index` and structured `error_message` preserved for diagnostics.
