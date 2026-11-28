@@ -208,7 +208,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     {
         return Err(Box::new(VNetworkError::ProfileMismatch(
             "PRODUCTION profile cannot use a devnet network_id".to_string(),
-        )));
+        ))
+            as Box<dyn std::error::Error + Send + Sync>);
     }
     let genesis =
         GenesisConfig::for_profile(profile, &args.network_id, "Vector Network", Vec::new());
