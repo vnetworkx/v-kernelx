@@ -45,9 +45,14 @@ import hashlib, pathlib, re, sys, tomllib
 
 root = pathlib.Path(sys.argv[1])
 root_cargo = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))
-members = root_cargo.get("workspace", {}).get("members", [])
-if "vendor/vectorspace" not in members:
-    raise SystemExit("ERROR: Cargo.toml workspace missing vendor/vectorspace member")
+workspace = root_cargo.get("workspace", {})
+members = workspace.get("members", [])
+excluded = workspace.get("exclude", [])
+if "vendor/vectorspace" not in members and "vendor/vectorspace" not in excluded:
+    raise SystemExit(
+        "ERROR: vendor/vectorspace must be a workspace member or explicitly excluded "
+        "to preserve its pinned source from workspace-wide formatting"
+    )
 
 vendor_cargo = tomllib.loads((root / "vendor" / "vectorspace" / "Cargo.toml").read_text(encoding="utf-8"))
 vendor_version = vendor_cargo["package"]["version"]
