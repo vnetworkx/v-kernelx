@@ -274,9 +274,21 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
             ghost: false,
         },
     );
-    let reg_id = commit_op(
+    // Network governance explicitly delegates the first Space scope before
+    // the participant creates a Region within that space.
+    commit_op(
         &mut engine,
         2,
+        NetworkOperation::GrantParticipantScope {
+            target_participant_id: derive_participant_id(&actor_kp.public_key_hex),
+            level: "SPACE".to_string(),
+            target_id: Some(spc_id.clone()),
+            expires_at_ms: None,
+        },
+    );
+    let reg_id = commit_op(
+        &mut engine,
+        3,
         NetworkOperation::CreateRegion {
             space_id: spc_id,
             name: "PolicyRegion".to_string(),
@@ -289,7 +301,7 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
     );
     let w_a = commit_op(
         &mut engine,
-        3,
+        4,
         NetworkOperation::CreateWallet {
             region_id: reg_id.clone(),
             name: "SenderWallet".to_string(),
@@ -299,7 +311,7 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
     );
     let w_b = commit_op(
         &mut engine,
-        4,
+        5,
         NetworkOperation::CreateWallet {
             region_id: reg_id,
             name: "ReceiverWallet".to_string(),
@@ -309,7 +321,7 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
     );
     let tok_id = commit_op(
         &mut engine,
-        5,
+        6,
         NetworkOperation::CreateToken {
             wallet_id: w_a.clone(),
             name: "Policy Token".to_string(),
@@ -329,7 +341,7 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
     // Freeze receiver wallet -> transfer MUST fail
     commit_op(
         &mut engine,
-        6,
+        9,
         NetworkOperation::UpdateWalletReceivePolicy {
             wallet_id: w_b.clone(),
             mode: "FROZEN".to_string(),
@@ -346,7 +358,7 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
     let env_f = sign_operation(
         &actor_kp,
         "vector-devnet-1",
-        7,
+        8,
         "req_frozen",
         300,
         &frozen_xfer,
@@ -368,7 +380,7 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
     let env_r = sign_operation(
         &actor_kp,
         "vector-devnet-1",
-        8,
+        9,
         "req_restricted",
         301,
         &frozen_xfer,
@@ -387,7 +399,7 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
             allowed_senders: vec![w_a.clone()],
         },
     );
-    commit_op(&mut engine, 9, frozen_xfer);
+    commit_op(&mut engine, 10, frozen_xfer);
     assert_eq!(
         engine
             .state
@@ -402,7 +414,7 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
     // Collateralized loan fund + repay uses protocol settlement transfer without Send permission issues
     let loan_id = commit_op(
         &mut engine,
-        10,
+        11,
         NetworkOperation::CreateLoan {
             name: "SettlementLoan".to_string(),
             token_id: tok_id.clone(),
