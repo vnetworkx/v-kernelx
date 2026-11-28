@@ -240,9 +240,7 @@ pub fn eval_context(expr: &ContextExpr) -> Context {
     let mut context = Context::new();
     for arg in &expr.args {
         if let Some(name) = &arg.name {
-            context
-                .fields
-                .insert(name.clone(), value_from_expr(&arg.value));
+            context.fields.insert(name.clone(), value_from_expr(&arg.value));
         }
     }
     context
@@ -355,10 +353,7 @@ pub fn compile_program(program: &Program) -> Result<CompilationUnit, RuntimeErro
             Statement::Reconstruct(r) => {
                 ops.push(KernelOp::Reconstruct {
                     target: r.target.clone(),
-                    projection_id: r
-                        .projection_id
-                        .clone()
-                        .unwrap_or_else(|| "history".to_string()),
+                    projection_id: r.projection_id.clone().unwrap_or_else(|| "history".to_string()),
                 });
             }
             Statement::Query(q) => {
