@@ -592,3 +592,106 @@ fn validator_reexecutes_and_accepts_a_valid_signed_participant_join() {
     assert_eq!(proposal.events[1].operation, "PARTICIPANT_JOIN");
     validate_proposal_against_state(&engine.state, &genesis, &membership, &proposal).unwrap();
 }
+
+
+#[test]
+fn unbound_proposal_cannot_inject_participant_scope() {
+    let (validator_keys, validators) = make_validators(4, 1);
+    let genesis = GenesisConfig::for_profile(
+        NetworkProfile::Testnet,
+        "unbound-proposal-regression",
+        "Unbound proposal regression",
+        validators.clone(),
+    );
+    let membership =
+        ValidatorMembership::try_new(validators.clone(), DEFAULT_BFT_QUORUM_BPS).unwrap();
+    let state = NetworkLedgerState::try_new(&genesis).unwrap();
+    let pre_state_root = state.compute_state_root().unwrap();
+
+    // Construct a hash-valid event that directly inserts an attacker-created
+    // Network governance grant. The old generic replay fallback accepted this
+    // because it checked event integrity and the resulting state root, but did
+    // not re-run the signed operation's authorization rules.
+    let attacker = KeypairMaterial::generate("untrusted-participant");
+    let forged_participant = ParticipantRecord {
+        participant_id: "prt_forged".to_string(),
+        public_key_hex: attacker.public_key_hex.clone(),
+        node_id: "nod_forged".to_string(),
+        node_pubkey_hex: attacker.public_key_hex.clone(),
+        display_name: "forged participant".to_string(),
+        node_kind: NodeKind::FullNode,
+        status: ParticipationStatus::Active,
+        scope: ParticipationScope {
+            levels: [ParticipationLevel::Network].into_iter().collect(),
+            grants: vec![ScopeGrant {
+                level: ParticipationLevel::Network,
+                target_id: None,
+                granted_at_ms: 2,
+                grantor_pubkey: attacker.public_key_hex.clone(),
+                expires_at_ms: None,
+                authorization_basis: "network_governance".to_string(),
+                revoked: false,
+            }],
+            validator_eligible: false,
+        },
+        joined_at_ms: 2,
+        last_seen_ms: 2,
+    };
+    let payload = serde_json::json!({ "participant": forged_participant });
+    let forged_event = LedgerEvent::build(
+        1,
+        Vec::new(),
+        state.network_id.clone(),
+        "participant",
+        "prt_forged",
+        "PARTICIPANT_SCOPE_GRANT",
+        attacker.public_key_hex.clone(),
+        state.logical_clock + 1,
+        2,
+        payload.clone(),
+        pre_state_root.clone(),
+        blake3_hex(&canonical_json_bytes(&payload).unwrap()),
+    )
+    .unwrap();
+
+    let mut forged_post_state = state.clone();
+    vnetwork_core::replay::apply_event_to_state(&mut forged_post_state, &forged_event).unwrap();
+    forged_post_state.height = 1;
+    let post_state_root = forged_post_state.compute_state_root().unwrap();
+
+    let mut proposal = ConsensusProposal {
+        proposal_id: String::new(),
+        proposal_version: PROPOSAL_VERSION,
+        network_id: state.network_id.clone(),
+        genesis_commitment: state.genesis_commitment.clone(),
+        protocol_version: state.protocol_version.clone(),
+        height: 1,
+        round: 1,
+        epoch: state.validator_epoch,
+        validator_set_hash: membership.validator_set_hash().unwrap(),
+        consensus_parameters_hash: state.consensus_parameters_hash.clone(),
+        proposer_validator_id: validators[0].validator_id.clone(),
+        parent_commitment: state.expected_parent_commitment(),
+        pre_state_root,
+        post_state_root,
+        proposal_digest: String::new(),
+        operation_scope: "PARTICIPANT_SCOPE_GRANT".to_string(),
+        events: vec![forged_event],
+        program_id: None,
+        tx_id: None,
+        program_source_bundle: None,
+        nonce_binding: None,
+        execution_params: Default::default(),
+        timestamp_ms: 2,
+        proposer_signature: String::new(),
+    };
+    proposal.finalize_digest_and_id().unwrap();
+    proposal.proposer_signature = validator_keys[0]
+        .sign(&proposal.canonical_signing_bytes().unwrap())
+        .unwrap();
+
+    assert!(
+        validate_proposal_against_state(&state, &genesis, &membership, &proposal).is_err(),
+        "validators must reject event-only proposals that lack an authenticated operation"
+    );
+}
