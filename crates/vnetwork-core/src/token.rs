@@ -577,12 +577,13 @@ pub fn apply_drain_token(
     staged.balances.insert(key, after.clone());
 
     let mut updated_token = token;
-    updated_token.total_supply = updated_token
-        .total_supply
-        .checked_sub(amount)
-        .ok_or_else(|| {
-            VNetworkError::Validation("token total_supply underflow on drain".to_string())
-        })?;
+    updated_token.total_supply =
+        updated_token
+            .total_supply
+            .checked_sub(amount)
+            .ok_or_else(|| {
+                VNetworkError::Validation("token total_supply underflow on drain".to_string())
+            })?;
     updated_token.version = updated_token
         .version
         .checked_add(1)
