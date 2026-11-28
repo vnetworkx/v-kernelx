@@ -300,21 +300,35 @@ fn can_authorize_join_scope(
         return true;
     }
 
-    // Preserve the existing genesis onboarding path, but never treat validator
-    // status alone as ongoing authority. Genesis authorization is an explicit,
-    // signed, one-time join grant and remains subject to consensus commitment.
-    level == ParticipationLevel::Network
-        && state.height == 0
+    // Genesis delegation is a one-time, signed bootstrap exception. It is
+    // available only before the first participant exists and never turns
+    // validator status into ongoing delegation authority.
+    let is_empty_genesis = state.height == 0
         && state.participants.is_empty()
         && auth.target_id.is_none()
-        && auth
-            .authorization_basis
-            .eq_ignore_ascii_case("genesis_governance")
         && state.validators.iter().any(|validator| {
             validator.active
                 && validator.joined_epoch == state.validator_epoch
                 && validator.validator_pubkey_hex == auth.grantor_pubkey
-        })
+        });
+    if !is_empty_genesis {
+        return false;
+    }
+
+    match level {
+        // Only an explicit genesis_governance grant confers Network admin.
+        ParticipationLevel::Network => auth
+            .authorization_basis
+            .eq_ignore_ascii_case("genesis_governance"),
+        // Explicit genesis_validator_delegation may assign the initial
+        // wildcard hierarchy scopes to the first participant only.
+        ParticipationLevel::Space
+        | ParticipationLevel::Region
+        | ParticipationLevel::Wallet
+        | ParticipationLevel::Token => auth
+            .authorization_basis
+            .eq_ignore_ascii_case("genesis_validator_delegation"),
+    }
 }
 
 pub fn verify_and_register_participant(
@@ -935,6 +949,73 @@ mod onboarding_regressions {
             &state,
             &authorization,
             ParticipationLevel::Network,
+            1,
+        ));
+    }
+
+    #[test]
+    fn genesis_validator_delegation_is_one_time_and_scope_limited() {
+        let (state, validator) = test_state();
+        let mut authorization = SignedScopeAuthorization {
+            target_participant_pubkey: "initial-participant".to_string(),
+            grantor_pubkey: validator.public_key_hex.clone(),
+            scopes: vec![
+                ParticipationLevel::Space,
+                ParticipationLevel::Region,
+                ParticipationLevel::Wallet,
+                ParticipationLevel::Token,
+            ],
+            target_id: None,
+            expires_at_ms: None,
+            authorization_basis: "genesis_validator_delegation".to_string(),
+            signature: String::new(),
+        };
+        for level in [
+            ParticipationLevel::Space,
+            ParticipationLevel::Region,
+            ParticipationLevel::Wallet,
+            ParticipationLevel::Token,
+        ] {
+            assert!(can_authorize_join_scope(&state, &authorization, level, 1));
+        }
+        assert!(!can_authorize_join_scope(
+            &state,
+            &authorization,
+            ParticipationLevel::Network,
+            1,
+        ));
+
+        authorization.authorization_basis = "genesis_governance".to_string();
+        assert!(can_authorize_join_scope(
+            &state,
+            &authorization,
+            ParticipationLevel::Network,
+            1,
+        ));
+        assert!(!can_authorize_join_scope(
+            &state,
+            &authorization,
+            ParticipationLevel::Space,
+            1,
+        ));
+
+        let mut occupied_state = state.clone();
+        let joined = KeypairMaterial::generate("first-genesis-participant");
+        add_governance_participant(&mut occupied_state, &joined);
+        authorization.authorization_basis = "genesis_validator_delegation".to_string();
+        assert!(!can_authorize_join_scope(
+            &occupied_state,
+            &authorization,
+            ParticipationLevel::Space,
+            1,
+        ));
+
+        let mut later_state = state.clone();
+        later_state.height = 1;
+        assert!(!can_authorize_join_scope(
+            &later_state,
+            &authorization,
+            ParticipationLevel::Space,
             1,
         ));
     }
