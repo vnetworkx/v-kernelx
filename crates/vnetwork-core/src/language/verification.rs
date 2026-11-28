@@ -1,5 +1,6 @@
 use crate::language::adapter::compile_vx_source;
 use crate::language::program::execute_compiled_program_staged;
+use crate::language::submission::SubmitProgramRequest;
 use crate::state::{GenesisConfig, NetworkLedgerState};
 use std::collections::BTreeMap;
 use vnetwork_types::*;
@@ -23,6 +24,27 @@ pub fn validator_verify_program_bundle(
             "program actor_pubkey `{actor_pubkey}` does not match proposal nonce_binding `{bound_actor}`"
         )));
     }
+
+    let submitter_signature = bundle.submitter_signature.as_ref().ok_or_else(|| {
+        VNetworkError::Authorization(
+            "program proposal is missing the submitter's authenticated signature".to_string(),
+        )
+    })?;
+    let (_, bound_request_id, bound_nonce) = proposal.nonce_binding.as_ref().ok_or_else(|| {
+        VNetworkError::Consensus("program proposal missing nonce binding".to_string())
+    })?;
+    let signed_request = SubmitProgramRequest {
+        file_name: bundle.file_name.clone(),
+        source_bytes: bundle.source_bytes.clone(),
+        modules: bundle.resolved_module_sources.clone(),
+        actor_pubkey: bound_actor.clone(),
+        network_id: state.network_id.clone(),
+        request_id: bound_request_id.clone(),
+        nonce: *bound_nonce,
+        signature: submitter_signature.clone(),
+        execution_params: bundle.execution_params.clone(),
+    };
+    signed_request.verify_signature()?;
     if bundle.language_version != v_langx::compiler::LANGUAGE_VERSION
         || bundle.compiler_version != v_langx::compiler::COMPILER_VERSION
     {
