@@ -878,7 +878,7 @@ ghost token create GhostTokNet {
     max_supply = 5000;
 }
 certify "GhostRegNet" with ctx(op="cert", space="network");
-drain token "GhostTokNet" amount 250;
+drain "GhostTokNet" by 250;
 "#;
     let req = sign_program_req(
         "ghost_and_certify.vx",
