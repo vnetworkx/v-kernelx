@@ -897,7 +897,7 @@ mod onboarding_regressions {
         let (mut state, validator) = test_state();
         let authorization = SignedScopeAuthorization {
             target_participant_pubkey: "participant".to_string(),
-            grantor_pubkey: validator.public_key_hex,
+            grantor_pubkey: validator.public_key_hex.clone(),
             scopes: vec![ParticipationLevel::Network],
             target_id: None,
             expires_at_ms: None,
