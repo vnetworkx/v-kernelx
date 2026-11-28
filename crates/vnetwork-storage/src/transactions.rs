@@ -56,11 +56,16 @@ pub(crate) fn quarantine_bytes(
     bytes: &[u8],
 ) -> VResult<String> {
     let qdir = data_dir.join("forensic_quarantine");
-    fs::create_dir_all(&qdir).map_err(|e| {
-        VNetworkError::Storage(format!("create forensic_quarantine failed: {e}"))
-    })?;
+    fs::create_dir_all(&qdir)
+        .map_err(|e| VNetworkError::Storage(format!("create forensic_quarantine failed: {e}")))?;
     let seq = STORAGE_TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let dest = qdir.join(format!("{}_{}_{}_{}.partial", now_ms(), seq, tag, orig_name));
+    let dest = qdir.join(format!(
+        "{}_{}_{}_{}.partial",
+        now_ms(),
+        seq,
+        tag,
+        orig_name
+    ));
     atomic_write_bytes(&dest, bytes)?;
     Ok(dest.display().to_string())
 }
@@ -76,7 +81,11 @@ impl ConsensusWal {
         }
     }
 
-    pub fn append(&self, proposal: &ConsensusProposal, certificate: &QuorumCertificate) -> VResult<()> {
+    pub fn append(
+        &self,
+        proposal: &ConsensusProposal,
+        certificate: &QuorumCertificate,
+    ) -> VResult<()> {
         let rec = CommittedProposalRecord {
             proposal: proposal.clone(),
             certificate: certificate.clone(),
@@ -85,13 +94,17 @@ impl ConsensusWal {
             .create(true)
             .append(true)
             .open(&self.path)
-            .map_err(|e| VNetworkError::Storage(format!("open consensus_commits.wal failed: {e}")))?;
-        let line = serde_json::to_string(&rec)
-            .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
-        writeln!(file, "{line}")
-            .map_err(|e| VNetworkError::Storage(format!("write consensus_commits.wal failed: {e}")))?;
-        file.sync_all()
-            .map_err(|e| VNetworkError::Storage(format!("sync consensus_commits.wal failed: {e}")))?;
+            .map_err(|e| {
+                VNetworkError::Storage(format!("open consensus_commits.wal failed: {e}"))
+            })?;
+        let line =
+            serde_json::to_string(&rec).map_err(|e| VNetworkError::Serialization(e.to_string()))?;
+        writeln!(file, "{line}").map_err(|e| {
+            VNetworkError::Storage(format!("write consensus_commits.wal failed: {e}"))
+        })?;
+        file.sync_all().map_err(|e| {
+            VNetworkError::Storage(format!("sync consensus_commits.wal failed: {e}"))
+        })?;
         Ok(())
     }
 
@@ -99,8 +112,9 @@ impl ConsensusWal {
         if !self.path.exists() {
             return Ok(Vec::new());
         }
-        let file = File::open(&self.path)
-            .map_err(|e| VNetworkError::Storage(format!("read consensus_commits.wal failed: {e}")))?;
+        let file = File::open(&self.path).map_err(|e| {
+            VNetworkError::Storage(format!("read consensus_commits.wal failed: {e}"))
+        })?;
         let reader = BufReader::new(file);
         let mut out = Vec::new();
         for (idx, line) in reader.lines().enumerate() {
@@ -110,7 +124,10 @@ impl ConsensusWal {
                 continue;
             }
             let rec: CommittedProposalRecord = serde_json::from_str(trimmed).map_err(|e| {
-                VNetworkError::Storage(format!("corrupt consensus_commits.wal line {}: {e}", idx + 1))
+                VNetworkError::Storage(format!(
+                    "corrupt consensus_commits.wal line {}: {e}",
+                    idx + 1
+                ))
             })?;
             out.push(rec);
         }
@@ -127,8 +144,9 @@ impl ConsensusWal {
         if !self.path.exists() {
             return Ok((Vec::new(), Vec::new()));
         }
-        let raw_bytes = fs::read(&self.path)
-            .map_err(|e| VNetworkError::Storage(format!("read consensus_commits.wal failed: {e}")))?;
+        let raw_bytes = fs::read(&self.path).map_err(|e| {
+            VNetworkError::Storage(format!("read consensus_commits.wal failed: {e}"))
+        })?;
         if raw_bytes.is_empty() {
             return Ok((Vec::new(), Vec::new()));
         }
@@ -151,9 +169,13 @@ impl ConsensusWal {
                         if trimmed.is_empty() {
                             continue;
                         }
-                        let rec: CommittedProposalRecord = serde_json::from_str(trimmed).map_err(|e| {
-                            VNetworkError::Storage(format!("corrupt consensus_commits.wal line {}: {e}", idx + 1))
-                        })?;
+                        let rec: CommittedProposalRecord =
+                            serde_json::from_str(trimmed).map_err(|e| {
+                                VNetworkError::Storage(format!(
+                                    "corrupt consensus_commits.wal line {}: {e}",
+                                    idx + 1
+                                ))
+                            })?;
                         out.push(rec);
                     }
                     let q = quarantine_bytes(
@@ -238,7 +260,9 @@ pub(crate) fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> VResult<()> {
             .create_new(true)
             .write(true)
             .open(&tmp)
-            .map_err(|e| VNetworkError::Storage(format!("create exclusive tmp {:?} failed: {e}", tmp)))?;
+            .map_err(|e| {
+                VNetworkError::Storage(format!("create exclusive tmp {:?} failed: {e}", tmp))
+            })?;
         f.write_all(bytes)
             .map_err(|e| VNetworkError::Storage(format!("write {:?} failed: {e}", tmp)))?;
         f.sync_all()
@@ -261,7 +285,10 @@ pub(crate) fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> VResult<()> {
             _ => Path::new("."),
         };
         let dir = File::open(parent_dir).map_err(|e| {
-            VNetworkError::Storage(format!("open parent dir {:?} for fsync failed: {e}", parent_dir))
+            VNetworkError::Storage(format!(
+                "open parent dir {:?} for fsync failed: {e}",
+                parent_dir
+            ))
         })?;
         dir.sync_all().map_err(|e| {
             VNetworkError::Storage(format!("fsync parent dir {:?} failed: {e}", parent_dir))

@@ -1,5 +1,7 @@
 use crate::contracts::{apply_create_contract, apply_execute_contract};
-use crate::identity::{apply_grant_participant_scope, apply_reinstate_participant, apply_revoke_participant_scope};
+use crate::identity::{
+    apply_grant_participant_scope, apply_reinstate_participant, apply_revoke_participant_scope,
+};
 use crate::loans::{apply_create_loan, apply_execute_loan};
 use crate::region::apply_create_region;
 use crate::space::apply_create_space;
@@ -113,7 +115,10 @@ fn apply_network_operation_inner(
                 id: space.space_id.clone(),
                 name: space.name.clone(),
             });
-            outputs.push(format!("space created: {} ({})", space.name, space.space_id));
+            outputs.push(format!(
+                "space created: {} ({})",
+                space.name, space.space_id
+            ));
             events.push(ev);
         }
         NetworkOperation::CreateRegion {
@@ -149,7 +154,10 @@ fn apply_network_operation_inner(
                 id: region.region_id.clone(),
                 name: region.name.clone(),
             });
-            outputs.push(format!("region created: {} ({})", region.name, region.region_id));
+            outputs.push(format!(
+                "region created: {} ({})",
+                region.name, region.region_id
+            ));
             events.push(ev);
         }
         NetworkOperation::CreateWallet {
@@ -175,7 +183,10 @@ fn apply_network_operation_inner(
                 id: wallet.wallet_id.clone(),
                 name: wallet.name.clone(),
             });
-            outputs.push(format!("wallet created: {} ({})", wallet.name, wallet.wallet_id));
+            outputs.push(format!(
+                "wallet created: {} ({})",
+                wallet.name, wallet.wallet_id
+            ));
             events.push(ev);
         }
         NetworkOperation::AuthorizeWalletKey {
@@ -412,8 +423,14 @@ fn apply_network_operation_inner(
             wallet_id,
             amount,
         } => {
-            let (bal, ev) =
-                apply_drain_token(state, token_id, wallet_id, *amount, actor_pubkey, timestamp_ms)?;
+            let (bal, ev) = apply_drain_token(
+                state,
+                token_id,
+                wallet_id,
+                *amount,
+                actor_pubkey,
+                timestamp_ms,
+            )?;
             outputs.push(format!(
                 "drain: wallet={} token={} remaining={}",
                 bal.wallet_id, bal.token_id, bal.vector.token
@@ -534,14 +551,8 @@ fn apply_network_operation_inner(
             action,
             amount,
         } => {
-            let (loan, mut evs) = apply_execute_loan(
-                state,
-                loan_id,
-                action,
-                *amount,
-                actor_pubkey,
-                timestamp_ms,
-            )?;
+            let (loan, mut evs) =
+                apply_execute_loan(state, loan_id, action, *amount, actor_pubkey, timestamp_ms)?;
             outputs.push(format!(
                 "loan executed: {} action={} status={:?}",
                 loan.name, action, loan.status

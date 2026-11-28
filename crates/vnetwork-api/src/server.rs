@@ -59,9 +59,15 @@ pub fn build_router(
         .route("/v1/nodes/:node_id", get(routes::nodes::get_node))
         .route("/v1/nodes/:node_id/status", get(routes::nodes::node_status))
         .route("/v1/nodes/connect", post(routes::nodes::connect_node))
-        .route("/v1/participants/challenge", post(routes::participants::challenge))
+        .route(
+            "/v1/participants/challenge",
+            post(routes::participants::challenge),
+        )
         .route("/v1/participants/join", post(routes::participants::join))
-        .route("/v1/participants/scope", post(routes::participants::manage_scope))
+        .route(
+            "/v1/participants/scope",
+            post(routes::participants::manage_scope),
+        )
         .route(
             "/v1/participants/:participant_id",
             get(routes::participants::get_participant),
@@ -71,10 +77,22 @@ pub fn build_router(
             get(routes::participants::get_participant_scope),
         )
         .route("/v1/language/parse", post(routes::language::parse_source))
-        .route("/v1/language/compile", post(routes::language::compile_source))
-        .route("/v1/language/validate", post(routes::language::validate_source))
-        .route("/v1/programs/submit", post(routes::programs::submit_program))
-        .route("/v1/programs/:program_id", get(routes::programs::get_program))
+        .route(
+            "/v1/language/compile",
+            post(routes::language::compile_source),
+        )
+        .route(
+            "/v1/language/validate",
+            post(routes::language::validate_source),
+        )
+        .route(
+            "/v1/programs/submit",
+            post(routes::programs::submit_program),
+        )
+        .route(
+            "/v1/programs/:program_id",
+            get(routes::programs::get_program),
+        )
         .route(
             "/v1/programs/:program_id/status",
             get(routes::programs::get_program_status),
@@ -85,19 +103,29 @@ pub fn build_router(
         .route("/v1/regions/:region_id", get(routes::regions::get_region))
         .route("/v1/wallets", get(routes::wallets::list_wallets))
         .route("/v1/wallets/keys", post(routes::wallets::manage_wallet_key))
-        .route("/v1/wallets/policy", post(routes::wallets::update_wallet_receive_policy))
+        .route(
+            "/v1/wallets/policy",
+            post(routes::wallets::update_wallet_receive_policy),
+        )
         .route("/v1/wallets/:wallet_id", get(routes::wallets::get_wallet))
         .route("/v1/tokens", get(routes::tokens::list_tokens))
         .route("/v1/tokens/:token_id", get(routes::tokens::get_token))
-        .route("/v1/tokens/:token_id/supply", get(routes::tokens::token_supply))
-        .route("/v1/transactions", post(routes::transactions::submit_transaction))
+        .route(
+            "/v1/tokens/:token_id/supply",
+            get(routes::tokens::token_supply),
+        )
+        .route(
+            "/v1/transactions",
+            post(routes::transactions::submit_transaction),
+        )
         .route(
             "/v1/transactions/:transaction_id",
             get(routes::transactions::get_transaction),
         )
         .route(
             "/v1/contracts",
-            get(routes::contracts::list_contracts).post(routes::contracts::create_or_execute_contract),
+            get(routes::contracts::list_contracts)
+                .post(routes::contracts::create_or_execute_contract),
         )
         .route(
             "/v1/contracts/:contract_id",
@@ -114,7 +142,10 @@ pub fn build_router(
             "/v1/ledger/replay",
             get(routes::ledgers::verify_replay).post(routes::ledgers::verify_replay),
         )
-        .route("/v1/consensus/status", get(routes::consensus::consensus_status))
+        .route(
+            "/v1/consensus/status",
+            get(routes::consensus::consensus_status),
+        )
         .route(
             "/v1/consensus/certificates",
             get(routes::consensus::list_certificates),
@@ -127,7 +158,10 @@ pub fn build_router(
             "/v1/reconstruction/verify",
             post(routes::reconstruction::verify_reconstruction),
         )
-        .route("/v1/explorer/network", get(routes::explorer::explorer_network))
+        .route(
+            "/v1/explorer/network",
+            get(routes::explorer::explorer_network),
+        )
         .route("/v1/ws", get(ws_events_handler))
         .layer(DefaultBodyLimit::max(max_body_bytes))
         .layer(build_cors_layer())
@@ -233,4 +267,3 @@ mod tests {
         assert_eq!(mixed[1].to_str().ok(), Some("http://localhost:3000"));
     }
 }
-

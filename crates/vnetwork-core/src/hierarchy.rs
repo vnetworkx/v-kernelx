@@ -14,7 +14,9 @@ pub fn verify_space_exists<'a>(
                 .values()
                 .find(|s| s.name.eq_ignore_ascii_case(space_id_or_name))
         })
-        .ok_or_else(|| VNetworkError::Hierarchy(format!("parent Space `{space_id_or_name}` does not exist")))
+        .ok_or_else(|| {
+            VNetworkError::Hierarchy(format!("parent Space `{space_id_or_name}` does not exist"))
+        })
 }
 
 pub fn verify_region_exists<'a>(
@@ -32,7 +34,11 @@ pub fn verify_region_exists<'a>(
                         .is_some_and(|p| p.eq_ignore_ascii_case(region_id_or_name))
             })
         })
-        .ok_or_else(|| VNetworkError::Hierarchy(format!("parent Region `{region_id_or_name}` does not exist")))
+        .ok_or_else(|| {
+            VNetworkError::Hierarchy(format!(
+                "parent Region `{region_id_or_name}` does not exist"
+            ))
+        })
 }
 
 pub fn verify_wallet_exists<'a>(
@@ -48,7 +54,11 @@ pub fn verify_wallet_exists<'a>(
                 .values()
                 .find(|w| w.name.eq_ignore_ascii_case(wallet_id_or_name))
         })
-        .ok_or_else(|| VNetworkError::Hierarchy(format!("parent Wallet `{wallet_id_or_name}` does not exist")))
+        .ok_or_else(|| {
+            VNetworkError::Hierarchy(format!(
+                "parent Wallet `{wallet_id_or_name}` does not exist"
+            ))
+        })
 }
 
 pub fn verify_token_exists<'a>(
@@ -64,5 +74,7 @@ pub fn verify_token_exists<'a>(
                     || t.name.eq_ignore_ascii_case(token_id_or_symbol)
             })
         })
-        .ok_or_else(|| VNetworkError::NotFound(format!("Token `{token_id_or_symbol}` does not exist")))
+        .ok_or_else(|| {
+            VNetworkError::NotFound(format!("Token `{token_id_or_symbol}` does not exist"))
+        })
 }

@@ -33,11 +33,13 @@ pub fn execute_compiled_program_staged(
     timestamp_ms: u64,
     nonce_binding: Option<(&str, &str, u64)>,
 ) -> Result<StagedProgramExecution, ProgramFailure> {
-    let pre_state_root = base_state.compute_state_root().map_err(|e| ProgramFailure {
-        failed_operation_index: 0,
-        error: e,
-        lifecycle_status: ProgramLifecycleStatus::Failed,
-    })?;
+    let pre_state_root = base_state
+        .compute_state_root()
+        .map_err(|e| ProgramFailure {
+            failed_operation_index: 0,
+            error: e,
+            lifecycle_status: ProgramLifecycleStatus::Failed,
+        })?;
 
     let mut staged = base_state.clone();
     let mut aliases: BTreeMap<String, String> = BTreeMap::new();
@@ -64,8 +66,9 @@ pub fn execute_compiled_program_staged(
                     VNetworkError::Authorization(_) | VNetworkError::Signature(_) => {
                         ProgramLifecycleStatus::Rejected
                     }
-                    VNetworkError::DimensionInvariant(_)
-                    | VNetworkError::ProfileMismatch(_) => ProgramLifecycleStatus::Rejected,
+                    VNetworkError::DimensionInvariant(_) | VNetworkError::ProfileMismatch(_) => {
+                        ProgramLifecycleStatus::Rejected
+                    }
                     _ => ProgramLifecycleStatus::Failed,
                 };
                 return Err(ProgramFailure {
@@ -93,11 +96,14 @@ pub fn execute_compiled_program_staged(
         generated_events.push(nonce_event);
     }
 
-    staged.height = base_state.height.checked_add(1).ok_or_else(|| ProgramFailure {
-        failed_operation_index: compiled.ops.len().saturating_sub(1),
-        error: VNetworkError::Validation("height overflow".to_string()),
-        lifecycle_status: ProgramLifecycleStatus::Failed,
-    })?;
+    staged.height = base_state
+        .height
+        .checked_add(1)
+        .ok_or_else(|| ProgramFailure {
+            failed_operation_index: compiled.ops.len().saturating_sub(1),
+            error: VNetworkError::Validation("height overflow".to_string()),
+            lifecycle_status: ProgramLifecycleStatus::Failed,
+        })?;
     let post_state_root = staged.compute_state_root().map_err(|e| ProgramFailure {
         failed_operation_index: compiled.ops.len().saturating_sub(1),
         error: e,
@@ -120,7 +126,10 @@ fn resolve_alias(aliases: &BTreeMap<String, String>, key: &str) -> String {
 }
 
 fn field_str(fields: &serde_json::Value, key: &str) -> Option<String> {
-    fields.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+    fields
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }
 
 fn field_u128(fields: &serde_json::Value, key: &str) -> Option<u128> {
@@ -186,15 +195,21 @@ fn execute_single_compiled_op(
                 .get("participant_id")
                 .or_else(|| op.params.get("participant"))
                 .and_then(|value| value.as_str())
-                .ok_or_else(|| VNetworkError::Validation(
-                    "PARTICIPANT_REINSTATE requires participant_id".to_string(),
-                ))?
+                .ok_or_else(|| {
+                    VNetworkError::Validation(
+                        "PARTICIPANT_REINSTATE requires participant_id".to_string(),
+                    )
+                })?
                 .to_string();
             let net_op = NetworkOperation::ReinstateParticipant {
                 target_participant_id,
             };
             let outcome = apply_network_operation_with_genesis(
-                state, genesis, &net_op, actor_pubkey, timestamp_ms,
+                state,
+                genesis,
+                &net_op,
+                actor_pubkey,
+                timestamp_ms,
             )?;
             events.extend(outcome.events);
             created.extend(outcome.created_entities);
@@ -213,14 +228,21 @@ fn execute_single_compiled_op(
                 .unwrap_or(false);
             let fields = op.params.get("fields").cloned().unwrap_or_default();
             let display_name = field_str(&fields, "name").unwrap_or_else(|| sym.to_string());
-            let visibility = field_str(&fields, "visibility").unwrap_or_else(|| "public".to_string());
+            let visibility =
+                field_str(&fields, "visibility").unwrap_or_else(|| "public".to_string());
 
             let net_op = NetworkOperation::CreateSpace {
                 name: display_name,
                 visibility,
                 ghost,
             };
-            let outcome = apply_network_operation_with_genesis(state, genesis, &net_op, actor_pubkey, timestamp_ms)?;
+            let outcome = apply_network_operation_with_genesis(
+                state,
+                genesis,
+                &net_op,
+                actor_pubkey,
+                timestamp_ms,
+            )?;
             if let Some(ent) = outcome.created_entities.first() {
                 aliases.insert(sym.to_string(), ent.id.clone());
             }
@@ -249,7 +271,8 @@ fn execute_single_compiled_op(
             let name = field_str(&fields, "name").unwrap_or_else(|| sym.to_string());
             let prefix = field_str(&fields, "prefix");
             let title = field_str(&fields, "title");
-            let visibility = field_str(&fields, "visibility").unwrap_or_else(|| "public".to_string());
+            let visibility =
+                field_str(&fields, "visibility").unwrap_or_else(|| "public".to_string());
             let section = field_u128(&fields, "section").unwrap_or(1) as u64;
 
             let net_op = NetworkOperation::CreateRegion {
@@ -261,7 +284,13 @@ fn execute_single_compiled_op(
                 section,
                 ghost,
             };
-            let outcome = apply_network_operation_with_genesis(state, genesis, &net_op, actor_pubkey, timestamp_ms)?;
+            let outcome = apply_network_operation_with_genesis(
+                state,
+                genesis,
+                &net_op,
+                actor_pubkey,
+                timestamp_ms,
+            )?;
             if let Some(ent) = outcome.created_entities.first() {
                 aliases.insert(sym.to_string(), ent.id.clone());
             }
@@ -296,7 +325,13 @@ fn execute_single_compiled_op(
                 ghost,
                 approval_threshold,
             };
-            let outcome = apply_network_operation_with_genesis(state, genesis, &net_op, actor_pubkey, timestamp_ms)?;
+            let outcome = apply_network_operation_with_genesis(
+                state,
+                genesis,
+                &net_op,
+                actor_pubkey,
+                timestamp_ms,
+            )?;
             if let Some(ent) = outcome.created_entities.first() {
                 aliases.insert(sym.to_string(), ent.id.clone());
             }
@@ -361,7 +396,13 @@ fn execute_single_compiled_op(
                 pop_signature,
                 participant_identity,
             };
-            let outcome = apply_network_operation_with_genesis(state, genesis, &net_op, actor_pubkey, timestamp_ms)?;
+            let outcome = apply_network_operation_with_genesis(
+                state,
+                genesis,
+                &net_op,
+                actor_pubkey,
+                timestamp_ms,
+            )?;
             events.extend(outcome.events);
             outs.extend(outcome.outputs);
         }
@@ -392,31 +433,32 @@ fn execute_single_compiled_op(
                 )));
             }
 
-            let (initial_supply, auth_ratio_au, energy) =
-                if let Some(arr) = fields.get("vector").and_then(|v| v.as_array()) {
-                    if arr.len() != 3 {
-                        return Err(VNetworkError::DimensionInvariant(
-                            "token vector must have 3 elements [token, authratio(au), energy]"
-                                .to_string(),
-                        ));
-                    }
-                    let parse_elem = |val: &serde_json::Value, idx: usize| -> VResult<u128> {
-                        val.as_str()
-                            .and_then(|s| s.replace('_', "").parse::<u128>().ok())
-                            .or_else(|| val.as_u64().map(|u| u as u128))
-                            .ok_or_else(|| {
-                                VNetworkError::Validation(format!(
-                                    "invalid token vector integer at dimension {idx}"
-                                ))
-                            })
-                    };
-                    (
-                        parse_elem(&arr[0], 0)?,
-                        parse_elem(&arr[1], 1)?,
-                        parse_elem(&arr[2], 2)?,
-                    )
-                } else {
-                    let s = field_u128(&fields, "supply")
+            let (initial_supply, auth_ratio_au, energy) = if let Some(arr) =
+                fields.get("vector").and_then(|v| v.as_array())
+            {
+                if arr.len() != 3 {
+                    return Err(VNetworkError::DimensionInvariant(
+                        "token vector must have 3 elements [token, authratio(au), energy]"
+                            .to_string(),
+                    ));
+                }
+                let parse_elem = |val: &serde_json::Value, idx: usize| -> VResult<u128> {
+                    val.as_str()
+                        .and_then(|s| s.replace('_', "").parse::<u128>().ok())
+                        .or_else(|| val.as_u64().map(|u| u as u128))
+                        .ok_or_else(|| {
+                            VNetworkError::Validation(format!(
+                                "invalid token vector integer at dimension {idx}"
+                            ))
+                        })
+                };
+                (
+                    parse_elem(&arr[0], 0)?,
+                    parse_elem(&arr[1], 1)?,
+                    parse_elem(&arr[2], 2)?,
+                )
+            } else {
+                let s = field_u128(&fields, "supply")
                         .or_else(|| field_u128(&fields, "initial_supply"))
                         .ok_or_else(|| {
                             VNetworkError::Validation(
@@ -424,12 +466,12 @@ fn execute_single_compiled_op(
                                     .to_string(),
                             )
                         })?;
-                    let au = field_u128(&fields, "authratio")
-                        .or_else(|| field_u128(&fields, "auth_ratio_au"))
-                        .unwrap_or(0);
-                    let en = field_u128(&fields, "energy").unwrap_or(0);
-                    (s, au, en)
-                };
+                let au = field_u128(&fields, "authratio")
+                    .or_else(|| field_u128(&fields, "auth_ratio_au"))
+                    .unwrap_or(0);
+                let en = field_u128(&fields, "energy").unwrap_or(0);
+                (s, au, en)
+            };
 
             let unlimited_supply = fields
                 .get("unlimited_supply")
@@ -461,7 +503,13 @@ fn execute_single_compiled_op(
                 external_monetary_value,
                 ghost,
             };
-            let outcome = apply_network_operation_with_genesis(state, genesis, &net_op, actor_pubkey, timestamp_ms)?;
+            let outcome = apply_network_operation_with_genesis(
+                state,
+                genesis,
+                &net_op,
+                actor_pubkey,
+                timestamp_ms,
+            )?;
             if let Some(ent) = outcome.created_entities.first() {
                 aliases.insert(sym.to_string(), ent.id.clone());
             }
@@ -480,16 +528,8 @@ fn execute_single_compiled_op(
                     "transfer requires explicit non-empty token identifier".to_string(),
                 ));
             }
-            let from_ref = op
-                .params
-                .get("from")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let to_ref = op
-                .params
-                .get("to")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let from_ref = op.params.get("from").and_then(|v| v.as_str()).unwrap_or("");
+            let to_ref = op.params.get("to").and_then(|v| v.as_str()).unwrap_or("");
             let amt_str = op
                 .params
                 .get("amount")
@@ -513,15 +553,34 @@ fn execute_single_compiled_op(
                 amount,
                 cosignatures: Vec::new(),
             };
-            let outcome = apply_network_operation_with_genesis(state, genesis, &net_op, actor_pubkey, timestamp_ms)?;
+            let outcome = apply_network_operation_with_genesis(
+                state,
+                genesis,
+                &net_op,
+                actor_pubkey,
+                timestamp_ms,
+            )?;
             events.extend(outcome.events);
             outs.extend(outcome.outputs);
         }
         "TOKEN_RECEIVE" => {
-            let token_ref = op.params.get("token").and_then(|v| v.as_str()).unwrap_or("");
-            let wallet_ref = op.params.get("wallet").and_then(|v| v.as_str()).unwrap_or("");
+            let token_ref = op
+                .params
+                .get("token")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let wallet_ref = op
+                .params
+                .get("wallet")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let source_ref = op.params.get("source").and_then(|v| v.as_str());
-            let amount = parse_u128_str(op.params.get("amount").and_then(|v| v.as_str()).unwrap_or("0"))?;
+            let amount = parse_u128_str(
+                op.params
+                    .get("amount")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("0"),
+            )?;
             let token_id = resolve_alias(aliases, token_ref);
             let to_wallet_id = resolve_alias(aliases, wallet_ref);
             if let Some(src) = source_ref {
@@ -533,7 +592,13 @@ fn execute_single_compiled_op(
                     amount,
                     cosignatures: Vec::new(),
                 };
-                let outcome = apply_network_operation_with_genesis(state, genesis, &net_op, actor_pubkey, timestamp_ms)?;
+                let outcome = apply_network_operation_with_genesis(
+                    state,
+                    genesis,
+                    &net_op,
+                    actor_pubkey,
+                    timestamp_ms,
+                )?;
                 events.extend(outcome.events);
                 outs.extend(outcome.outputs);
             } else {
@@ -550,9 +615,22 @@ fn execute_single_compiled_op(
             }
         }
         "TOKEN_DRAIN" => {
-            let token_ref = op.params.get("target").and_then(|v| v.as_str()).unwrap_or("");
-            let wallet_ref = op.params.get("wallet").and_then(|v| v.as_str()).unwrap_or("");
-            let amount = parse_u128_str(op.params.get("amount").and_then(|v| v.as_str()).unwrap_or("0"))?;
+            let token_ref = op
+                .params
+                .get("target")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let wallet_ref = op
+                .params
+                .get("wallet")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let amount = parse_u128_str(
+                op.params
+                    .get("amount")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("0"),
+            )?;
             let token_id = resolve_alias(aliases, token_ref);
             let wallet_id = if wallet_ref.trim().is_empty() {
                 let tok = crate::hierarchy::verify_token_exists(state, &token_id)?;
@@ -569,7 +647,13 @@ fn execute_single_compiled_op(
                 wallet_id,
                 amount,
             };
-            let outcome = apply_network_operation_with_genesis(state, genesis, &net_op, actor_pubkey, timestamp_ms)?;
+            let outcome = apply_network_operation_with_genesis(
+                state,
+                genesis,
+                &net_op,
+                actor_pubkey,
+                timestamp_ms,
+            )?;
             events.extend(outcome.events);
             outs.extend(outcome.outputs);
         }
@@ -593,7 +677,13 @@ fn execute_single_compiled_op(
                 rules: fields,
                 actions,
             };
-            let outcome = apply_network_operation_with_genesis(state, genesis, &net_op, actor_pubkey, timestamp_ms)?;
+            let outcome = apply_network_operation_with_genesis(
+                state,
+                genesis,
+                &net_op,
+                actor_pubkey,
+                timestamp_ms,
+            )?;
             if let Some(ent) = outcome.created_entities.first() {
                 aliases.insert(name.to_string(), ent.id.clone());
             }
@@ -619,7 +709,13 @@ fn execute_single_compiled_op(
                 action: action.to_string(),
                 args,
             };
-            let outcome = apply_network_operation_with_genesis(state, genesis, &net_op, actor_pubkey, timestamp_ms)?;
+            let outcome = apply_network_operation_with_genesis(
+                state,
+                genesis,
+                &net_op,
+                actor_pubkey,
+                timestamp_ms,
+            )?;
             events.extend(outcome.events);
             outs.extend(outcome.outputs);
         }
@@ -630,12 +726,15 @@ fn execute_single_compiled_op(
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| VNetworkError::Validation("missing loan name".to_string()))?;
             let fields = op.params.get("fields").cloned().unwrap_or_default();
-            let token_ref = field_str(&fields, "token")
-                .ok_or_else(|| VNetworkError::Validation("loan requires `token` field".to_string()))?;
-            let lender_ref = field_str(&fields, "lender")
-                .ok_or_else(|| VNetworkError::Validation("loan requires `lender` field".to_string()))?;
-            let borrower_ref = field_str(&fields, "borrower")
-                .ok_or_else(|| VNetworkError::Validation("loan requires `borrower` field".to_string()))?;
+            let token_ref = field_str(&fields, "token").ok_or_else(|| {
+                VNetworkError::Validation("loan requires `token` field".to_string())
+            })?;
+            let lender_ref = field_str(&fields, "lender").ok_or_else(|| {
+                VNetworkError::Validation("loan requires `lender` field".to_string())
+            })?;
+            let borrower_ref = field_str(&fields, "borrower").ok_or_else(|| {
+                VNetworkError::Validation("loan requires `borrower` field".to_string())
+            })?;
             let principal = field_u128(&fields, "principal").unwrap_or(0);
             let collateral = field_u128(&fields, "collateral").unwrap_or(0);
             let interest_bps = field_u128(&fields, "interest_bps").unwrap_or(0) as u16;
@@ -651,7 +750,13 @@ fn execute_single_compiled_op(
                 interest_bps,
                 maturity_at_ms,
             };
-            let outcome = apply_network_operation_with_genesis(state, genesis, &net_op, actor_pubkey, timestamp_ms)?;
+            let outcome = apply_network_operation_with_genesis(
+                state,
+                genesis,
+                &net_op,
+                actor_pubkey,
+                timestamp_ms,
+            )?;
             if let Some(ent) = outcome.created_entities.first() {
                 aliases.insert(name.to_string(), ent.id.clone());
             }
@@ -661,7 +766,11 @@ fn execute_single_compiled_op(
         }
         "LOAN_EXECUTE" => {
             let loan_ref = op.params.get("loan").and_then(|v| v.as_str()).unwrap_or("");
-            let action = op.params.get("action").and_then(|v| v.as_str()).unwrap_or("");
+            let action = op
+                .params
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let args = op.params.get("args").cloned().unwrap_or_default();
             let amount = field_u128(&args, "amount")
                 .or_else(|| field_u128(&args, "arg_0"))
@@ -671,12 +780,22 @@ fn execute_single_compiled_op(
                 action: action.to_string(),
                 amount,
             };
-            let outcome = apply_network_operation_with_genesis(state, genesis, &net_op, actor_pubkey, timestamp_ms)?;
+            let outcome = apply_network_operation_with_genesis(
+                state,
+                genesis,
+                &net_op,
+                actor_pubkey,
+                timestamp_ms,
+            )?;
             events.extend(outcome.events);
             outs.extend(outcome.outputs);
         }
         "QUERY" => {
-            let expr = op.params.get("expr").and_then(|v| v.as_str()).unwrap_or("network");
+            let expr = op
+                .params
+                .get("expr")
+                .and_then(|v| v.as_str())
+                .unwrap_or("network");
             let root = state.compute_state_root()?;
             outs.push(format!(
                 "query({expr}): height={} spaces={} regions={} wallets={} tokens={} root={root}",
@@ -701,7 +820,11 @@ fn execute_single_compiled_op(
             ));
         }
         "RECONSTRUCT" => {
-            let target = op.params.get("target").and_then(|v| v.as_str()).unwrap_or("");
+            let target = op
+                .params
+                .get("target")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let resolved = resolve_alias(aliases, target);
             let kind = if state.spaces.contains_key(&resolved) {
                 "space"
@@ -727,7 +850,11 @@ fn execute_single_compiled_op(
             ));
         }
         "CERTIFY" => {
-            let target = op.params.get("target").and_then(|v| v.as_str()).unwrap_or("");
+            let target = op
+                .params
+                .get("target")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if target.trim().is_empty() {
                 return Err(VNetworkError::Validation(
                     "certify requires a non-empty target entity".to_string(),
@@ -757,7 +884,8 @@ fn execute_single_compiled_op(
                 .unwrap_or(bps >= 8000);
             let resolved = resolve_alias(aliases, target);
 
-            if let Ok(reg_snapshot) = crate::hierarchy::verify_region_exists(state, &resolved).cloned()
+            if let Ok(reg_snapshot) =
+                crate::hierarchy::verify_region_exists(state, &resolved).cloned()
             {
                 let authorized = if reg_snapshot.ghost && reg_snapshot.space_id.is_empty() {
                     reg_snapshot.creator_pubkey == actor_pubkey
@@ -801,18 +929,16 @@ fn execute_single_compiled_op(
                     .insert("certification_auth_ratio".to_string(), ratio.to_string());
                 reg.metadata
                     .insert("certified".to_string(), certified_flag.to_string());
-                reg.version = reg
-                    .version
-                    .checked_add(1)
-                    .ok_or_else(|| VNetworkError::Validation("region version overflow".to_string()))?;
+                reg.version = reg.version.checked_add(1).ok_or_else(|| {
+                    VNetworkError::Validation("region version overflow".to_string())
+                })?;
                 state.regions.insert(reg.region_id.clone(), reg.clone());
-                state.logical_clock = state
-                    .logical_clock
-                    .checked_add(1)
-                    .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
-                let sequence = (state.events.len() as u64)
-                    .checked_add(1)
-                    .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
+                state.logical_clock = state.logical_clock.checked_add(1).ok_or_else(|| {
+                    VNetworkError::Validation("logical_clock overflow".to_string())
+                })?;
+                let sequence = (state.events.len() as u64).checked_add(1).ok_or_else(|| {
+                    VNetworkError::Validation("event sequence overflow".to_string())
+                })?;
                 let parents = state.latest_event_hash().into_iter().collect();
                 let after_hash = blake3_hex(&canonical_json_bytes(&reg)?);
                 let ev = LedgerEvent::build(
@@ -842,7 +968,8 @@ fn execute_single_compiled_op(
                     "certified region {} ({}): auth_ratio={ratio} bps={bps}",
                     reg.name, reg.region_id
                 ));
-            } else if let Ok(tok) = crate::hierarchy::verify_token_exists(state, &resolved).cloned() {
+            } else if let Ok(tok) = crate::hierarchy::verify_token_exists(state, &resolved).cloned()
+            {
                 let target_wallet = if tok.ghost && tok.wallet_id.is_empty() {
                     format!("ghost_custody::{}", tok.token_id)
                 } else {
@@ -890,18 +1017,16 @@ fn execute_single_compiled_op(
                 space
                     .metadata
                     .insert("certified".to_string(), certified_flag.to_string());
-                space.version = space
-                    .version
-                    .checked_add(1)
-                    .ok_or_else(|| VNetworkError::Validation("space version overflow".to_string()))?;
+                space.version = space.version.checked_add(1).ok_or_else(|| {
+                    VNetworkError::Validation("space version overflow".to_string())
+                })?;
                 state.spaces.insert(space.space_id.clone(), space.clone());
-                state.logical_clock = state
-                    .logical_clock
-                    .checked_add(1)
-                    .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
-                let sequence = (state.events.len() as u64)
-                    .checked_add(1)
-                    .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
+                state.logical_clock = state.logical_clock.checked_add(1).ok_or_else(|| {
+                    VNetworkError::Validation("logical_clock overflow".to_string())
+                })?;
+                let sequence = (state.events.len() as u64).checked_add(1).ok_or_else(|| {
+                    VNetworkError::Validation("event sequence overflow".to_string())
+                })?;
                 let parents = state.latest_event_hash().into_iter().collect();
                 let after_hash = blake3_hex(&canonical_json_bytes(&space)?);
                 let ev = LedgerEvent::build(
@@ -938,7 +1063,11 @@ fn execute_single_compiled_op(
             }
         }
         "EVENT_RECORD" => {
-            let expr = op.params.get("expr").and_then(|v| v.as_str()).unwrap_or("record");
+            let expr = op
+                .params
+                .get("expr")
+                .and_then(|v| v.as_str())
+                .unwrap_or("record");
             state.logical_clock = state
                 .logical_clock
                 .checked_add(1)

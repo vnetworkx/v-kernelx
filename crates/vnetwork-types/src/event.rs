@@ -47,9 +47,8 @@ impl LedgerEvent {
 
         let payload_bytes = canonical_json_bytes(&payload)?;
         let payload_hash = blake3_hex(&payload_bytes);
-        let event_id = format!(
-            "{entity_kind}::{entity_id}::{operation}::{logical_clock}::{sequence}"
-        );
+        let event_id =
+            format!("{entity_kind}::{entity_id}::{operation}::{logical_clock}::{sequence}");
 
         let hash_input = serde_json::json!({
             "after_hash": after_hash,

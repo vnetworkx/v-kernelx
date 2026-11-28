@@ -5,11 +5,11 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
 use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
 use v_langx::compiler::{compile_source_with_imports, CompiledProgram, FilesystemModuleResolver};
@@ -108,14 +108,9 @@ impl ClientIdentity {
             None,
             Vec::new(),
         )?;
-        let node_envelope = self.node_key.encrypt_to_envelope(
-            passphrase,
-            kdf_params,
-            1,
-            now,
-            None,
-            Vec::new(),
-        )?;
+        let node_envelope =
+            self.node_key
+                .encrypt_to_envelope(passphrase, kdf_params, 1, now, None, Vec::new())?;
         Ok(EncryptedClientIdentity {
             envelope_version: ENCRYPTED_KEY_ENVELOPE_VERSION,
             display_name: self.display_name.clone(),
@@ -126,10 +121,7 @@ impl ClientIdentity {
         })
     }
 
-    pub fn from_envelopes(
-        encrypted: &EncryptedClientIdentity,
-        passphrase: &str,
-    ) -> VResult<Self> {
+    pub fn from_envelopes(encrypted: &EncryptedClientIdentity, passphrase: &str) -> VResult<Self> {
         let participant_key =
             ProtectedSigningKey::from_envelope(&encrypted.participant_envelope, passphrase)?;
         let node_key = ProtectedSigningKey::from_envelope(&encrypted.node_envelope, passphrase)?;
@@ -233,13 +225,16 @@ fn reserve_sdk_nonce_file(
             }
         }
     }
-    let mut lock_file = lock_file.ok_or_else(|| VNetworkError::Storage(format!(
-        "timed out acquiring durable nonce lock {}; refusing to risk nonce reuse",
-        lock_path.display()
-    )))?;
+    let mut lock_file = lock_file.ok_or_else(|| {
+        VNetworkError::Storage(format!(
+            "timed out acquiring durable nonce lock {}; refusing to risk nonce reuse",
+            lock_path.display()
+        ))
+    })?;
     writeln!(lock_file, "{{\"pid\":{}}}", std::process::id())
         .map_err(|e| VNetworkError::Storage(format!("write nonce lock failed: {e}")))?;
-    lock_file.sync_all()
+    lock_file
+        .sync_all()
         .map_err(|e| VNetworkError::Storage(format!("sync nonce lock failed: {e}")))?;
 
     let result = (|| -> VResult<u64> {
@@ -249,8 +244,9 @@ fn reserve_sdk_nonce_file(
                 let mut raw = String::new();
                 file.read_to_string(&mut raw)
                     .map_err(|e| VNetworkError::Storage(format!("read nonce state failed: {e}")))?;
-                let stored: serde_json::Value = serde_json::from_str(&raw)
-                    .map_err(|e| VNetworkError::Storage(format!("parse nonce state failed: {e}")))?;
+                let stored: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
+                    VNetworkError::Storage(format!("parse nonce state failed: {e}"))
+                })?;
                 let stored_nonce = stored.get("next_nonce").and_then(|v| v.as_u64());
                 if stored.get("version").and_then(|v| v.as_u64()) != Some(1)
                     || stored.get("network_id").and_then(|v| v.as_str()) != Some(network_id)
@@ -258,14 +254,17 @@ fn reserve_sdk_nonce_file(
                     || stored_nonce.map_or(true, |value| value == 0)
                 {
                     return Err(VNetworkError::Storage(
-                        "durable nonce state does not match network/participant or is invalid".to_string()
+                        "durable nonce state does not match network/participant or is invalid"
+                            .to_string(),
                     ));
                 }
                 current = current.max(stored_nonce.unwrap());
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
-                return Err(VNetworkError::Storage(format!("read nonce state failed: {error}")));
+                return Err(VNetworkError::Storage(format!(
+                    "read nonce state failed: {error}"
+                )));
             }
         }
         let next = current.checked_add(1).ok_or_else(|| {
@@ -288,7 +287,8 @@ fn reserve_sdk_nonce_file(
         options.write(true).create_new(true);
         #[cfg(unix)]
         options.mode(0o600);
-        let mut temp = options.open(&temp_path)
+        let mut temp = options
+            .open(&temp_path)
             .map_err(|e| VNetworkError::Storage(format!("create nonce temp file failed: {e}")))?;
         let write_result = (|| -> std::io::Result<()> {
             temp.write_all(&encoded)?;
@@ -297,12 +297,16 @@ fn reserve_sdk_nonce_file(
         })();
         if let Err(error) = write_result {
             let _ = fs::remove_file(&temp_path);
-            return Err(VNetworkError::Storage(format!("write nonce temp file failed: {error}")));
+            return Err(VNetworkError::Storage(format!(
+                "write nonce temp file failed: {error}"
+            )));
         }
         drop(temp);
         if let Err(error) = fs::rename(&temp_path, file_path) {
             let _ = fs::remove_file(&temp_path);
-            return Err(VNetworkError::Storage(format!("replace nonce state failed: {error}")));
+            return Err(VNetworkError::Storage(format!(
+                "replace nonce state failed: {error}"
+            )));
         }
         #[cfg(unix)]
         fs::set_permissions(file_path, fs::Permissions::from_mode(0o600))
@@ -370,18 +374,23 @@ impl VectorNetworkClient {
                 let home = std::env::var_os("HOME")
                     .or_else(|| std::env::var_os("USERPROFILE"))
                     .map(PathBuf::from)
-                    .ok_or_else(|| VNetworkError::Storage(
-                        "cannot resolve home directory for durable nonce store".to_string()
-                    ))?;
+                    .ok_or_else(|| {
+                        VNetworkError::Storage(
+                            "cannot resolve home directory for durable nonce store".to_string(),
+                        )
+                    })?;
                 let key = hex::encode(Sha256::digest(
                     format!("{network_id}::{actor_pubkey}").as_bytes(),
                 ));
-                home.join(".vnetwork").join("nonces").join(format!("{key}.json"))
+                home.join(".vnetwork")
+                    .join("nonces")
+                    .join(format!("{key}.json"))
             }
         };
-        let _guard = self.nonce_lock.lock().map_err(|_| {
-            VNetworkError::Storage("durable nonce mutex poisoned".to_string())
-        })?;
+        let _guard = self
+            .nonce_lock
+            .lock()
+            .map_err(|_| VNetworkError::Storage("durable nonce mutex poisoned".to_string()))?;
         let reserved = reserve_sdk_nonce_file(
             &store_path,
             &network_id,
@@ -389,16 +398,20 @@ impl VectorNetworkClient {
             self.nonce.load(Ordering::SeqCst),
             self.nonce_store_path.is_none(),
         )?;
-        self.nonce.store(reserved.checked_add(1).ok_or_else(|| {
-            VNetworkError::Validation("request nonce exhausted u64 range".to_string())
-        })?, Ordering::SeqCst);
+        self.nonce.store(
+            reserved.checked_add(1).ok_or_else(|| {
+                VNetworkError::Validation("request nonce exhausted u64 range".to_string())
+            })?,
+            Ordering::SeqCst,
+        );
         Ok(reserved)
     }
 
     /// Source-compatible convenience wrapper. Prefer reserve_nonce() in new
     /// code so storage errors can be propagated instead of panicking.
     pub fn next_nonce(&self) -> u64 {
-        self.reserve_nonce().expect("failed to reserve durable request nonce")
+        self.reserve_nonce()
+            .expect("failed to reserve durable request nonce")
     }
 
     pub fn set_nonce(&self, next: u64) {
@@ -466,7 +479,11 @@ impl VectorNetworkClient {
         self.connected_network_id
             .clone()
             .or_else(|| self.expected_network_id.clone())
-            .ok_or_else(|| VNetworkError::Validation("client must connect() before write operations".to_string()))
+            .ok_or_else(|| {
+                VNetworkError::Validation(
+                    "client must connect() before write operations".to_string(),
+                )
+            })
     }
 
     pub async fn join(&mut self, scopes: Vec<ParticipationLevel>) -> VResult<serde_json::Value> {
@@ -554,9 +571,8 @@ impl VectorNetworkClient {
         let compiled = compile_source_with_imports(source_bytes, file_name, &resolver)
             .map_err(|e| VNetworkError::Language(e.to_string()))?;
 
-        let canonical_dir = std::fs::canonicalize(dir).map_err(|e| {
-            VNetworkError::Storage(format!("resolve module base dir failed: {e}"))
-        })?;
+        let canonical_dir = std::fs::canonicalize(dir)
+            .map_err(|e| VNetworkError::Storage(format!("resolve module base dir failed: {e}")))?;
         let mut module_sources = BTreeMap::new();
         for m in &compiled.imported_modules {
             let rel = Path::new(&m.path);
@@ -630,7 +646,11 @@ impl VectorNetworkClient {
         let request_id = format!("req_{}", uuid::Uuid::new_v4().simple());
         let nonce = self.reserve_nonce()?;
         let source_hash = blake3_hex(source_bytes.as_bytes());
-        let file_kind = if file_name.ends_with(".vdx") { "vdx" } else { "vx" };
+        let file_kind = if file_name.ends_with(".vdx") {
+            "vdx"
+        } else {
+            "vx"
+        };
         let mut module_hashes = BTreeMap::new();
         for (path, src) in &modules {
             module_hashes.insert(path.clone(), blake3_hex(src.as_bytes()));
@@ -739,7 +759,10 @@ impl VectorNetworkClient {
         .await
     }
 
-    pub async fn submit_operation(&mut self, operation: NetworkOperation) -> VResult<serde_json::Value> {
+    pub async fn submit_operation(
+        &mut self,
+        operation: NetworkOperation,
+    ) -> VResult<serde_json::Value> {
         if self.connected_network_id.is_none() {
             self.connect().await?;
         }
@@ -848,7 +871,8 @@ impl VectorNetworkClient {
     }
 
     pub async fn get_program_status(&self, program_id: &str) -> VResult<serde_json::Value> {
-        self.get_json(&format!("/v1/programs/{program_id}/status")).await
+        self.get_json(&format!("/v1/programs/{program_id}/status"))
+            .await
     }
 
     pub async fn get_transaction(&self, tx_id: &str) -> VResult<serde_json::Value> {
@@ -981,7 +1005,8 @@ impl VectorNetworkClient {
     }
 
     pub async fn verify_token_supply(&self, token_id: &str) -> VResult<serde_json::Value> {
-        self.get_json(&format!("/v1/tokens/{token_id}/supply")).await
+        self.get_json(&format!("/v1/tokens/{token_id}/supply"))
+            .await
     }
 
     pub async fn equivocations(&self) -> VResult<serde_json::Value> {
@@ -1051,8 +1076,8 @@ pub struct BlockingVectorNetworkClient {
 
 impl BlockingVectorNetworkClient {
     pub fn new(base_url: impl Into<String>, identity: ClientIdentity) -> VResult<Self> {
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| VNetworkError::Storage(e.to_string()))?;
+        let rt =
+            tokio::runtime::Runtime::new().map_err(|e| VNetworkError::Storage(e.to_string()))?;
         Ok(Self {
             rt,
             inner: VectorNetworkClient::new(base_url, identity),
@@ -1086,9 +1111,8 @@ async fn parse_json_response(resp: reqwest::Response) -> VResult<serde_json::Val
         .text()
         .await
         .map_err(|e| VNetworkError::Storage(e.to_string()))?;
-    let val: serde_json::Value = serde_json::from_str(&txt).unwrap_or_else(|_| {
-        serde_json::json!({ "raw": txt })
-    });
+    let val: serde_json::Value =
+        serde_json::from_str(&txt).unwrap_or_else(|_| serde_json::json!({ "raw": txt }));
     if !status.is_success() {
         let msg = val
             .get("error")
@@ -1102,7 +1126,6 @@ async fn parse_json_response(resp: reqwest::Response) -> VResult<serde_json::Val
     }
     Ok(val)
 }
-
 
 #[cfg(test)]
 mod durable_nonce_regressions {

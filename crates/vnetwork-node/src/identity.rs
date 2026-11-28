@@ -112,26 +112,29 @@ impl NodeIdentity {
         enable_validator: bool,
         options: &NodeIdentityLoadOptions,
     ) -> VResult<Self> {
-        let (node_signer, node_metadata, transport_protected) =
-            if let Some(ext) = &options.external_node_signer {
-                let transport_path = options.transport_key_path.as_deref().ok_or_else(|| {
+        let (node_signer, node_metadata, transport_protected) = if let Some(ext) =
+            &options.external_node_signer
+        {
+            let transport_path = options.transport_key_path.as_deref().ok_or_else(|| {
                     VNetworkError::Authorization(
                         "external_node_signer requires `transport_key_path` for libp2p Noise session transport authentication"
                             .to_string(),
                     )
                 })?;
-                let (transport_sk, _transport_meta) =
-                    load_or_generate_encrypted_key(transport_path, "node-transport", options)?;
-                let mut meta = ext.metadata.clone();
-                meta.storage_mode = format!("external:{}+encrypted-transport", ext.backend_name);
-                let provider: Arc<dyn SigningProvider> = Arc::new(ext.clone());
-                (provider, meta, transport_sk)
-            } else {
-                let (sk, meta) = load_or_generate_encrypted_key(node_key_path, "node", options)?;
-                let provider: Arc<dyn SigningProvider> =
-                    Arc::new(LocalEncryptedSigningProvider::new(sk.clone(), &meta.storage_mode));
-                (provider, meta, sk)
-            };
+            let (transport_sk, _transport_meta) =
+                load_or_generate_encrypted_key(transport_path, "node-transport", options)?;
+            let mut meta = ext.metadata.clone();
+            meta.storage_mode = format!("external:{}+encrypted-transport", ext.backend_name);
+            let provider: Arc<dyn SigningProvider> = Arc::new(ext.clone());
+            (provider, meta, transport_sk)
+        } else {
+            let (sk, meta) = load_or_generate_encrypted_key(node_key_path, "node", options)?;
+            let provider: Arc<dyn SigningProvider> = Arc::new(LocalEncryptedSigningProvider::new(
+                sk.clone(),
+                &meta.storage_mode,
+            ));
+            (provider, meta, sk)
+        };
 
         let node_id = derive_node_id(&node_metadata.public_key_hex);
         let libp2p_keypair = to_libp2p_ed25519(&transport_protected)?;
@@ -144,13 +147,16 @@ impl NodeIdentity {
                     let provider: Arc<dyn SigningProvider> = Arc::new(ext_val.clone());
                     (provider, meta)
                 } else {
-                    let vpath = validator_key_path.map(|p| p.to_path_buf()).unwrap_or_else(|| {
-                        node_key_path
-                            .parent()
-                            .unwrap_or_else(|| Path::new("."))
-                            .join("validator.key.json")
-                    });
-                    let (vsk, vmeta) = load_or_generate_encrypted_key(&vpath, "validator", options)?;
+                    let vpath = validator_key_path
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or_else(|| {
+                            node_key_path
+                                .parent()
+                                .unwrap_or_else(|| Path::new("."))
+                                .join("validator.key.json")
+                        });
+                    let (vsk, vmeta) =
+                        load_or_generate_encrypted_key(&vpath, "validator", options)?;
                     let provider: Arc<dyn SigningProvider> =
                         Arc::new(LocalEncryptedSigningProvider::new(vsk, &vmeta.storage_mode));
                     (provider, vmeta)
@@ -166,7 +172,10 @@ impl NodeIdentity {
                 let vid = explicit_validator_id
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| format!("val_{}", &v_meta.public_key_hex[..16]));
-                let mode = format!("node:{};validator:{}", node_metadata.storage_mode, v_meta.storage_mode);
+                let mode = format!(
+                    "node:{};validator:{}",
+                    node_metadata.storage_mode, v_meta.storage_mode
+                );
                 (Some(v_signer), Some(v_meta), Some(vid), mode)
             } else {
                 (None, None, None, node_metadata.storage_mode.clone())
@@ -229,26 +238,36 @@ pub fn load_or_generate_encrypted_key(
         enforce_strict_key_file_permissions(path)?;
         let raw = fs::read_to_string(path)
             .map_err(|e| VNetworkError::Storage(format!("read key {:?} failed: {e}", path)))?;
-        let val: serde_json::Value = serde_json::from_str(&raw)
-            .map_err(|e| VNetworkError::Serialization(format!("parse key {:?} failed: {e}", path)))?;
+        let val: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
+            VNetworkError::Serialization(format!("parse key {:?} failed: {e}", path))
+        })?;
 
         if val.get("ciphertext_hex").is_some() {
             let env: EncryptedKeyEnvelope = serde_json::from_value(val).map_err(|e| {
-                VNetworkError::Serialization(format!("parse encrypted key envelope {:?} failed: {e}", path))
-            })?;
-            let passphrase = options.passphrase.as_deref().map(|s| s.as_str()).ok_or_else(|| {
-                VNetworkError::Authorization(format!(
-                    "passphrase required to unlock encrypted key `{:?}`",
+                VNetworkError::Serialization(format!(
+                    "parse encrypted key envelope {:?} failed: {e}",
                     path
                 ))
             })?;
+            let passphrase = options
+                .passphrase
+                .as_deref()
+                .map(|s| s.as_str())
+                .ok_or_else(|| {
+                    VNetworkError::Authorization(format!(
+                        "passphrase required to unlock encrypted key `{:?}`",
+                        path
+                    ))
+                })?;
             let sk = ProtectedSigningKey::from_envelope(&env, passphrase)?;
             let meta = env.metadata("encrypted-envelope-v1");
             return Ok((sk, meta));
         }
 
         if val.get("private_key_hex").is_some() {
-            if options.profile == NetworkProfile::Production || !options.allow_plaintext_key_fallback {
+            if options.profile == NetworkProfile::Production
+                || !options.allow_plaintext_key_fallback
+            {
                 return Err(VNetworkError::Authorization(format!(
                     "plaintext private key file `{:?}` refused (profile={}): run offline `migrate-key` to convert to an encrypted envelope",
                     path,
@@ -263,7 +282,8 @@ pub fn load_or_generate_encrypted_key(
             if let Some(expected_pk) = &legacy.public_key_hex {
                 if expected_pk != &sk.public_key_hex {
                     return Err(VNetworkError::Signature(
-                        "legacy plaintext key public_key_hex does not match private seed".to_string(),
+                        "legacy plaintext key public_key_hex does not match private seed"
+                            .to_string(),
                     ));
                 }
             }
@@ -277,12 +297,16 @@ pub fn load_or_generate_encrypted_key(
         )));
     }
 
-    let passphrase = options.passphrase.as_deref().map(|s| s.as_str()).ok_or_else(|| {
-        VNetworkError::Authorization(format!(
-            "cannot generate encrypted key `{:?}` without keystore passphrase",
-            path
-        ))
-    })?;
+    let passphrase = options
+        .passphrase
+        .as_deref()
+        .map(|s| s.as_str())
+        .ok_or_else(|| {
+            VNetworkError::Authorization(format!(
+                "cannot generate encrypted key `{:?}` without keystore passphrase",
+                path
+            ))
+        })?;
 
     let sk = ProtectedSigningKey::generate(role);
     let now = now_ms();
@@ -342,10 +366,9 @@ pub fn migrate_plaintext_key_to_encrypted(
     }
     enforce_strict_key_file_permissions(legacy_path)?;
 
-    let raw = Zeroizing::new(
-        fs::read_to_string(legacy_path)
-            .map_err(|e| VNetworkError::Storage(format!("read legacy key {:?} failed: {e}", legacy_path)))?,
-    );
+    let raw = Zeroizing::new(fs::read_to_string(legacy_path).map_err(|e| {
+        VNetworkError::Storage(format!("read legacy key {:?} failed: {e}", legacy_path))
+    })?);
     let val: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
         VNetworkError::Serialization(format!("parse legacy key {:?} failed: {e}", legacy_path))
     })?;
@@ -467,7 +490,10 @@ pub fn rotate_encrypted_key(
     let raw = fs::read_to_string(path)
         .map_err(|e| VNetworkError::Storage(format!("read key {:?} failed: {e}", path)))?;
     let prev_env: EncryptedKeyEnvelope = serde_json::from_str(&raw).map_err(|e| {
-        VNetworkError::Serialization(format!("parse encrypted key envelope {:?} failed: {e}", path))
+        VNetworkError::Serialization(format!(
+            "parse encrypted key envelope {:?} failed: {e}",
+            path
+        ))
     })?;
     let old_sk = ProtectedSigningKey::from_envelope(&prev_env, current_passphrase)?;
 
@@ -506,8 +532,9 @@ pub fn rotate_encrypted_key(
 
     // Reload & decrypt from disk to verify durable replacement
     enforce_strict_key_file_permissions(path)?;
-    let reloaded_raw = fs::read_to_string(path)
-        .map_err(|e| VNetworkError::Storage(format!("reload rotated key {:?} failed: {e}", path)))?;
+    let reloaded_raw = fs::read_to_string(path).map_err(|e| {
+        VNetworkError::Storage(format!("reload rotated key {:?} failed: {e}", path))
+    })?;
     let reloaded_env: EncryptedKeyEnvelope = serde_json::from_str(&reloaded_raw).map_err(|e| {
         VNetworkError::Serialization(format!(
             "parse reloaded rotated envelope {:?} failed: {e}",
@@ -620,7 +647,10 @@ fn write_protected_file_atomic(path: &Path, payload: &[u8]) -> VResult<()> {
     Ok(())
 }
 
-pub fn write_encrypted_envelope_atomic(path: &Path, envelope: &EncryptedKeyEnvelope) -> VResult<()> {
+pub fn write_encrypted_envelope_atomic(
+    path: &Path,
+    envelope: &EncryptedKeyEnvelope,
+) -> VResult<()> {
     let json = Zeroizing::new(
         serde_json::to_vec_pretty(envelope)
             .map_err(|e| VNetworkError::Serialization(e.to_string()))?,

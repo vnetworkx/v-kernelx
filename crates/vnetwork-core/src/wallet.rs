@@ -94,7 +94,9 @@ pub fn apply_create_wallet(
 
     let clean_name = name.trim();
     if clean_name.is_empty() {
-        return Err(VNetworkError::Validation("wallet name cannot be empty".to_string()));
+        return Err(VNetworkError::Validation(
+            "wallet name cannot be empty".to_string(),
+        ));
     }
 
     let threshold = approval_threshold.unwrap_or(1);
@@ -164,7 +166,11 @@ pub fn apply_create_wallet(
         &state.network_id,
         "wallet",
         &wallet_id,
-        if ghost { "GHOST_WALLET_CREATE" } else { "WALLET_CREATE" },
+        if ghost {
+            "GHOST_WALLET_CREATE"
+        } else {
+            "WALLET_CREATE"
+        },
         actor_pubkey,
         state.logical_clock,
         timestamp_ms,
@@ -309,7 +315,9 @@ pub fn apply_authorize_wallet_key(
         .version
         .checked_add(1)
         .ok_or_else(|| VNetworkError::Validation("wallet version overflow".to_string()))?;
-    state.wallets.insert(wallet.wallet_id.clone(), wallet.clone());
+    state
+        .wallets
+        .insert(wallet.wallet_id.clone(), wallet.clone());
 
     state.logical_clock = state
         .logical_clock
@@ -360,12 +368,15 @@ pub fn apply_revoke_wallet_key(
             "cannot revoke owner key directly; use key rotation".to_string(),
         ));
     }
-    let binding = wallet.authorized_keys.get_mut(clean_target).ok_or_else(|| {
-        VNetworkError::NotFound(format!(
-            "key `{clean_target}` is not bound on wallet `{}`",
-            wallet.wallet_id
-        ))
-    })?;
+    let binding = wallet
+        .authorized_keys
+        .get_mut(clean_target)
+        .ok_or_else(|| {
+            VNetworkError::NotFound(format!(
+                "key `{clean_target}` is not bound on wallet `{}`",
+                wallet.wallet_id
+            ))
+        })?;
     if binding.revoked {
         return Err(VNetworkError::Validation(format!(
             "key `{clean_target}` is already revoked"
@@ -381,7 +392,9 @@ pub fn apply_revoke_wallet_key(
         .version
         .checked_add(1)
         .ok_or_else(|| VNetworkError::Validation("wallet version overflow".to_string()))?;
-    state.wallets.insert(wallet.wallet_id.clone(), wallet.clone());
+    state
+        .wallets
+        .insert(wallet.wallet_id.clone(), wallet.clone());
 
     state.logical_clock = state
         .logical_clock
@@ -454,9 +467,13 @@ pub fn apply_rotate_wallet_key(
         ));
     }
 
-    let old_binding = wallet.authorized_keys.get(clean_old).cloned().ok_or_else(|| {
-        VNetworkError::NotFound(format!("old key `{clean_old}` not found on wallet"))
-    })?;
+    let old_binding = wallet
+        .authorized_keys
+        .get(clean_old)
+        .cloned()
+        .ok_or_else(|| {
+            VNetworkError::NotFound(format!("old key `{clean_old}` not found on wallet"))
+        })?;
     if old_binding.revoked {
         return Err(VNetworkError::Authorization(format!(
             "cannot rotate already revoked key `{clean_old}`"
@@ -552,7 +569,9 @@ pub fn apply_rotate_wallet_key(
         .version
         .checked_add(1)
         .ok_or_else(|| VNetworkError::Validation("wallet version overflow".to_string()))?;
-    state.wallets.insert(wallet.wallet_id.clone(), wallet.clone());
+    state
+        .wallets
+        .insert(wallet.wallet_id.clone(), wallet.clone());
 
     state.logical_clock = state
         .logical_clock
@@ -633,7 +652,9 @@ pub fn apply_update_wallet_receive_policy(
         .version
         .checked_add(1)
         .ok_or_else(|| VNetworkError::Validation("wallet version overflow".to_string()))?;
-    state.wallets.insert(wallet.wallet_id.clone(), wallet.clone());
+    state
+        .wallets
+        .insert(wallet.wallet_id.clone(), wallet.clone());
 
     state.logical_clock = state
         .logical_clock

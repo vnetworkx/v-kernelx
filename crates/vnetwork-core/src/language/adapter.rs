@@ -18,14 +18,12 @@ pub fn compile_vx_source(
         inline_modules,
         fs_base_dir,
     };
-    compile_source_with_imports(source, file_name, &resolver).map_err(|e| {
-        VNetworkError::Language(format!("{e}"))
-    })
+    compile_source_with_imports(source, file_name, &resolver)
+        .map_err(|e| VNetworkError::Language(format!("{e}")))
 }
 
 pub fn parse_vx_source(source: &str) -> VResult<serde_json::Value> {
-    let program = parse(source)
-        .map_err(|e| VNetworkError::Language(format!("{e}")))?;
+    let program = parse(source).map_err(|e| VNetworkError::Language(format!("{e}")))?;
     Ok(serde_json::json!({
         "statement_count": program.statements.len(),
         "valid": true,

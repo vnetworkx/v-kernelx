@@ -260,12 +260,6 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
         tokens.push(item?);
     }
     let len = src.len();
-    tokens.push(Token::new(
-        TokenKind::Eof,
-        len,
-        len,
-        lexer.line,
-        lexer.col,
-    ));
+    tokens.push(Token::new(TokenKind::Eof, len, len, lexer.line, lexer.col));
     Ok(tokens)
 }

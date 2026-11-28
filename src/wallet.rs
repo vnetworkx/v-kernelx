@@ -70,7 +70,8 @@ impl WalletContext {
     }
 
     pub fn from_private_key_hex(private_key_hex: &str) -> Result<Self, KernelXError> {
-        let seed_bytes = hex::decode(private_key_hex.trim()).map_err(|_| KernelXError::Signature)?;
+        let seed_bytes =
+            hex::decode(private_key_hex.trim()).map_err(|_| KernelXError::Signature)?;
         let seed_array: [u8; 32] = seed_bytes.try_into().map_err(|_| KernelXError::Signature)?;
         let signing_key = SigningKey::from_bytes(&seed_array);
         let public_key_hex = hex::encode(signing_key.verifying_key().to_bytes());

@@ -45,7 +45,9 @@ fn test_encrypted_key_envelope_and_aad_protection() {
     let identity =
         NodeIdentity::load_or_create_secure(&node_key, Some(&val_key), Some("val_1"), true, &opts)
             .expect("secure identity creation should succeed");
-    assert!(identity.storage_security_mode.contains("encrypted-envelope-v1"));
+    assert!(identity
+        .storage_security_mode
+        .contains("encrypted-envelope-v1"));
 
     // Debug output must redact private seed material
     let dbg = format!("{identity:?}");
@@ -73,16 +75,24 @@ fn test_encrypted_key_envelope_and_aad_protection() {
         external_validator_signer: None,
         transport_key_path: None,
     };
-    assert!(
-        NodeIdentity::load_or_create_secure(&node_key, Some(&val_key), Some("val_1"), true, &bad_opts)
-            .is_err()
-    );
+    assert!(NodeIdentity::load_or_create_secure(
+        &node_key,
+        Some(&val_key),
+        Some("val_1"),
+        true,
+        &bad_opts
+    )
+    .is_err());
 
     // Tampered AAD metadata inside envelope must fail AES-GCM decryption
     let mut val_json: serde_json::Value = serde_json::from_str(&raw).unwrap();
     val_json["key_role"] = serde_json::Value::String("validator".to_string());
     let tampered_path = dir.join("tampered.key.json");
-    fs::write(&tampered_path, serde_json::to_vec_pretty(&val_json).unwrap()).unwrap();
+    fs::write(
+        &tampered_path,
+        serde_json::to_vec_pretty(&val_json).unwrap(),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -135,7 +145,11 @@ fn test_plaintext_key_refused_in_production_and_offline_migration_succeeds() {
         "public_key_hex": kp.public_key_hex,
         "private_key_hex": kp.private_key_hex,
     });
-    fs::write(&legacy_path, serde_json::to_vec_pretty(&legacy_json).unwrap()).unwrap();
+    fs::write(
+        &legacy_path,
+        serde_json::to_vec_pretty(&legacy_json).unwrap(),
+    )
+    .unwrap();
 
     #[cfg(unix)]
     {
@@ -202,7 +216,8 @@ fn test_plaintext_key_refused_in_production_and_offline_migration_succeeds() {
         external_validator_signer: None,
         transport_key_path: None,
     };
-    let (loaded, meta) = load_or_generate_encrypted_key(&migrated_path, "node", &prod_unlock_opts).unwrap();
+    let (loaded, meta) =
+        load_or_generate_encrypted_key(&migrated_path, "node", &prod_unlock_opts).unwrap();
     assert_eq!(loaded.public_key_hex, kp.public_key_hex);
     assert_eq!(meta.storage_mode, "encrypted-envelope-v1");
 
@@ -236,7 +251,10 @@ fn test_external_node_signer_with_separate_transport_key() {
         external_validator_signer: None,
         transport_key_path: None,
     };
-    assert!(NodeIdentity::load_or_create_secure(&node_key, Some(&val_key), None, false, &bad_opts).is_err());
+    assert!(
+        NodeIdentity::load_or_create_secure(&node_key, Some(&val_key), None, false, &bad_opts)
+            .is_err()
+    );
 
     // Providing transport_key_path succeeds with external node signer + local encrypted transport key
     let good_opts = NodeIdentityLoadOptions {
@@ -248,7 +266,9 @@ fn test_external_node_signer_with_separate_transport_key() {
         external_validator_signer: None,
         transport_key_path: Some(transport_key.clone()),
     };
-    let id = NodeIdentity::load_or_create_secure(&node_key, Some(&val_key), None, false, &good_opts).unwrap();
+    let id =
+        NodeIdentity::load_or_create_secure(&node_key, Some(&val_key), None, false, &good_opts)
+            .unwrap();
     assert_eq!(id.node_metadata.public_key_hex, ext_sk.public_key_hex);
     assert!(id.storage_security_mode.contains("external:mock-hsm"));
     assert!(transport_key.exists());
@@ -300,12 +320,16 @@ fn test_durable_anti_equivocation_intent_crash_lock_and_evidence_integrity() {
         proposer_signature: String::new(),
     };
     prop_a.finalize_digest_and_id().unwrap();
-    prop_a.proposer_signature = val_sk.sign(&prop_a.canonical_signing_bytes().unwrap()).unwrap();
+    prop_a.proposer_signature = val_sk
+        .sign(&prop_a.canonical_signing_bytes().unwrap())
+        .unwrap();
 
     let mut prop_b = prop_a.clone();
     prop_b.post_state_root = "post_b_conflict".to_string();
     prop_b.finalize_digest_and_id().unwrap();
-    prop_b.proposer_signature = val_sk.sign(&prop_b.canonical_signing_bytes().unwrap()).unwrap();
+    prop_b.proposer_signature = val_sk
+        .sign(&prop_b.canonical_signing_bytes().unwrap())
+        .unwrap();
 
     let mut store = EquivocationStore::open(&dir).unwrap();
     // Exclusive writer lock refuses a second concurrent writer instance on same directory
@@ -352,7 +376,9 @@ fn test_durable_anti_equivocation_intent_crash_lock_and_evidence_integrity() {
         timestamp_ms: 1001,
         signature: String::new(),
     };
-    bad_signed_b.signature = val_sk.sign(&bad_signed_b.canonical_signing_bytes().unwrap()).unwrap();
+    bad_signed_b.signature = val_sk
+        .sign(&bad_signed_b.canonical_signing_bytes().unwrap())
+        .unwrap();
     assert!(store.record_observed_vote(&bad_signed_b, 1001).is_err());
     assert!(
         store.evidence().is_empty(),
@@ -433,7 +459,8 @@ fn test_durable_anti_equivocation_intent_crash_lock_and_evidence_integrity() {
     );
 
     // Valid QC check succeeds with canonical certificate_id and full ConsensusVerificationContext
-    let membership = ValidatorMembership::try_new(vec![validator.clone()], DEFAULT_BFT_QUORUM_BPS).unwrap();
+    let membership =
+        ValidatorMembership::try_new(vec![validator.clone()], DEFAULT_BFT_QUORUM_BPS).unwrap();
     let mut qc = QuorumCertificate {
         certificate_id: String::new(),
         proposal_id: prop_a.proposal_id.clone(),

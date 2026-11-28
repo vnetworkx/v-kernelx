@@ -36,7 +36,9 @@ fn single_val_qc(
         timestamp_ms: ts,
         signature: String::new(),
     };
-    vote.signature = val_kp.sign(&vote.canonical_signing_bytes().unwrap()).unwrap();
+    vote.signature = val_kp
+        .sign(&vote.canonical_signing_bytes().unwrap())
+        .unwrap();
     let mut qc = QuorumCertificate {
         certificate_id: String::new(),
         proposal_id: prop.proposal_id.clone(),
@@ -205,24 +207,24 @@ fn test_scope_drain_unconfigured_fails_closed_and_hierarchy_derives_exact_rates(
     .unwrap();
 
     let (s0, bps0, fee0, net0) = compute_scope_drain(&policy, &w_a, &w_a, 10_000).unwrap();
-    assert_eq!((s0, bps0, fee0, net0), (TransferScope::SameWallet, 0, 0, 10_000));
+    assert_eq!(
+        (s0, bps0, fee0, net0),
+        (TransferScope::SameWallet, 0, 0, 10_000)
+    );
 
-    let (s1, bps1, fee1, net1) =
-        compute_scope_drain(&policy, &w_a, &w_b_same_reg, 10_000).unwrap();
+    let (s1, bps1, fee1, net1) = compute_scope_drain(&policy, &w_a, &w_b_same_reg, 10_000).unwrap();
     assert_eq!(
         (s1, bps1, fee1, net1),
         (TransferScope::DifferentWalletsSameRegion, 10, 10, 9_990)
     );
 
-    let (s2, bps2, fee2, net2) =
-        compute_scope_drain(&policy, &w_a, &w_c_diff_reg, 10_000).unwrap();
+    let (s2, bps2, fee2, net2) = compute_scope_drain(&policy, &w_a, &w_c_diff_reg, 10_000).unwrap();
     assert_eq!(
         (s2, bps2, fee2, net2),
         (TransferScope::DifferentRegionsSameSpace, 50, 50, 9_950)
     );
 
-    let (s3, bps3, fee3, net3) =
-        compute_scope_drain(&policy, &w_a, &w_d_diff_spc, 10_000).unwrap();
+    let (s3, bps3, fee3, net3) = compute_scope_drain(&policy, &w_a, &w_d_diff_spc, 10_000).unwrap();
     assert_eq!(
         (s3, bps3, fee3, net3),
         (TransferScope::DifferentSpaces, 150, 150, 9_850)
@@ -241,12 +243,21 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
     let (mut engine, val_kp, actor_kp) = bootstrap_engine(policy);
 
     let commit_op = |engine: &mut ProtocolEngine, nonce: u64, op: NetworkOperation| -> String {
-        let env = sign_operation(&actor_kp, "vector-devnet-1", nonce, &format!("req_{nonce}"), 200 + nonce, &op);
+        let env = sign_operation(
+            &actor_kp,
+            "vector-devnet-1",
+            nonce,
+            &format!("req_{nonce}"),
+            200 + nonce,
+            &op,
+        );
         let b = engine
             .stage_signed_operation(&env, &op, "val_1", |bytes| val_kp.sign(bytes), 200 + nonce)
             .unwrap();
         let qc = single_val_qc(&b.proposal, &val_kp, &format!("qc_{nonce}"), 200 + nonce);
-        engine.commit_proposal_with_qc(&b.proposal, &qc, 200 + nonce).unwrap();
+        engine
+            .commit_proposal_with_qc(&b.proposal, &qc, 200 + nonce)
+            .unwrap();
         b.created_entities
             .first()
             .map(|e| e.id.clone())
@@ -331,7 +342,14 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
         amount: 1_000,
         cosignatures: vec![],
     };
-    let env_f = sign_operation(&actor_kp, "vector-devnet-1", 7, "req_frozen", 300, &frozen_xfer);
+    let env_f = sign_operation(
+        &actor_kp,
+        "vector-devnet-1",
+        7,
+        "req_frozen",
+        300,
+        &frozen_xfer,
+    );
     assert!(engine
         .stage_signed_operation(&env_f, &frozen_xfer, "val_1", |b| val_kp.sign(b), 300)
         .is_err());
@@ -346,7 +364,14 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
             allowed_senders: vec!["wal_unrelated".to_string()],
         },
     );
-    let env_r = sign_operation(&actor_kp, "vector-devnet-1", 8, "req_restricted", 301, &frozen_xfer);
+    let env_r = sign_operation(
+        &actor_kp,
+        "vector-devnet-1",
+        8,
+        "req_restricted",
+        301,
+        &frozen_xfer,
+    );
     assert!(engine
         .stage_signed_operation(&env_r, &frozen_xfer, "val_1", |b| val_kp.sign(b), 301)
         .is_err());
@@ -362,7 +387,15 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
         },
     );
     commit_op(&mut engine, 9, frozen_xfer);
-    assert_eq!(engine.state.get_balance(&tok_id, &w_b).unwrap().vector.token, 998);
+    assert_eq!(
+        engine
+            .state
+            .get_balance(&tok_id, &w_b)
+            .unwrap()
+            .vector
+            .token,
+        998
+    );
     assert!(verify_token_supply_conservation(&engine.state, &tok_id).unwrap());
 
     // Collateralized loan fund + repay uses protocol settlement transfer without Send permission issues
@@ -380,9 +413,23 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
             maturity_at_ms: None,
         },
     );
-    apply_execute_loan(&mut engine.state, &loan_id, "fund", 500, &actor_kp.public_key_hex, 500)
-        .unwrap();
-    apply_execute_loan(&mut engine.state, &loan_id, "repay", 500, &actor_kp.public_key_hex, 501)
-        .unwrap();
+    apply_execute_loan(
+        &mut engine.state,
+        &loan_id,
+        "fund",
+        500,
+        &actor_kp.public_key_hex,
+        500,
+    )
+    .unwrap();
+    apply_execute_loan(
+        &mut engine.state,
+        &loan_id,
+        "repay",
+        500,
+        &actor_kp.public_key_hex,
+        501,
+    )
+    .unwrap();
     assert!(verify_token_supply_conservation(&engine.state, &tok_id).unwrap());
 }

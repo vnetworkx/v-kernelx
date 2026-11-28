@@ -6,9 +6,7 @@ pub fn verify_proposer_eligibility(
     validator_id: &str,
 ) -> VResult<ConsensusValidator> {
     let v = membership.get(validator_id).ok_or_else(|| {
-        VNetworkError::Consensus(format!(
-            "proposer `{validator_id}` is not in validator set"
-        ))
+        VNetworkError::Consensus(format!("proposer `{validator_id}` is not in validator set"))
     })?;
     if !v.active || v.weight == 0 {
         return Err(VNetworkError::Consensus(format!(

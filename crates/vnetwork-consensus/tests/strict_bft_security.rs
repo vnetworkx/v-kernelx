@@ -1,20 +1,25 @@
-use vnetwork_consensus::{sign_consensus_vote, validate_proposal_against_state, ValidatorMembership};
-use vnetwork_core::consensus_gate::{
-    replay_validator_epoch_history, verify_membership_chain_from_genesis,
-    verify_quorum_certificate_strict,
+use vnetwork_consensus::{
+    sign_consensus_vote, validate_proposal_against_state, ValidatorMembership,
 };
 use vnetwork_core::authorization::{
     commit_request_nonce_event, commit_signed_operation_intent_event,
 };
+use vnetwork_core::consensus_gate::{
+    replay_validator_epoch_history, verify_membership_chain_from_genesis,
+    verify_quorum_certificate_strict,
+};
+use vnetwork_core::engine::ProtocolEngine;
 use vnetwork_core::identity::{
     canonical_join_signing_bytes, issue_participant_challenge, verify_and_register_participant,
     JoinNetworkRequest,
 };
-use vnetwork_core::engine::ProtocolEngine;
 use vnetwork_core::state::{GenesisConfig, NetworkLedgerState, ValidatorEpochTransition};
 use vnetwork_types::*;
 
-fn make_validators(count: usize, joined_epoch: u64) -> (Vec<KeypairMaterial>, Vec<ConsensusValidator>) {
+fn make_validators(
+    count: usize,
+    joined_epoch: u64,
+) -> (Vec<KeypairMaterial>, Vec<ConsensusValidator>) {
     let keys: Vec<KeypairMaterial> = (0..count)
         .map(|_| KeypairMaterial::generate("validator"))
         .collect();
@@ -45,7 +50,8 @@ fn test_qc_rejects_empty_vset_hash_low_threshold_wrong_policy_and_duplicate_pubk
     dup_validators[1].validator_pubkey_hex = validators[0].validator_pubkey_hex.clone();
     assert!(validate_validator_set(&dup_validators).is_err());
 
-    let membership = ValidatorMembership::try_new(validators.clone(), DEFAULT_BFT_QUORUM_BPS).unwrap();
+    let membership =
+        ValidatorMembership::try_new(validators.clone(), DEFAULT_BFT_QUORUM_BPS).unwrap();
     let genesis = GenesisConfig::for_profile(
         NetworkProfile::Testnet,
         "vector-testnet-1",
@@ -84,7 +90,9 @@ fn test_qc_rejects_empty_vset_hash_low_threshold_wrong_policy_and_duplicate_pubk
         proposer_signature: String::new(),
     };
     prop.finalize_digest_and_id().unwrap();
-    prop.proposer_signature = keys[0].sign(&prop.canonical_signing_bytes().unwrap()).unwrap();
+    prop.proposer_signature = keys[0]
+        .sign(&prop.canonical_signing_bytes().unwrap())
+        .unwrap();
 
     let votes = vec![
         sign_consensus_vote(&prop, &validators[0], &keys[0], true, 1001).unwrap(),
@@ -174,7 +182,8 @@ fn test_proposal_digest_tampering_and_genesis_membership_chain() {
         validators.clone(),
     );
     let state = NetworkLedgerState::try_new(&genesis).unwrap();
-    let membership = ValidatorMembership::try_new(validators.clone(), DEFAULT_BFT_QUORUM_BPS).unwrap();
+    let membership =
+        ValidatorMembership::try_new(validators.clone(), DEFAULT_BFT_QUORUM_BPS).unwrap();
     let pre_root = state.compute_state_root().unwrap();
     let vset_hash = membership.validator_set_hash().unwrap();
     let params_hash = genesis.consensus_parameters.parameters_hash().unwrap();
@@ -207,7 +216,9 @@ fn test_proposal_digest_tampering_and_genesis_membership_chain() {
         proposer_signature: String::new(),
     };
     prop.finalize_digest_and_id().unwrap();
-    prop.proposer_signature = keys[0].sign(&prop.canonical_signing_bytes().unwrap()).unwrap();
+    prop.proposer_signature = keys[0]
+        .sign(&prop.canonical_signing_bytes().unwrap())
+        .unwrap();
 
     // Tampered execution_params breaks proposal digest verification
     let mut tampered = prop.clone();
@@ -303,7 +314,10 @@ fn test_proposal_digest_tampering_and_genesis_membership_chain() {
     valid_tr.transition_certificate.proposal_digest = tr_prop.proposal_digest;
     valid_tr.transition_certificate.post_state_root = valid_tr.transition_payload_digest.clone();
     valid_tr.transition_certificate.votes = tr_votes;
-    valid_tr.transition_certificate.finalize_certificate_id().unwrap();
+    valid_tr
+        .transition_certificate
+        .finalize_certificate_id()
+        .unwrap();
 
     let (replayed_ep, replayed_vals, _) =
         replay_validator_epoch_history(&validators, 5, &e5_ctx, &[valid_tr.clone()]).unwrap();
@@ -411,7 +425,6 @@ fn test_proposal_digest_tampering_and_genesis_membership_chain() {
     .is_err());
 }
 
-
 #[test]
 fn ordinary_signed_operation_is_reexecuted_before_validator_vote() {
     let (validator_keys, validators) = make_validators(4, 1);
@@ -486,13 +499,9 @@ fn ordinary_signed_operation_is_reexecuted_before_validator_vote() {
     // would pass a replay-only validator, because the resulting state root is
     // internally consistent with these events.
     let mut forged_state = state.clone();
-    let intent = commit_signed_operation_intent_event(
-        &mut forged_state,
-        &envelope,
-        &operation,
-        2_000,
-    )
-    .unwrap();
+    let intent =
+        commit_signed_operation_intent_event(&mut forged_state, &envelope, &operation, 2_000)
+            .unwrap();
     let nonce_event = commit_request_nonce_event(
         &mut forged_state,
         &request_id,
@@ -540,7 +549,6 @@ fn ordinary_signed_operation_is_reexecuted_before_validator_vote() {
         "validators must reject a signed but unauthorized operation before voting"
     );
 }
-
 
 #[test]
 fn validator_reexecutes_and_accepts_a_valid_signed_participant_join() {
@@ -592,7 +600,6 @@ fn validator_reexecutes_and_accepts_a_valid_signed_participant_join() {
     assert_eq!(proposal.events[1].operation, "PARTICIPANT_JOIN");
     validate_proposal_against_state(&engine.state, &genesis, &membership, &proposal).unwrap();
 }
-
 
 #[test]
 fn unbound_proposal_cannot_inject_participant_scope() {

@@ -20,15 +20,18 @@ pub struct PeerRegistry {
 
 impl PeerRegistry {
     pub fn upsert_connected(&mut self, peer_id: String, addr: Option<String>, timestamp_ms: u64) {
-        let entry = self.peers.entry(peer_id.clone()).or_insert(ConnectedPeerInfo {
-            peer_id,
-            node_id: None,
-            addresses: Vec::new(),
-            sync_height: 0,
-            agent_version: String::new(),
-            connected: true,
-            last_seen_ms: timestamp_ms,
-        });
+        let entry = self
+            .peers
+            .entry(peer_id.clone())
+            .or_insert(ConnectedPeerInfo {
+                peer_id,
+                node_id: None,
+                addresses: Vec::new(),
+                sync_height: 0,
+                agent_version: String::new(),
+                connected: true,
+                last_seen_ms: timestamp_ms,
+            });
         entry.connected = true;
         entry.last_seen_ms = timestamp_ms;
         if let Some(a) = addr {
@@ -80,10 +83,16 @@ impl PeerRegistry {
     }
 
     pub fn parse_agent_header(network_id: &str, node_id: &str, height: u64) -> String {
-        format!("vnetwork|{}|{}|{}|{}", network_id, PROTOCOL_VERSION, node_id, height)
+        format!(
+            "vnetwork|{}|{}|{}|{}",
+            network_id, PROTOCOL_VERSION, node_id, height
+        )
     }
 
-    pub fn check_agent_compatible(expected_network: &str, agent: &str) -> Result<(String, u64), String> {
+    pub fn check_agent_compatible(
+        expected_network: &str,
+        agent: &str,
+    ) -> Result<(String, u64), String> {
         let parts: Vec<&str> = agent.split('|').collect();
         if parts.len() < 5 || parts[0] != "vnetwork" {
             return Err("unrecognized peer agent string".to_string());

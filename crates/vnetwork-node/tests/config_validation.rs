@@ -253,11 +253,12 @@ fn test_peer_dial_multiaddr_ssrf_guard() {
     let pub_ip: Multiaddr = "/ip4/198.51.100.12/tcp/7001".parse().unwrap();
     validate_peer_dial_multiaddr(&pub_ip, NetworkProfile::Production, false).unwrap();
 
-    let pub_dns: Multiaddr = "/dns4/bootnode1.vectornetwork.example/tcp/7001".parse().unwrap();
+    let pub_dns: Multiaddr = "/dns4/bootnode1.vectornetwork.example/tcp/7001"
+        .parse()
+        .unwrap();
     validate_peer_dial_multiaddr(&pub_dns, NetworkProfile::Production, false).unwrap();
 
     let loopback: Multiaddr = "/ip4/127.0.0.1/tcp/7001".parse().unwrap();
     validate_peer_dial_multiaddr(&loopback, NetworkProfile::Development, false).unwrap();
     validate_peer_dial_multiaddr(&loopback, NetworkProfile::Testnet, true).unwrap();
 }
-

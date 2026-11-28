@@ -62,10 +62,7 @@ impl GenesisConfig {
         self.consensus_context_for_epoch(self.genesis_epoch)
     }
 
-    pub fn consensus_context_for_epoch(
-        &self,
-        epoch: u64,
-    ) -> VResult<ConsensusVerificationContext> {
+    pub fn consensus_context_for_epoch(&self, epoch: u64) -> VResult<ConsensusVerificationContext> {
         self.validate()?;
         let genesis_commitment = self.commitment_hash()?;
         ConsensusVerificationContext::new(

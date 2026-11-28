@@ -107,9 +107,9 @@ pub fn compute_token_supply_breakdown(
                             ev.event_id
                         ))
                     })?;
-                    drained_fees_total = drained_fees_total
-                        .checked_add(fee)
-                        .ok_or_else(|| VNetworkError::Validation("drained fees overflow".to_string()))?;
+                    drained_fees_total = drained_fees_total.checked_add(fee).ok_or_else(|| {
+                        VNetworkError::Validation("drained fees overflow".to_string())
+                    })?;
                 }
             }
             "TOKEN_DRAIN" => {
@@ -129,9 +129,9 @@ pub fn compute_token_supply_breakdown(
                         ev.event_id
                     ))
                 })?;
-                drained_fees_total = drained_fees_total
-                    .checked_add(amt)
-                    .ok_or_else(|| VNetworkError::Validation("drained fees overflow".to_string()))?;
+                drained_fees_total = drained_fees_total.checked_add(amt).ok_or_else(|| {
+                    VNetworkError::Validation("drained fees overflow".to_string())
+                })?;
             }
             "TOKEN_BURN" => {
                 let amt_str = ev
@@ -150,9 +150,9 @@ pub fn compute_token_supply_breakdown(
                         ev.event_id
                     ))
                 })?;
-                burned_supply = burned_supply
-                    .checked_add(amt)
-                    .ok_or_else(|| VNetworkError::Validation("burned supply overflow".to_string()))?;
+                burned_supply = burned_supply.checked_add(amt).ok_or_else(|| {
+                    VNetworkError::Validation("burned supply overflow".to_string())
+                })?;
             }
             _ => {}
         }

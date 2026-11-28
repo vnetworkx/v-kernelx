@@ -46,7 +46,13 @@ pub async fn get_contract(
                 .find(|c| c.name.eq_ignore_ascii_case(&contract_id))
         })
         .cloned()
-        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "CONTRACT_NOT_FOUND", "contract not found"))?;
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "CONTRACT_NOT_FOUND",
+                "contract not found",
+            )
+        })?;
     serde_json::to_value(c).map(Json).map_err(|e| {
         ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,

@@ -110,7 +110,6 @@ fn expired_or_revoked_governance_cannot_create_space() {
     }
 }
 
-
 #[test]
 fn failed_network_transition_does_not_leak_partial_space_mutation() {
     let (mut state, actor) = state_with_participant("network_governance");

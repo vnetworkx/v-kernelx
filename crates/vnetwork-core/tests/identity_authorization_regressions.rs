@@ -23,7 +23,12 @@ fn state_with_participants() -> (NetworkLedgerState, String, String, String) {
     let authority = KeypairMaterial::generate("network-authority");
     let outsider = KeypairMaterial::generate("outsider");
 
-    insert_participant(&mut state, &ordinary, vec![baseline_network_grant()], ParticipationStatus::Active);
+    insert_participant(
+        &mut state,
+        &ordinary,
+        vec![baseline_network_grant()],
+        ParticipationStatus::Active,
+    );
     insert_participant(
         &mut state,
         &authority,
@@ -38,7 +43,12 @@ fn state_with_participants() -> (NetworkLedgerState, String, String, String) {
         }],
         ParticipationStatus::Active,
     );
-    insert_participant(&mut state, &outsider, vec![baseline_network_grant()], ParticipationStatus::Active);
+    insert_participant(
+        &mut state,
+        &outsider,
+        vec![baseline_network_grant()],
+        ParticipationStatus::Active,
+    );
     (
         state,
         ordinary.public_key_hex.clone(),
@@ -106,15 +116,8 @@ fn insert_participant(
 fn ordinary_network_membership_is_not_network_governance() {
     let (mut state, ordinary, _, _) = state_with_participants();
     let target_id = state.participants.keys().next().unwrap().clone();
-    let result = apply_grant_participant_scope(
-        &mut state,
-        &target_id,
-        "NETWORK",
-        None,
-        None,
-        &ordinary,
-        20,
-    );
+    let result =
+        apply_grant_participant_scope(&mut state, &target_id, "NETWORK", None, None, &ordinary, 20);
     assert!(matches!(result, Err(VNetworkError::Authorization(_))));
 }
 
@@ -130,27 +133,18 @@ fn only_explicit_network_authority_can_remove_membership_and_removal_is_recorded
         .clone();
     let before_events = state.events.len();
 
-    let denied = apply_revoke_participant_scope(
-        &mut state,
-        &ordinary_id,
-        "NETWORK",
-        None,
-        &ordinary,
-        20,
-    );
+    let denied =
+        apply_revoke_participant_scope(&mut state, &ordinary_id, "NETWORK", None, &ordinary, 20);
     assert!(matches!(denied, Err(VNetworkError::Authorization(_))));
-    assert_eq!(state.participants[&ordinary_id].status, ParticipationStatus::Active);
+    assert_eq!(
+        state.participants[&ordinary_id].status,
+        ParticipationStatus::Active
+    );
     assert_eq!(state.events.len(), before_events);
 
-    let (removed, event) = apply_revoke_participant_scope(
-        &mut state,
-        &ordinary_id,
-        "NETWORK",
-        None,
-        &authority,
-        21,
-    )
-    .expect("governance authority can remove a member");
+    let (removed, event) =
+        apply_revoke_participant_scope(&mut state, &ordinary_id, "NETWORK", None, &authority, 21)
+            .expect("governance authority can remove a member");
     assert_eq!(removed.status, ParticipationStatus::Revoked);
     assert_eq!(state.events.len(), before_events + 1);
     assert_eq!(event.operation, "PARTICIPANT_SCOPE_REVOKE");
@@ -214,15 +208,7 @@ fn validators_and_unknown_or_revoked_authorities_cannot_delegate_network_scope()
     let (mut state, _, _, outsider) = state_with_participants();
     let target_id = state.participants.keys().next().unwrap().clone();
     assert!(matches!(
-        apply_grant_participant_scope(
-            &mut state,
-            &target_id,
-            "NETWORK",
-            None,
-            None,
-            &outsider,
-            20,
-        ),
+        apply_grant_participant_scope(&mut state, &target_id, "NETWORK", None, None, &outsider, 20,),
         Err(VNetworkError::Authorization(_))
     ));
 
@@ -230,9 +216,11 @@ fn validators_and_unknown_or_revoked_authorities_cannot_delegate_network_scope()
         .participants
         .values()
         .find(|participant| {
-            participant.scope.grants.iter().any(|grant| {
-                grant.authorization_basis == "genesis_governance"
-            })
+            participant
+                .scope
+                .grants
+                .iter()
+                .any(|grant| grant.authorization_basis == "genesis_governance")
         })
         .unwrap()
         .participant_id

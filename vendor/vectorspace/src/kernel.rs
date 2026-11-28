@@ -1,7 +1,11 @@
 use crate::ast::VectorType;
 use crate::error::{RuntimeError, RuntimeErrorKind};
-use crate::event::{canonical_event_payload, derive_event_hash, derive_signature, derive_timestamp, Event};
-use crate::state::{CertificationState, ContractState, NetworkState, ProjectionState, VectorState, WalletState};
+use crate::event::{
+    canonical_event_payload, derive_event_hash, derive_signature, derive_timestamp, Event,
+};
+use crate::state::{
+    CertificationState, ContractState, NetworkState, ProjectionState, VectorState, WalletState,
+};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -192,7 +196,11 @@ fn canonical_record(
     let eid = format!("evt_{:016x}", state.events.len() + 1);
     let logical_clock = state.next_clock()?;
     let timestamp = derive_timestamp(logical_clock)?;
-    let parent_hashes = state.last_event_hash.clone().into_iter().collect::<Vec<_>>();
+    let parent_hashes = state
+        .last_event_hash
+        .clone()
+        .into_iter()
+        .collect::<Vec<_>>();
     let provisional_signature = derive_signature(
         &format!("{eid}:{actor_pk}:{logical_clock}"),
         actor_pk,
@@ -269,34 +277,35 @@ fn push_state_event(
     certified: bool,
     actor_pk: &str,
     proof: &str,
- ) -> Result<Event, RuntimeError> {
+) -> Result<Event, RuntimeError> {
     let event = canonical_record(
-        state,
-        entity_id,
-        region_id,
-        operation,
-        v_before,
-        v_after,
-        params,
-        auth_ratio,
-        certified,
-        actor_pk,
-        proof,
+        state, entity_id, region_id, operation, v_before, v_after, params, auth_ratio, certified,
+        actor_pk, proof,
     )?;
     state.push_event(event.clone());
     Ok(event)
 }
 
-pub fn execute_kernel_op(state: &mut NetworkState, op: KernelOp) -> Result<KernelResult, RuntimeError> {
+pub fn execute_kernel_op(
+    state: &mut NetworkState,
+    op: KernelOp,
+) -> Result<KernelResult, RuntimeError> {
     let mut staged = state.clone();
     let result = execute_kernel_op_inner(&mut staged, op)?;
     *state = staged;
     Ok(result)
 }
 
-fn execute_kernel_op_inner(state: &mut NetworkState, op: KernelOp) -> Result<KernelResult, RuntimeError> {
+fn execute_kernel_op_inner(
+    state: &mut NetworkState,
+    op: KernelOp,
+) -> Result<KernelResult, RuntimeError> {
     match op {
-        KernelOp::CreateVector { name, vector_type, components } => {
+        KernelOp::CreateVector {
+            name,
+            vector_type,
+            components,
+        } => {
             if state.vectors.contains_key(&name) {
                 return Err(RuntimeError::new(RuntimeErrorKind::DuplicateSymbol(name)));
             }
@@ -323,13 +332,20 @@ fn execute_kernel_op_inner(state: &mut NetworkState, op: KernelOp) -> Result<Ker
                 "kernel",
                 "origin-proof",
             )?;
-            Ok(KernelResult { output: Some(format!("created {name}")), record: Some(event) })
+            Ok(KernelResult {
+                output: Some(format!("created {name}")),
+                record: Some(event),
+            })
         }
         KernelOp::BindWallet { name, public_key } => {
             if state.wallets.contains_key(&name) {
                 return Err(RuntimeError::new(RuntimeErrorKind::DuplicateSymbol(name)));
             }
-            let wallet = WalletState { name: name.clone(), public_key: public_key.clone(), meta: BTreeMap::new() };
+            let wallet = WalletState {
+                name: name.clone(),
+                public_key: public_key.clone(),
+                meta: BTreeMap::new(),
+            };
             state.wallets.insert(name.clone(), wallet);
             let event = push_state_event(
                 state,
@@ -344,16 +360,23 @@ fn execute_kernel_op_inner(state: &mut NetworkState, op: KernelOp) -> Result<Ker
                 &public_key,
                 "wallet-binding",
             )?;
-            Ok(KernelResult { output: Some(format!("wallet {name} bound")), record: Some(event) })
+            Ok(KernelResult {
+                output: Some(format!("wallet {name} bound")),
+                record: Some(event),
+            })
         }
-        KernelOp::Certify { target, context, auth_ratio, certified } => {
+        KernelOp::Certify {
+            target,
+            context,
+            auth_ratio,
+            certified,
+        } => {
             let before;
             let after;
             {
-                let vector = state
-                    .vectors
-                    .get_mut(&target)
-                    .ok_or_else(|| RuntimeError::new(RuntimeErrorKind::UnknownSymbol(target.clone())))?;
+                let vector = state.vectors.get_mut(&target).ok_or_else(|| {
+                    RuntimeError::new(RuntimeErrorKind::UnknownSymbol(target.clone()))
+                })?;
                 before = vector.components.clone();
                 after = vector.components.clone();
                 vector.auth_ratio = auth_ratio.clone();
@@ -376,23 +399,30 @@ fn execute_kernel_op_inner(state: &mut NetworkState, op: KernelOp) -> Result<Ker
                 "kernel",
                 "certification-proof",
             )?;
-            Ok(KernelResult { output: Some(format!("certify {target} -> {certified}")), record: Some(event) })
+            Ok(KernelResult {
+                output: Some(format!("certify {target} -> {certified}")),
+                record: Some(event),
+            })
         }
-        KernelOp::Transfer { source, destination, amount, drain, policy } => {
+        KernelOp::Transfer {
+            source,
+            destination,
+            amount,
+            drain,
+            policy,
+        } => {
             if source == destination {
                 return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation(
                     "self-transfer is not supported".to_string(),
                 )));
             }
             let (source_type, dest_type, before_source, before_dest) = {
-                let source_vec = state
-                    .vectors
-                    .get(&source)
-                    .ok_or_else(|| RuntimeError::new(RuntimeErrorKind::UnknownSymbol(source.clone())))?;
-                let dest_vec = state
-                    .vectors
-                    .get(&destination)
-                    .ok_or_else(|| RuntimeError::new(RuntimeErrorKind::UnknownSymbol(destination.clone())))?;
+                let source_vec = state.vectors.get(&source).ok_or_else(|| {
+                    RuntimeError::new(RuntimeErrorKind::UnknownSymbol(source.clone()))
+                })?;
+                let dest_vec = state.vectors.get(&destination).ok_or_else(|| {
+                    RuntimeError::new(RuntimeErrorKind::UnknownSymbol(destination.clone()))
+                })?;
                 (
                     source_vec.vector_type,
                     dest_vec.vector_type,
@@ -424,17 +454,15 @@ fn execute_kernel_op_inner(state: &mut NetworkState, op: KernelOp) -> Result<Ker
             let after_dest = vector_add_strict(&before_dest, &received)?;
 
             {
-                let vec = state
-                    .vectors
-                    .get_mut(&source)
-                    .ok_or_else(|| RuntimeError::new(RuntimeErrorKind::UnknownSymbol(source.clone())))?;
+                let vec = state.vectors.get_mut(&source).ok_or_else(|| {
+                    RuntimeError::new(RuntimeErrorKind::UnknownSymbol(source.clone()))
+                })?;
                 vec.components = after_source.clone();
             }
             {
-                let vec = state
-                    .vectors
-                    .get_mut(&destination)
-                    .ok_or_else(|| RuntimeError::new(RuntimeErrorKind::UnknownSymbol(destination.clone())))?;
+                let vec = state.vectors.get_mut(&destination).ok_or_else(|| {
+                    RuntimeError::new(RuntimeErrorKind::UnknownSymbol(destination.clone()))
+                })?;
                 vec.components = after_dest.clone();
             }
 
@@ -472,24 +500,24 @@ fn execute_kernel_op_inner(state: &mut NetworkState, op: KernelOp) -> Result<Ker
             )?;
 
             Ok(KernelResult {
-                output: Some(format!("transfer {source}->{destination} amount={amount} drain={drain}")),
+                output: Some(format!(
+                    "transfer {source}->{destination} amount={amount} drain={drain}"
+                )),
                 record: Some(event),
             })
         }
         KernelOp::Drain { target, amount } => {
             let before = {
-                let vec = state
-                    .vectors
-                    .get(&target)
-                    .ok_or_else(|| RuntimeError::new(RuntimeErrorKind::UnknownSymbol(target.clone())))?;
+                let vec = state.vectors.get(&target).ok_or_else(|| {
+                    RuntimeError::new(RuntimeErrorKind::UnknownSymbol(target.clone()))
+                })?;
                 vec.components.clone()
             };
             let after = vector_subtract(&before, amount)?;
             {
-                let vec = state
-                    .vectors
-                    .get_mut(&target)
-                    .ok_or_else(|| RuntimeError::new(RuntimeErrorKind::UnknownSymbol(target.clone())))?;
+                let vec = state.vectors.get_mut(&target).ok_or_else(|| {
+                    RuntimeError::new(RuntimeErrorKind::UnknownSymbol(target.clone()))
+                })?;
                 vec.components = after.clone();
             }
             let event = push_state_event(
@@ -505,23 +533,30 @@ fn execute_kernel_op_inner(state: &mut NetworkState, op: KernelOp) -> Result<Ker
                 "kernel",
                 "drain-proof",
             )?;
-            Ok(KernelResult { output: Some(format!("drain {target} amount={amount}")), record: Some(event) })
+            Ok(KernelResult {
+                output: Some(format!("drain {target} amount={amount}")),
+                record: Some(event),
+            })
         }
-        KernelOp::Project { source, environment, amount, policy, projection_id } => {
+        KernelOp::Project {
+            source,
+            environment,
+            amount,
+            policy,
+            projection_id,
+        } => {
             let before = {
-                let vec = state
-                    .vectors
-                    .get(&source)
-                    .ok_or_else(|| RuntimeError::new(RuntimeErrorKind::UnknownSymbol(source.clone())))?;
+                let vec = state.vectors.get(&source).ok_or_else(|| {
+                    RuntimeError::new(RuntimeErrorKind::UnknownSymbol(source.clone()))
+                })?;
                 vec.components.clone()
             };
             let locked = component_allocation(&before, amount)?;
             let remainder = vector_subtract(&before, amount)?;
             {
-                let vec = state
-                    .vectors
-                    .get_mut(&source)
-                    .ok_or_else(|| RuntimeError::new(RuntimeErrorKind::UnknownSymbol(source.clone())))?;
+                let vec = state.vectors.get_mut(&source).ok_or_else(|| {
+                    RuntimeError::new(RuntimeErrorKind::UnknownSymbol(source.clone()))
+                })?;
                 vec.components = remainder.clone();
             }
             let proj = ProjectionState {
@@ -551,16 +586,23 @@ fn execute_kernel_op_inner(state: &mut NetworkState, op: KernelOp) -> Result<Ker
                 "kernel",
                 "project-proof",
             )?;
-            Ok(KernelResult { output: Some(format!("project {source} -> {projection_id}")), record: Some(event) })
+            Ok(KernelResult {
+                output: Some(format!("project {source} -> {projection_id}")),
+                record: Some(event),
+            })
         }
-        KernelOp::Reconstruct { target, projection_id } => {
+        KernelOp::Reconstruct {
+            target,
+            projection_id,
+        } => {
             let locked = {
-                let projection = state
-                    .projections
-                    .get_mut(&projection_id)
-                    .ok_or_else(|| RuntimeError::new(RuntimeErrorKind::ProjectionMissing(projection_id.clone())))?;
+                let projection = state.projections.get_mut(&projection_id).ok_or_else(|| {
+                    RuntimeError::new(RuntimeErrorKind::ProjectionMissing(projection_id.clone()))
+                })?;
                 if projection.consumed {
-                    return Err(RuntimeError::new(RuntimeErrorKind::ProjectionConsumed(projection_id)));
+                    return Err(RuntimeError::new(RuntimeErrorKind::ProjectionConsumed(
+                        projection_id,
+                    )));
                 }
                 projection.consumed = true;
                 projection.settlement_result = Some("full_return".to_string());
@@ -568,18 +610,16 @@ fn execute_kernel_op_inner(state: &mut NetworkState, op: KernelOp) -> Result<Ker
             };
 
             let before = {
-                let vec = state
-                    .vectors
-                    .get(&target)
-                    .ok_or_else(|| RuntimeError::new(RuntimeErrorKind::UnknownSymbol(target.clone())))?;
+                let vec = state.vectors.get(&target).ok_or_else(|| {
+                    RuntimeError::new(RuntimeErrorKind::UnknownSymbol(target.clone()))
+                })?;
                 vec.components.clone()
             };
             let after = vector_add_strict(&before, &locked)?;
             {
-                let vec = state
-                    .vectors
-                    .get_mut(&target)
-                    .ok_or_else(|| RuntimeError::new(RuntimeErrorKind::UnknownSymbol(target.clone())))?;
+                let vec = state.vectors.get_mut(&target).ok_or_else(|| {
+                    RuntimeError::new(RuntimeErrorKind::UnknownSymbol(target.clone()))
+                })?;
                 vec.components = after.clone();
             }
 
@@ -596,10 +636,19 @@ fn execute_kernel_op_inner(state: &mut NetworkState, op: KernelOp) -> Result<Ker
                 "kernel",
                 "reconstruct-proof",
             )?;
-            Ok(KernelResult { output: Some(format!("reconstruct {target} from {projection_id}")), record: Some(event) })
+            Ok(KernelResult {
+                output: Some(format!("reconstruct {target} from {projection_id}")),
+                record: Some(event),
+            })
         }
-        KernelOp::Query { expr } => Ok(KernelResult { output: Some(expr), record: None }),
-        KernelOp::Record { expr } => Ok(KernelResult { output: Some(expr), record: None }),
+        KernelOp::Query { expr } => Ok(KernelResult {
+            output: Some(expr),
+            record: None,
+        }),
+        KernelOp::Record { expr } => Ok(KernelResult {
+            output: Some(expr),
+            record: None,
+        }),
         KernelOp::Contract { name, actions } => {
             if state.contracts.contains_key(&name) {
                 return Err(RuntimeError::new(RuntimeErrorKind::DuplicateSymbol(name)));
@@ -624,13 +673,22 @@ fn execute_kernel_op_inner(state: &mut NetworkState, op: KernelOp) -> Result<Ker
                 "kernel",
                 "contract-proof",
             )?;
-            Ok(KernelResult { output: Some(format!("contract {name} deployed")), record: Some(event) })
+            Ok(KernelResult {
+                output: Some(format!("contract {name} deployed")),
+                record: Some(event),
+            })
         }
-        KernelOp::ContractAction { contract, action, args } => {
+        KernelOp::ContractAction {
+            contract,
+            action,
+            args,
+        } => {
             let contract_name = if let Some(contract_state) = state.contracts.get(&contract) {
                 contract_state.name.clone()
             } else {
-                return Err(RuntimeError::new(RuntimeErrorKind::ContractMissing(contract)));
+                return Err(RuntimeError::new(RuntimeErrorKind::ContractMissing(
+                    contract,
+                )));
             };
 
             let params = format!("action={action}, args={}", args.join(", "));
@@ -654,7 +712,6 @@ fn execute_kernel_op_inner(state: &mut NetworkState, op: KernelOp) -> Result<Ker
         }
     }
 }
-
 
 #[cfg(test)]
 mod atomic_single_operation_regressions {

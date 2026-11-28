@@ -59,9 +59,20 @@ pub async fn get_wallet(
     let w = state
         .wallets
         .get(&wallet_id)
-        .or_else(|| state.wallets.values().find(|w| w.name.eq_ignore_ascii_case(&wallet_id)))
+        .or_else(|| {
+            state
+                .wallets
+                .values()
+                .find(|w| w.name.eq_ignore_ascii_case(&wallet_id))
+        })
         .cloned()
-        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "WALLET_NOT_FOUND", "wallet not found"))?;
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "WALLET_NOT_FOUND",
+                "wallet not found",
+            )
+        })?;
     let balances: Vec<_> = state
         .balances
         .values()

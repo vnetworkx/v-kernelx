@@ -178,9 +178,10 @@ impl QuorumTracker {
                             "duplicate public key across votes for proposal `{proposal_id}`"
                         )));
                     }
-                    approving_weight = approving_weight.checked_add(val.weight).ok_or_else(|| {
-                        VNetworkError::Consensus("approving quorum weight overflow".to_string())
-                    })?;
+                    approving_weight =
+                        approving_weight.checked_add(val.weight).ok_or_else(|| {
+                            VNetworkError::Consensus("approving quorum weight overflow".to_string())
+                        })?;
                     approving_votes.push(vote.clone());
                 }
             }

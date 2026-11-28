@@ -19,12 +19,16 @@ pub async fn get_transaction(
     Path(transaction_id): Path<String>,
 ) -> ApiResult<Json<TransactionReceipt>> {
     let state = app.backend.state_snapshot().await;
-    let tx = state.transactions.get(&transaction_id).cloned().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::NOT_FOUND,
-            "TRANSACTION_NOT_FOUND",
-            format!("transaction `{transaction_id}` not found"),
-        )
-    })?;
+    let tx = state
+        .transactions
+        .get(&transaction_id)
+        .cloned()
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "TRANSACTION_NOT_FOUND",
+                format!("transaction `{transaction_id}` not found"),
+            )
+        })?;
     Ok(Json(tx))
 }

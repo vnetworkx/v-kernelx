@@ -79,7 +79,8 @@ impl NetworkConsensusParameters {
     }
 
     pub fn validate(&self) -> VResult<()> {
-        if self.quorum_threshold_bps < DEFAULT_BFT_QUORUM_BPS || self.quorum_threshold_bps > 10_000 {
+        if self.quorum_threshold_bps < DEFAULT_BFT_QUORUM_BPS || self.quorum_threshold_bps > 10_000
+        {
             return Err(VNetworkError::Consensus(format!(
                 "invalid quorum_threshold_bps `{}`; must be within [{DEFAULT_BFT_QUORUM_BPS}..=10000]",
                 self.quorum_threshold_bps
@@ -145,9 +146,12 @@ impl ConsensusVerificationContext {
                 "consensus verification context requires non-empty network_id".to_string(),
             ));
         }
-        if genesis_commitment.len() != 64 || !genesis_commitment.chars().all(|c| c.is_ascii_hexdigit()) {
+        if genesis_commitment.len() != 64
+            || !genesis_commitment.chars().all(|c| c.is_ascii_hexdigit())
+        {
             return Err(VNetworkError::Consensus(
-                "consensus verification context requires valid 64-hex genesis_commitment".to_string(),
+                "consensus verification context requires valid 64-hex genesis_commitment"
+                    .to_string(),
             ));
         }
         if protocol_version != PROTOCOL_VERSION {
@@ -185,7 +189,9 @@ impl ConsensusVerificationContext {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default,
+)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum VotePhase {
     Prepare,
@@ -737,7 +743,8 @@ impl QuorumCertificate {
     }
 
     pub fn finalize_certificate_id(&mut self) -> VResult<()> {
-        self.votes.sort_by(|a, b| a.validator_id.cmp(&b.validator_id));
+        self.votes
+            .sort_by(|a, b| a.validator_id.cmp(&b.validator_id));
         self.certificate_id = self.compute_certificate_id()?;
         Ok(())
     }

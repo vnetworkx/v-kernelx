@@ -107,7 +107,9 @@ pub fn validate_program_semantics(
             Statement::ParticipantJoin(p) => {
                 if p.name.trim().is_empty() {
                     return Err(RuntimeError::with_span(
-                        RuntimeErrorKind::Validation("participant name cannot be empty".to_string()),
+                        RuntimeErrorKind::Validation(
+                            "participant name cannot be empty".to_string(),
+                        ),
                         p.span,
                     ));
                 }
@@ -216,7 +218,8 @@ pub fn validate_program_semantics(
                         Expr::VectorLiteral(vals) => {
                             return Err(RuntimeError::with_span(
                                 RuntimeErrorKind::TypeMismatch {
-                                    expected: "3-dimensional vector [token, authratio(au), energy]".to_string(),
+                                    expected: "3-dimensional vector [token, authratio(au), energy]"
+                                        .to_string(),
                                     found: format!("{}-dimensional vector", vals.len()),
                                 },
                                 t.span,
@@ -317,7 +320,10 @@ pub fn validate_program_semantics(
             }
             Statement::LoanExecute(le) => {
                 let act = le.action.trim().to_ascii_lowercase();
-                if !matches!(act.as_str(), "draw" | "repay" | "liquidate" | "fund" | "settle") {
+                if !matches!(
+                    act.as_str(),
+                    "draw" | "repay" | "liquidate" | "fund" | "settle"
+                ) {
                     return Err(RuntimeError::with_span(
                         RuntimeErrorKind::InvalidOperation(format!(
                             "unsupported loan action `{}`",

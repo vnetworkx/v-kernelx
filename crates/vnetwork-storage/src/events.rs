@@ -95,7 +95,10 @@ impl EventWal {
                             continue;
                         }
                         let ev: LedgerEvent = serde_json::from_str(trimmed).map_err(|e| {
-                            VNetworkError::Storage(format!("corrupt events.wal line {}: {e}", idx + 1))
+                            VNetworkError::Storage(format!(
+                                "corrupt events.wal line {}: {e}",
+                                idx + 1
+                            ))
                         })?;
                         out.push(ev);
                     }
@@ -157,8 +160,9 @@ impl EventWal {
         for ev in events {
             let line = serde_json::to_string(ev)
                 .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
-            writeln!(buf, "{line}")
-                .map_err(|e| VNetworkError::Storage(format!("serialize events.wal line failed: {e}")))?;
+            writeln!(buf, "{line}").map_err(|e| {
+                VNetworkError::Storage(format!("serialize events.wal line failed: {e}"))
+            })?;
         }
         atomic_write_bytes(&self.path, &buf)
     }

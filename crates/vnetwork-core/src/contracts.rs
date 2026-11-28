@@ -86,7 +86,9 @@ pub fn apply_create_contract(
 
     let clean_name = name.trim();
     if clean_name.is_empty() {
-        return Err(VNetworkError::Validation("contract name cannot be empty".to_string()));
+        return Err(VNetworkError::Validation(
+            "contract name cannot be empty".to_string(),
+        ));
     }
     if state
         .contracts
@@ -137,7 +139,9 @@ pub fn apply_create_contract(
     let max_executions = match rules.get("max_executions") {
         None | Some(serde_json::Value::Null) => None,
         Some(v) => Some(v.as_u64().ok_or_else(|| {
-            VNetworkError::Validation("contract max_executions must be unsigned integer".to_string())
+            VNetworkError::Validation(
+                "contract max_executions must be unsigned integer".to_string(),
+            )
         })?),
     };
     let expires_at_ms = match rules.get("expires_at_ms") {
@@ -156,7 +160,9 @@ pub fn apply_create_contract(
     let min_auth_ratio_bps = match rules.get("min_auth_ratio_bps") {
         None | Some(serde_json::Value::Null) => 0,
         Some(v) => v.as_u64().ok_or_else(|| {
-            VNetworkError::Validation("contract min_auth_ratio_bps must be unsigned integer".to_string())
+            VNetworkError::Validation(
+                "contract min_auth_ratio_bps must be unsigned integer".to_string(),
+            )
         })?,
     };
     if min_auth_ratio_bps > 10_000 {
@@ -197,7 +203,9 @@ pub fn apply_create_contract(
         version: 1,
     };
 
-    state.contracts.insert(contract_id.clone(), contract.clone());
+    state
+        .contracts
+        .insert(contract_id.clone(), contract.clone());
     state.logical_clock = state
         .logical_clock
         .checked_add(1)
@@ -255,7 +263,9 @@ pub fn apply_execute_contract(
         .ok_or_else(|| VNetworkError::NotFound(format!("contract `{contract_ref}` not found")))?;
 
     if !contract.active {
-        return Err(VNetworkError::Validation("contract is inactive".to_string()));
+        return Err(VNetworkError::Validation(
+            "contract is inactive".to_string(),
+        ));
     }
     if let Some(exp) = contract.expires_at_ms {
         if timestamp_ms >= exp {
@@ -385,7 +395,9 @@ pub fn apply_execute_contract(
                 .or_else(|| contract.rules.get("token"))
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| {
-                    VNetworkError::Validation("contract escrow deposit requires `token`".to_string())
+                    VNetworkError::Validation(
+                        "contract escrow deposit requires `token`".to_string(),
+                    )
                 })?;
             let from_ref = dep_obj
                 .get("from_wallet")
@@ -420,7 +432,12 @@ pub fn apply_execute_contract(
             }
             let token = verify_token_exists(state, token_ref)?.clone();
             let from_wallet = verify_wallet_exists(state, from_ref)?.clone();
-            if contract.rules.get("restrict_to_region").and_then(|v| v.as_bool()) == Some(true) {
+            if contract
+                .rules
+                .get("restrict_to_region")
+                .and_then(|v| v.as_bool())
+                == Some(true)
+            {
                 if let Some(ref rid) = contract.region_id {
                     if &from_wallet.region_id != rid {
                         return Err(VNetworkError::Authorization(format!(
@@ -479,7 +496,9 @@ pub fn apply_execute_contract(
                 .or_else(|| contract.rules.get("token"))
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| {
-                    VNetworkError::Validation("contract escrow release requires `token`".to_string())
+                    VNetworkError::Validation(
+                        "contract escrow release requires `token`".to_string(),
+                    )
                 })?;
             let to_ref = rel_obj
                 .get("to_wallet")
@@ -525,7 +544,12 @@ pub fn apply_execute_contract(
                     )));
                 }
             }
-            if contract.rules.get("restrict_to_region").and_then(|v| v.as_bool()) == Some(true) {
+            if contract
+                .rules
+                .get("restrict_to_region")
+                .and_then(|v| v.as_bool())
+                == Some(true)
+            {
                 if let Some(ref rid) = contract.region_id {
                     if &to_wallet.region_id != rid {
                         return Err(VNetworkError::Authorization(format!(
@@ -561,16 +585,15 @@ pub fn apply_execute_contract(
                 "amount": amount.to_string(),
             }));
         } else if matches!(norm_action.as_str(), "deactivate" | "close") {
-            let nonzero_escrow = contract.escrow_balances.values().try_fold(
-                0u128,
-                |total, amount| {
-                    total.checked_add(*amount).ok_or_else(|| {
-                        VNetworkError::Validation(
-                            "contract escrow total overflow".to_string(),
-                        )
-                    })
-                },
-            )?;
+            let nonzero_escrow =
+                contract
+                    .escrow_balances
+                    .values()
+                    .try_fold(0u128, |total, amount| {
+                        total.checked_add(*amount).ok_or_else(|| {
+                            VNetworkError::Validation("contract escrow total overflow".to_string())
+                        })
+                    })?;
             if nonzero_escrow > 0 {
                 return Err(VNetworkError::Validation(
                     "cannot close contract while escrow balances remain non-zero".to_string(),
@@ -602,9 +625,9 @@ pub fn apply_execute_contract(
                 .map(|v| parse_u128_arg(v, &key))
                 .transpose()?
                 .unwrap_or(0);
-            let next = cur
-                .checked_add(delta)
-                .ok_or_else(|| VNetworkError::Validation("contract state counter overflow".to_string()))?;
+            let next = cur.checked_add(delta).ok_or_else(|| {
+                VNetworkError::Validation("contract state counter overflow".to_string())
+            })?;
             contract
                 .state_data
                 .insert(key, serde_json::json!(next.to_string()));
@@ -622,7 +645,10 @@ pub fn apply_execute_contract(
             }
         } else if let Some(obj) = args.as_object() {
             for (k, v) in obj {
-                if !matches!(k.as_str(), "escrow_deposit" | "escrow_payout" | "state_updates") {
+                if !matches!(
+                    k.as_str(),
+                    "escrow_deposit" | "escrow_payout" | "state_updates"
+                ) {
                     contract.state_data.insert(k.clone(), v.clone());
                 }
             }
@@ -652,10 +678,9 @@ pub fn apply_execute_contract(
     }
 
     let before_hash = blake3_hex(&canonical_json_bytes(&contract)?);
-    contract.execution_count = contract
-        .execution_count
-        .checked_add(1)
-        .ok_or_else(|| VNetworkError::Validation("contract execution_count overflow".to_string()))?;
+    contract.execution_count = contract.execution_count.checked_add(1).ok_or_else(|| {
+        VNetworkError::Validation("contract execution_count overflow".to_string())
+    })?;
     let exec_entry = format!("{}:{}@{}", contract.execution_count, action, timestamp_ms);
     contract.execution_history.push(exec_entry);
     contract.version = contract

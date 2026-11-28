@@ -14,11 +14,12 @@ pub fn validator_verify_program_bundle(
     proposal: &ConsensusProposal,
     actor_pubkey: &str,
 ) -> VResult<()> {
-    let (bound_actor, bound_request_id, bound_nonce) = proposal.nonce_binding.as_ref().ok_or_else(|| {
-        VNetworkError::Consensus(
-            "program proposal missing mandatory nonce_binding actor commitment".to_string(),
-        )
-    })?;
+    let (bound_actor, bound_request_id, bound_nonce) =
+        proposal.nonce_binding.as_ref().ok_or_else(|| {
+            VNetworkError::Consensus(
+                "program proposal missing mandatory nonce_binding actor commitment".to_string(),
+            )
+        })?;
     if bound_actor != actor_pubkey {
         return Err(VNetworkError::Authorization(format!(
             "program actor_pubkey `{actor_pubkey}` does not match proposal nonce_binding `{bound_actor}`"

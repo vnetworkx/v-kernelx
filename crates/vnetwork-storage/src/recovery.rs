@@ -45,9 +45,8 @@ fn quarantine_artifact(data_dir: &Path, path: &Path, tag: &str) -> VResult<Optio
         return Ok(None);
     }
     let qdir = data_dir.join("forensic_quarantine");
-    fs::create_dir_all(&qdir).map_err(|e| {
-        VNetworkError::Storage(format!("create forensic_quarantine failed: {e}"))
-    })?;
+    fs::create_dir_all(&qdir)
+        .map_err(|e| VNetworkError::Storage(format!("create forensic_quarantine failed: {e}")))?;
     let name = path
         .file_name()
         .and_then(|n| n.to_str())
@@ -190,8 +189,8 @@ pub fn recover_state_from_disk(
 
     let genesis_path = data_dir.join("genesis.json");
     if genesis_path.exists() {
-        let raw = fs::read_to_string(&genesis_path)
-            .map_err(|e| VNetworkError::Storage(e.to_string()))?;
+        let raw =
+            fs::read_to_string(&genesis_path).map_err(|e| VNetworkError::Storage(e.to_string()))?;
         let stored: GenesisConfig =
             serde_json::from_str(&raw).map_err(|e| VNetworkError::Storage(e.to_string()))?;
         let stored_hash = stored.commitment_hash()?;
@@ -217,7 +216,9 @@ pub fn recover_state_from_disk(
     if tx_dir.exists() {
         let mut pending_files = Vec::new();
         for entry in fs::read_dir(&tx_dir).map_err(|e| VNetworkError::Storage(e.to_string()))? {
-            let path = entry.map_err(|e| VNetworkError::Storage(e.to_string()))?.path();
+            let path = entry
+                .map_err(|e| VNetworkError::Storage(e.to_string()))?
+                .path();
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                 if name.ends_with("_pending.json") {
                     pending_files.push(path);
@@ -226,10 +227,12 @@ pub fn recover_state_from_disk(
         }
         pending_files.sort();
         for p_path in pending_files {
-            let raw = fs::read_to_string(&p_path)
-                .map_err(|e| VNetworkError::Storage(format!("read pending tx {:?}: {e}", p_path)))?;
-            let pending: PendingCommitRecord = serde_json::from_str(&raw)
-                .map_err(|e| VNetworkError::Storage(format!("parse pending tx {:?}: {e}", p_path)))?;
+            let raw = fs::read_to_string(&p_path).map_err(|e| {
+                VNetworkError::Storage(format!("read pending tx {:?}: {e}", p_path))
+            })?;
+            let pending: PendingCommitRecord = serde_json::from_str(&raw).map_err(|e| {
+                VNetworkError::Storage(format!("parse pending tx {:?}: {e}", p_path))
+            })?;
             let expected_path = pending_tx_path(data_dir, pending.height);
             if p_path != expected_path {
                 return Err(VNetworkError::Storage(format!(
@@ -246,14 +249,12 @@ pub fn recover_state_from_disk(
             let c_path = committed_tx_path(data_dir, pending.height);
             if !c_path.exists() {
                 rolled_back_uncommitted += 1;
-                invalidated_min_height = Some(
-                    invalidated_min_height
-                        .map_or(pending.height, |m| m.min(pending.height)),
-                );
-                rollback_event_limit = Some(
-                    rollback_event_limit
-                        .map_or(pending.prior_event_count, |m| m.min(pending.prior_event_count)),
-                );
+                invalidated_min_height =
+                    Some(invalidated_min_height.map_or(pending.height, |m| m.min(pending.height)));
+                rollback_event_limit =
+                    Some(rollback_event_limit.map_or(pending.prior_event_count, |m| {
+                        m.min(pending.prior_event_count)
+                    }));
                 if let Some(q) = quarantine_artifact(data_dir, &p_path, "uncommitted_pending")? {
                     quarantined_artifacts.push(q);
                 }
@@ -297,16 +298,19 @@ pub fn recover_state_from_disk(
     if tx_dir.exists() {
         let mut seen_marker_heights = BTreeSet::new();
         for entry in fs::read_dir(&tx_dir).map_err(|e| VNetworkError::Storage(e.to_string()))? {
-            let path = entry.map_err(|e| VNetworkError::Storage(e.to_string()))?.path();
+            let path = entry
+                .map_err(|e| VNetworkError::Storage(e.to_string()))?
+                .path();
             if path
                 .file_name()
                 .and_then(|n| n.to_str())
                 .map_or(false, |s| s.ends_with("_committed.marker"))
             {
-                let raw = fs::read_to_string(&path)
-                    .map_err(|e| VNetworkError::Storage(e.to_string()))?;
-                let marker: CommittedCommitMarker = serde_json::from_str(&raw)
-                    .map_err(|e| VNetworkError::Storage(format!("corrupt committed marker: {e}")))?;
+                let raw =
+                    fs::read_to_string(&path).map_err(|e| VNetworkError::Storage(e.to_string()))?;
+                let marker: CommittedCommitMarker = serde_json::from_str(&raw).map_err(|e| {
+                    VNetworkError::Storage(format!("corrupt committed marker: {e}"))
+                })?;
                 if path != committed_tx_path(data_dir, marker.height) {
                     return Err(VNetworkError::Storage(format!(
                         "committed marker path {:?} does not match height {}",
@@ -449,7 +453,12 @@ pub fn recover_state_from_disk(
                 &vset_hash,
                 &state.validators,
             )?;
-            commit_verified_proposal(&mut state, &rec.proposal, &rec.certificate, &proven_validators)?;
+            commit_verified_proposal(
+                &mut state,
+                &rec.proposal,
+                &rec.certificate,
+                &proven_validators,
+            )?;
             proposals_replayed += 1;
         }
     }
@@ -494,10 +503,15 @@ pub fn recover_state_from_disk(
 
     if tx_dir.exists() {
         for entry in fs::read_dir(&tx_dir).map_err(|e| VNetworkError::Storage(e.to_string()))? {
-            let path = entry.map_err(|e| VNetworkError::Storage(e.to_string()))?.path();
+            let path = entry
+                .map_err(|e| VNetworkError::Storage(e.to_string()))?
+                .path();
             if path.is_file() {
                 fs::remove_file(&path).map_err(|e| {
-                    VNetworkError::Storage(format!("remove processed wal_tx marker {:?}: {e}", path))
+                    VNetworkError::Storage(format!(
+                        "remove processed wal_tx marker {:?}: {e}",
+                        path
+                    ))
                 })?;
             }
         }

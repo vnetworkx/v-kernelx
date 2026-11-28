@@ -123,11 +123,7 @@ impl EquivocationDetector {
         Self::default()
     }
 
-    pub fn check_and_record(
-        &mut self,
-        vote: &ConsensusVote,
-        timestamp_ms: u64,
-    ) -> VResult<()> {
+    pub fn check_and_record(&mut self, vote: &ConsensusVote, timestamp_ms: u64) -> VResult<()> {
         let slot = match verify_standalone_vote_signature_and_fields(vote) {
             Ok(s) => s,
             Err(err) => {
@@ -148,7 +144,9 @@ impl EquivocationDetector {
                     conflicting_proposal_id: vote.proposal_id.clone(),
                     conflicting_proposal_digest: vote.proposal_digest.clone(),
                     observed_vote: Some(vote.clone()),
-                    reason: format!("invalid observed vote rejected without fabricating evidence: {err}"),
+                    reason: format!(
+                        "invalid observed vote rejected without fabricating evidence: {err}"
+                    ),
                     detected_at_ms: timestamp_ms,
                 };
                 self.incidents.push(incident);
@@ -660,8 +658,8 @@ impl EquivocationStore {
             .map_err(|e| {
                 VNetworkError::Storage(format!("open equivocation_evidence.wal failed: {e}"))
             })?;
-        let line = serde_json::to_string(&ev)
-            .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
+        let line =
+            serde_json::to_string(&ev).map_err(|e| VNetworkError::Serialization(e.to_string()))?;
         writeln!(file, "{line}").map_err(|e| {
             VNetworkError::Storage(format!("write equivocation_evidence.wal failed: {e}"))
         })?;
@@ -680,8 +678,8 @@ impl EquivocationStore {
             .map_err(|e| {
                 VNetworkError::Storage(format!("open equivocation_incidents.wal failed: {e}"))
             })?;
-        let line = serde_json::to_string(&inc)
-            .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
+        let line =
+            serde_json::to_string(&inc).map_err(|e| VNetworkError::Serialization(e.to_string()))?;
         writeln!(file, "{line}").map_err(|e| {
             VNetworkError::Storage(format!("write equivocation_incidents.wal failed: {e}"))
         })?;
@@ -940,7 +938,8 @@ impl EquivocationStore {
                 genesis_commitment: vote.genesis_commitment.clone(),
                 protocol_version: vote.protocol_version.clone(),
                 validator_id: vote.validator_id.clone(),
-                pubkey_fingerprint: pubkey_fingerprint(&vote.validator_pubkey_hex).unwrap_or_default(),
+                pubkey_fingerprint: pubkey_fingerprint(&vote.validator_pubkey_hex)
+                    .unwrap_or_default(),
                 epoch: vote.epoch,
                 height: vote.height,
                 round: vote.round,
@@ -959,11 +958,7 @@ impl EquivocationStore {
         self.record_observed_vote(vote, timestamp_ms)
     }
 
-    pub fn record_observed_vote(
-        &mut self,
-        vote: &ConsensusVote,
-        timestamp_ms: u64,
-    ) -> VResult<()> {
+    pub fn record_observed_vote(&mut self, vote: &ConsensusVote, timestamp_ms: u64) -> VResult<()> {
         let slot = match verify_standalone_vote_signature_and_fields(vote) {
             Ok(s) => s,
             Err(err) => {
@@ -984,7 +979,9 @@ impl EquivocationStore {
                     conflicting_proposal_id: vote.proposal_id.clone(),
                     conflicting_proposal_digest: vote.proposal_digest.clone(),
                     observed_vote: Some(vote.clone()),
-                    reason: format!("invalid observed vote rejected without creating evidence: {err}"),
+                    reason: format!(
+                        "invalid observed vote rejected without creating evidence: {err}"
+                    ),
                     detected_at_ms: timestamp_ms,
                 };
                 self.append_incident_fsync(inc)?;

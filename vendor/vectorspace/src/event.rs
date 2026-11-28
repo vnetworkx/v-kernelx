@@ -130,7 +130,6 @@ impl Display for Event {
     }
 }
 
-
 #[cfg(test)]
 mod checked_timestamp_regressions {
     use super::derive_timestamp;

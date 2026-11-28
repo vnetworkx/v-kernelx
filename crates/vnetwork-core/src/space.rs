@@ -16,7 +16,9 @@ pub fn apply_create_space(
 
     let clean_name = name.trim();
     if clean_name.is_empty() {
-        return Err(VNetworkError::Validation("space name cannot be empty".to_string()));
+        return Err(VNetworkError::Validation(
+            "space name cannot be empty".to_string(),
+        ));
     }
     if state
         .spaces
@@ -56,7 +58,11 @@ pub fn apply_create_space(
         &state.network_id,
         "space",
         &space_id,
-        if ghost { "GHOST_SPACE_CREATE" } else { "SPACE_CREATE" },
+        if ghost {
+            "GHOST_SPACE_CREATE"
+        } else {
+            "SPACE_CREATE"
+        },
         actor_pubkey,
         state.logical_clock,
         timestamp_ms,

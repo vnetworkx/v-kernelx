@@ -20,7 +20,9 @@ fn default_file_name() -> String {
     "program.vx".to_string()
 }
 
-pub async fn parse_source(Json(req): Json<LanguageSourceRequest>) -> ApiResult<Json<serde_json::Value>> {
+pub async fn parse_source(
+    Json(req): Json<LanguageSourceRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
     let res = parse_vx_source(&req.source_bytes)?;
     Ok(Json(res))
 }

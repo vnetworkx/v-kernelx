@@ -98,7 +98,11 @@ pub fn verify_attestation(
         &attestation.state_root_hash,
         attestation.timestamp_ms,
     );
-    verify_signature(&attestation.validator_pubkey, &bytes, &attestation.signature)
+    verify_signature(
+        &attestation.validator_pubkey,
+        &bytes,
+        &attestation.signature,
+    )
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -146,7 +150,9 @@ impl QuorumConsensusState {
         let canonical_pk = vk.to_bytes();
         for existing in self.validators.values() {
             if existing.node_id != validator.node_id {
-                if let Ok(other_vk) = crate::wallet::verifying_key_from_hex(&existing.public_key_hex) {
+                if let Ok(other_vk) =
+                    crate::wallet::verifying_key_from_hex(&existing.public_key_hex)
+                {
                     if other_vk.to_bytes() == canonical_pk {
                         return Err(KernelXError::Rejected(format!(
                             "duplicate canonical validator public key across `{}` and `{}`",

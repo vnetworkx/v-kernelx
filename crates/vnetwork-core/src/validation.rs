@@ -19,9 +19,13 @@ pub fn validate_operation_preconditions_with_policy(
 ) -> VResult<()> {
     let atlas_allowed = state.profile.allows_dev_atlas_fixture() || allow_bootstrap_atlas;
     match op {
-        NetworkOperation::CreateSpace { name, visibility, .. } => {
+        NetworkOperation::CreateSpace {
+            name, visibility, ..
+        } => {
             if name.trim().is_empty() {
-                return Err(VNetworkError::Validation("space name cannot be empty".to_string()));
+                return Err(VNetworkError::Validation(
+                    "space name cannot be empty".to_string(),
+                ));
             }
             Visibility::parse(visibility).ok_or_else(|| {
                 VNetworkError::Validation(format!("invalid visibility `{visibility}`"))
@@ -98,7 +102,11 @@ pub fn validate_operation_preconditions_with_policy(
                 ));
             }
             if pop_nonce.as_deref().map(str::trim).unwrap_or("").is_empty()
-                || pop_signature.as_deref().map(str::trim).unwrap_or("").is_empty()
+                || pop_signature
+                    .as_deref()
+                    .map(str::trim)
+                    .unwrap_or("")
+                    .is_empty()
             {
                 return Err(VNetworkError::Authorization(
                     "AuthorizeWalletKey requires non-empty pop_nonce and pop_signature".to_string(),
@@ -134,7 +142,11 @@ pub fn validate_operation_preconditions_with_policy(
                 ));
             }
             if pop_nonce.as_deref().map(str::trim).unwrap_or("").is_empty()
-                || pop_signature.as_deref().map(str::trim).unwrap_or("").is_empty()
+                || pop_signature
+                    .as_deref()
+                    .map(str::trim)
+                    .unwrap_or("")
+                    .is_empty()
             {
                 return Err(VNetworkError::Authorization(
                     "RotateWalletKey requires non-empty pop_nonce and pop_signature".to_string(),
@@ -338,7 +350,9 @@ pub fn validate_operation_preconditions_with_policy(
             }
             Ok(())
         }
-        NetworkOperation::ExecuteLoan { loan_id, action, .. } => {
+        NetworkOperation::ExecuteLoan {
+            loan_id, action, ..
+        } => {
             if loan_id.trim().is_empty() || action.trim().is_empty() {
                 return Err(VNetworkError::Validation(
                     "loan_id and action are required".to_string(),

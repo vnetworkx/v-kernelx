@@ -12,7 +12,10 @@ use crate::transport::{P2pGossipMessage, P2pSyncRequest, P2pSyncResponse};
 use crate::validator::evaluate_and_sign_proposal;
 use async_trait::async_trait;
 use futures::StreamExt;
-use libp2p::{gossipsub, identify, multiaddr::Protocol, request_response, swarm::SwarmEvent, Multiaddr, PeerId};
+use libp2p::{
+    gossipsub, identify, multiaddr::Protocol, request_response, swarm::SwarmEvent, Multiaddr,
+    PeerId,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -346,9 +349,20 @@ impl NetworkNodeBackend for NodeHandle {
                 reply: tx,
             })
             .await
-            .map_err(|_| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "NODE_STOPPED", "node runtime stopped"))?;
-        rx.await
-            .map_err(|_| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "CHANNEL_CLOSED", "command dropped"))?
+            .map_err(|_| {
+                ApiError::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "NODE_STOPPED",
+                    "node runtime stopped",
+                )
+            })?;
+        rx.await.map_err(|_| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "CHANNEL_CLOSED",
+                "command dropped",
+            )
+        })?
     }
 
     async fn issue_challenge(&self) -> Result<ParticipantChallenge, ApiError> {
@@ -356,31 +370,71 @@ impl NetworkNodeBackend for NodeHandle {
         self.cmd_tx
             .send(NodeCommand::IssueChallenge { reply: tx })
             .await
-            .map_err(|_| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "NODE_STOPPED", "node runtime stopped"))?;
-        rx.await
-            .map_err(|_| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "CHANNEL_CLOSED", "command dropped"))?
+            .map_err(|_| {
+                ApiError::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "NODE_STOPPED",
+                    "node runtime stopped",
+                )
+            })?;
+        rx.await.map_err(|_| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "CHANNEL_CLOSED",
+                "command dropped",
+            )
+        })?
     }
 
-    async fn join_participant(&self, req: JoinNetworkRequest) -> Result<serde_json::Value, ApiError> {
+    async fn join_participant(
+        &self,
+        req: JoinNetworkRequest,
+    ) -> Result<serde_json::Value, ApiError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
             .send(NodeCommand::JoinParticipant { req, reply: tx })
             .await
-            .map_err(|_| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "NODE_STOPPED", "node runtime stopped"))?;
-        rx.await
-            .map_err(|_| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "CHANNEL_CLOSED", "command dropped"))?
+            .map_err(|_| {
+                ApiError::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "NODE_STOPPED",
+                    "node runtime stopped",
+                )
+            })?;
+        rx.await.map_err(|_| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "CHANNEL_CLOSED",
+                "command dropped",
+            )
+        })?
     }
 
-    async fn submit_program(&self, req: SubmitProgramRequest) -> Result<ProgramSubmission, ApiError> {
-        self.metrics.programs_submitted.fetch_add(1, Ordering::Relaxed);
+    async fn submit_program(
+        &self,
+        req: SubmitProgramRequest,
+    ) -> Result<ProgramSubmission, ApiError> {
+        self.metrics
+            .programs_submitted
+            .fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
             .send(NodeCommand::SubmitProgram { req, reply: tx })
             .await
-            .map_err(|_| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "NODE_STOPPED", "node runtime stopped"))?;
-        let res = rx
-            .await
-            .map_err(|_| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "CHANNEL_CLOSED", "command dropped"))?;
+            .map_err(|_| {
+                ApiError::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "NODE_STOPPED",
+                    "node runtime stopped",
+                )
+            })?;
+        let res = rx.await.map_err(|_| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "CHANNEL_CLOSED",
+                "command dropped",
+            )
+        })?;
         if res.is_err() {
             self.metrics.programs_failed.fetch_add(1, Ordering::Relaxed);
         }
@@ -395,9 +449,20 @@ impl NetworkNodeBackend for NodeHandle {
         self.cmd_tx
             .send(NodeCommand::SubmitSignedOp { req, reply: tx })
             .await
-            .map_err(|_| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "NODE_STOPPED", "node runtime stopped"))?;
-        rx.await
-            .map_err(|_| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "CHANNEL_CLOSED", "command dropped"))?
+            .map_err(|_| {
+                ApiError::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "NODE_STOPPED",
+                    "node runtime stopped",
+                )
+            })?;
+        rx.await.map_err(|_| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "CHANNEL_CLOSED",
+                "command dropped",
+            )
+        })?
     }
 
     async fn consensus_status(&self) -> serde_json::Value {
@@ -432,7 +497,8 @@ impl NetworkNodeBackend for NodeHandle {
 
     async fn verify_replay(&self) -> Result<ReplayVerificationReport, ApiError> {
         let state = self.shared_state.read().await;
-        vnetwork_core::replay::verify_replay_equivalence(&state, &self.genesis).map_err(ApiError::from)
+        vnetwork_core::replay::verify_replay_equivalence(&state, &self.genesis)
+            .map_err(ApiError::from)
     }
 
     async fn verify_token_supply(
@@ -440,7 +506,8 @@ impl NetworkNodeBackend for NodeHandle {
         token_id: &str,
     ) -> Result<SupplyConservationBreakdown, ApiError> {
         let state = self.shared_state.read().await;
-        vnetwork_core::supply::compute_token_supply_breakdown(&state, token_id).map_err(ApiError::from)
+        vnetwork_core::supply::compute_token_supply_breakdown(&state, token_id)
+            .map_err(ApiError::from)
     }
 
     async fn list_equivocations(&self) -> Vec<EquivocationEvidence> {
@@ -467,7 +534,10 @@ impl NetworkNodeBackend for NodeHandle {
     }
 }
 
-pub fn build_genesis_from_config(cfg: &NodeConfig, identity: &NodeIdentity) -> VResult<GenesisConfig> {
+pub fn build_genesis_from_config(
+    cfg: &NodeConfig,
+    identity: &NodeIdentity,
+) -> VResult<GenesisConfig> {
     let mut validators = cfg.genesis_validators.clone();
     if validators.is_empty() && cfg.enable_validator {
         if let (Some(vid), Some(vmeta)) = (&identity.validator_id, &identity.validator_metadata) {
@@ -482,14 +552,10 @@ pub fn build_genesis_from_config(cfg: &NodeConfig, identity: &NodeIdentity) -> V
         }
     }
     let params = NetworkConsensusParameters::with_quorum_threshold_bps(cfg.quorum_threshold_bps)?;
-    let mut g = GenesisConfig::for_profile(
-        cfg.profile,
-        &cfg.network_id,
-        &cfg.network_name,
-        validators,
-    )
-    .with_drain_policy(cfg.drain_policy.clone())
-    .with_consensus_parameters(params)?;
+    let mut g =
+        GenesisConfig::for_profile(cfg.profile, &cfg.network_id, &cfg.network_name, validators)
+            .with_drain_policy(cfg.drain_policy.clone())
+            .with_consensus_parameters(params)?;
     if let Some(allow) = cfg.allow_bootstrap_atlas {
         if cfg.profile == NetworkProfile::Production && allow {
             return Err(VNetworkError::Authorization(
@@ -503,7 +569,10 @@ pub fn build_genesis_from_config(cfg: &NodeConfig, identity: &NodeIdentity) -> V
 }
 
 fn requires_shared_genesis(profile: NetworkProfile) -> bool {
-    matches!(profile, NetworkProfile::Testnet | NetworkProfile::Production)
+    matches!(
+        profile,
+        NetworkProfile::Testnet | NetworkProfile::Production
+    )
 }
 
 pub async fn start_node_runtime(
@@ -574,7 +643,8 @@ pub async fn start_node_runtime(
     let shared_membership = Arc::new(RwLock::new(membership));
     let shared_equivocations = Arc::new(RwLock::new(equivocation_store.evidence().to_vec()));
     let storage_healthy = Arc::new(AtomicBool::new(storage.check_health().is_ok()));
-    let equivocation_store_healthy = Arc::new(AtomicBool::new(equivocation_store.check_health().is_ok()));
+    let equivocation_store_healthy =
+        Arc::new(AtomicBool::new(equivocation_store.check_health().is_ok()));
     let metrics = Arc::new(NodeMetrics::default());
     let (ws_tx, _) = broadcast::channel(512);
     let (cmd_tx, cmd_rx) = mpsc::channel(256);
@@ -640,12 +710,10 @@ async fn run_node_loop(
     mut cmd_rx: mpsc::Receiver<NodeCommand>,
     shutdown: ShutdownSignal,
 ) {
-    let agent = PeerRegistry::parse_agent_header(
-        &cfg.network_id,
-        &identity.node_id,
-        engine.state.height,
-    );
-    let consensus_topic = gossipsub::IdentTopic::new(format!("vnetwork/{}/consensus", cfg.network_id));
+    let agent =
+        PeerRegistry::parse_agent_header(&cfg.network_id, &identity.node_id, engine.state.height);
+    let consensus_topic =
+        gossipsub::IdentTopic::new(format!("vnetwork/{}/consensus", cfg.network_id));
     let mut swarm = libp2p::SwarmBuilder::with_existing_identity(identity.libp2p_keypair.clone())
         .with_tokio()
         .with_tcp(
@@ -678,7 +746,10 @@ async fn run_node_loop(
             for ma in boot_addrs {
                 if let Some(peer_id) = extract_peer_id(&ma) {
                     if peer_id != identity.libp2p_peer_id {
-                        swarm.behaviour_mut().kademlia.add_address(&peer_id, ma.clone());
+                        swarm
+                            .behaviour_mut()
+                            .kademlia
+                            .add_address(&peer_id, ma.clone());
                         let _ = swarm.dial(ma);
                     }
                 } else {
@@ -1394,7 +1465,8 @@ async fn process_new_proposal(
                     }
                     Ok(None) => {}
                     Err(e) => {
-                        *shared_equivocations.write().await = equivocation_store.evidence().to_vec();
+                        *shared_equivocations.write().await =
+                            equivocation_store.evidence().to_vec();
                         tracing::warn!(proposal_id = %proposal.proposal_id, error = %e, "rejected self-vote in quorum tracker");
                     }
                 }
@@ -1443,9 +1515,12 @@ async fn handle_gossip_or_relay_message(
                 return;
             }
             let membership = shared_membership.read().await.clone();
-            if let Err(e) =
-                vnetwork_consensus::validate_proposal_against_state(&engine.state, genesis, &membership, &proposal)
-            {
+            if let Err(e) = vnetwork_consensus::validate_proposal_against_state(
+                &engine.state,
+                genesis,
+                &membership,
+                &proposal,
+            ) {
                 tracing::warn!(proposal_id = %proposal.proposal_id, error = %e, "rejected invalid proposal");
                 return;
             }
@@ -1455,7 +1530,9 @@ async fn handle_gossip_or_relay_message(
             }
             pending_proposals.insert(proposal.proposal_id.clone(), proposal.clone());
 
-            if let (Some(val_id), Some(val_signer)) = (&identity.validator_id, &identity.validator_signer) {
+            if let (Some(val_id), Some(val_signer)) =
+                (&identity.validator_id, &identity.validator_signer)
+            {
                 match evaluate_and_sign_proposal(
                     &engine.state,
                     genesis,
@@ -1506,7 +1583,8 @@ async fn handle_gossip_or_relay_message(
                             }
                             Ok(None) => {}
                             Err(e) => {
-                                *shared_equivocations.write().await = equivocation_store.evidence().to_vec();
+                                *shared_equivocations.write().await =
+                                    equivocation_store.evidence().to_vec();
                                 tracing::warn!(proposal_id = %proposal.proposal_id, error = %e, "rejected peer proposal vote");
                             }
                         }
@@ -1562,8 +1640,12 @@ async fn handle_gossip_or_relay_message(
                 }
             }
         }
-        P2pGossipMessage::Certificate { proposal_id, certificate } => {
-            if certificate.network_id != cfg.network_id || certificate.height <= engine.state.height {
+        P2pGossipMessage::Certificate {
+            proposal_id,
+            certificate,
+        } => {
+            if certificate.network_id != cfg.network_id || certificate.height <= engine.state.height
+            {
                 return;
             }
             let membership = shared_membership.read().await.clone();
@@ -1653,9 +1735,15 @@ async fn finalize_proposal_everywhere(
                 if let Some(waiter) = pending_waiters.remove(proposal_id) {
                     let err = ApiError::from(e);
                     match waiter.kind {
-                        PendingKind::Join { reply, .. } => { let _ = reply.send(Err(err)); }
-                        PendingKind::Program { reply, .. } => { let _ = reply.send(Err(err)); }
-                        PendingKind::Transaction { reply, .. } => { let _ = reply.send(Err(err)); }
+                        PendingKind::Join { reply, .. } => {
+                            let _ = reply.send(Err(err));
+                        }
+                        PendingKind::Program { reply, .. } => {
+                            let _ = reply.send(Err(err));
+                        }
+                        PendingKind::Transaction { reply, .. } => {
+                            let _ = reply.send(Err(err));
+                        }
                     }
                 }
                 return;
@@ -1695,7 +1783,12 @@ async fn finalize_proposal_everywhere(
 
             if let Some(waiter) = pending_waiters.remove(proposal_id) {
                 match waiter.kind {
-                    PendingKind::Join { participant, node, mut receipt, reply } => {
+                    PendingKind::Join {
+                        participant,
+                        node,
+                        mut receipt,
+                        reply,
+                    } => {
                         receipt.status = ProgramLifecycleStatus::Committed;
                         receipt.certificate_id = Some(qc.certificate_id.clone());
                         receipt.state_root = post_root.clone();
@@ -1737,9 +1830,15 @@ async fn finalize_proposal_everywhere(
             if let Some(waiter) = pending_waiters.remove(proposal_id) {
                 let err = ApiError::from(e);
                 match waiter.kind {
-                    PendingKind::Join { reply, .. } => { let _ = reply.send(Err(err)); }
-                    PendingKind::Program { reply, .. } => { let _ = reply.send(Err(err)); }
-                    PendingKind::Transaction { reply, .. } => { let _ = reply.send(Err(err)); }
+                    PendingKind::Join { reply, .. } => {
+                        let _ = reply.send(Err(err));
+                    }
+                    PendingKind::Program { reply, .. } => {
+                        let _ = reply.send(Err(err));
+                    }
+                    PendingKind::Transaction { reply, .. } => {
+                        let _ = reply.send(Err(err));
+                    }
                 }
             }
         }
@@ -1758,10 +1857,16 @@ fn broadcast_gossip_and_direct(
         return;
     }
     if let Ok(bytes) = serde_json::to_vec(&gossip_msg) {
-        let _ = swarm.behaviour_mut().gossipsub.publish(topic.clone(), bytes);
+        let _ = swarm
+            .behaviour_mut()
+            .gossipsub
+            .publish(topic.clone(), bytes);
     }
     for peer in connected_peers {
-        swarm.behaviour_mut().sync.send_request(peer, direct_req.clone());
+        swarm
+            .behaviour_mut()
+            .sync
+            .send_request(peer, direct_req.clone());
     }
 }
 
@@ -1784,7 +1889,6 @@ impl<'a, A, B> OptPair<&'a A, &'a B> for (&'a Option<A>, &'a Option<B>) {
         }
     }
 }
-
 
 #[cfg(test)]
 mod shared_genesis_policy_tests {

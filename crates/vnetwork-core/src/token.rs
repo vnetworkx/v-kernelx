@@ -49,7 +49,9 @@ pub fn apply_create_token(
         )));
     }
     if drain_bps > 10_000 {
-        return Err(VNetworkError::Validation("drain_bps must be <= 10000".to_string()));
+        return Err(VNetworkError::Validation(
+            "drain_bps must be <= 10000".to_string(),
+        ));
     }
 
     let clean_name = name.trim();
@@ -74,75 +76,74 @@ pub fn apply_create_token(
         }
     }
 
-    let (token_id, wallet_id, region_id, space_id, bal_wallet_id) = if ghost
-        && wallet_ref.trim().is_empty()
-    {
-        require_participant_scope_at(
-            state,
-            actor_pubkey,
-            ParticipationLevel::Network,
-            None,
-            timestamp_ms,
-        )?;
-        let tid = derive_token_id("__network_ghost__", &clean_symbol);
-        let custody_id = format!("ghost_custody::{tid}");
-        (tid, String::new(), String::new(), String::new(), custody_id)
-    } else {
-        let wallet = verify_wallet_exists(state, wallet_ref)?.clone();
-        wallet.verify_permission(
-            actor_pubkey,
-            WalletPermission::ManageKeys,
-            None,
-            None,
-            timestamp_ms,
-        )?;
-
-        let has_token_scope = require_participant_scope_at(
-            state,
-            actor_pubkey,
-            ParticipationLevel::Token,
-            Some(&wallet.wallet_id),
-            timestamp_ms,
-        )
-        .is_ok();
-        let is_authorized_wallet_owner = wallet.owner_pubkey == actor_pubkey
-            && (require_participant_scope_at(
+    let (token_id, wallet_id, region_id, space_id, bal_wallet_id) =
+        if ghost && wallet_ref.trim().is_empty() {
+            require_participant_scope_at(
                 state,
                 actor_pubkey,
-                ParticipationLevel::Wallet,
-                Some(&wallet.region_id),
+                ParticipationLevel::Network,
+                None,
+                timestamp_ms,
+            )?;
+            let tid = derive_token_id("__network_ghost__", &clean_symbol);
+            let custody_id = format!("ghost_custody::{tid}");
+            (tid, String::new(), String::new(), String::new(), custody_id)
+        } else {
+            let wallet = verify_wallet_exists(state, wallet_ref)?.clone();
+            wallet.verify_permission(
+                actor_pubkey,
+                WalletPermission::ManageKeys,
+                None,
+                None,
+                timestamp_ms,
+            )?;
+
+            let has_token_scope = require_participant_scope_at(
+                state,
+                actor_pubkey,
+                ParticipationLevel::Token,
+                Some(&wallet.wallet_id),
                 timestamp_ms,
             )
-            .is_ok()
-                || state
-                    .regions
-                    .get(&wallet.region_id)
-                    .is_some_and(|r| r.creator_pubkey == actor_pubkey)
-                || (wallet.ghost
-                    && wallet.region_id.is_empty()
-                    && require_participant_scope_at(
-                        state,
-                        actor_pubkey,
-                        ParticipationLevel::Network,
-                        None,
-                        timestamp_ms,
-                    )
-                    .is_ok()));
-        if !has_token_scope && !is_authorized_wallet_owner {
-            return Err(VNetworkError::Authorization(format!(
+            .is_ok();
+            let is_authorized_wallet_owner = wallet.owner_pubkey == actor_pubkey
+                && (require_participant_scope_at(
+                    state,
+                    actor_pubkey,
+                    ParticipationLevel::Wallet,
+                    Some(&wallet.region_id),
+                    timestamp_ms,
+                )
+                .is_ok()
+                    || state
+                        .regions
+                        .get(&wallet.region_id)
+                        .is_some_and(|r| r.creator_pubkey == actor_pubkey)
+                    || (wallet.ghost
+                        && wallet.region_id.is_empty()
+                        && require_participant_scope_at(
+                            state,
+                            actor_pubkey,
+                            ParticipationLevel::Network,
+                            None,
+                            timestamp_ms,
+                        )
+                        .is_ok()));
+            if !has_token_scope && !is_authorized_wallet_owner {
+                return Err(VNetworkError::Authorization(format!(
                 "actor `{actor_pubkey}` lacks TOKEN scope or authorized ownership of wallet `{}`",
                 wallet.name
             )));
-        }
-        let tid = derive_token_id(&wallet.wallet_id, &clean_symbol);
-        (
-            tid,
-            wallet.wallet_id.clone(),
-            wallet.region_id.clone(),
-            wallet.space_id.clone(),
-            wallet.wallet_id,
-        )
-    };
+            }
+            let tid = derive_token_id(&wallet.wallet_id, &clean_symbol);
+            (
+                tid,
+                wallet.wallet_id.clone(),
+                wallet.region_id.clone(),
+                wallet.space_id.clone(),
+                wallet.wallet_id,
+            )
+        };
 
     if state.tokens.contains_key(&token_id)
         || state
@@ -204,7 +205,11 @@ pub fn apply_create_token(
         &state.network_id,
         "token",
         &token_id,
-        if ghost { "GHOST_TOKEN_CREATE" } else { "TOKEN_CREATE" },
+        if ghost {
+            "GHOST_TOKEN_CREATE"
+        } else {
+            "TOKEN_CREATE"
+        },
         actor_pubkey,
         state.logical_clock,
         timestamp_ms,
@@ -365,13 +370,9 @@ fn execute_transfer_internal(
     let from_key = NetworkLedgerState::balance_key(&token.token_id, &from_wallet.wallet_id);
     let to_key = NetworkLedgerState::balance_key(&token.token_id, &to_wallet.wallet_id);
 
-    let before_from = state
-        .balances
-        .get(&from_key)
-        .cloned()
-        .ok_or_else(|| {
-            VNetworkError::InsufficientBalance("source wallet holds 0 balance".to_string())
-        })?;
+    let before_from = state.balances.get(&from_key).cloned().ok_or_else(|| {
+        VNetworkError::InsufficientBalance("source wallet holds 0 balance".to_string())
+    })?;
 
     if before_from.vector.token < amount {
         return Err(VNetworkError::InsufficientBalance(format!(
@@ -402,7 +403,13 @@ fn execute_transfer_internal(
         let b_hash = blake3_hex(&canonical_json_bytes(&(&before_from, &before_to))?);
         state.balances.insert(from_key, after_single.clone());
         let a_hash = blake3_hex(&canonical_json_bytes(&(&after_single, &after_single))?);
-        (before_to, after_single.clone(), after_single, b_hash, a_hash)
+        (
+            before_to,
+            after_single.clone(),
+            after_single,
+            b_hash,
+            a_hash,
+        )
     } else {
         let before_to = state
             .balances
@@ -447,14 +454,9 @@ fn execute_transfer_internal(
 
     if drain_fee > 0 {
         let mut t = token.clone();
-        t.total_supply = t
-            .total_supply
-            .checked_sub(drain_fee)
-            .ok_or_else(|| {
-                VNetworkError::Validation(
-                    "token total_supply underflow on drain fee".to_string(),
-                )
-            })?;
+        t.total_supply = t.total_supply.checked_sub(drain_fee).ok_or_else(|| {
+            VNetworkError::Validation("token total_supply underflow on drain fee".to_string())
+        })?;
         t.version = t
             .version
             .checked_add(1)
@@ -516,7 +518,9 @@ pub fn apply_drain_token(
     timestamp_ms: u64,
 ) -> VResult<(TokenBalanceRecord, LedgerEvent)> {
     if amount == 0 {
-        return Err(VNetworkError::Validation("drain amount must be positive".to_string()));
+        return Err(VNetworkError::Validation(
+            "drain amount must be positive".to_string(),
+        ));
     }
     let token = verify_token_exists(state, token_ref)?.clone();
     let expected_ghost_custody = format!("ghost_custody::{}", token.token_id);
@@ -550,11 +554,9 @@ pub fn apply_drain_token(
     };
 
     let key = NetworkLedgerState::balance_key(&token.token_id, &drain_wallet_id);
-    let before = state
-        .balances
-        .get(&key)
-        .cloned()
-        .ok_or_else(|| VNetworkError::InsufficientBalance("wallet balance not found".to_string()))?;
+    let before = state.balances.get(&key).cloned().ok_or_else(|| {
+        VNetworkError::InsufficientBalance("wallet balance not found".to_string())
+    })?;
     let before_hash = blake3_hex(&canonical_json_bytes(&before)?);
 
     let mut after = before.clone();
@@ -567,10 +569,9 @@ pub fn apply_drain_token(
     state.balances.insert(key, after.clone());
 
     let mut t = token;
-    t.total_supply = t
-        .total_supply
-        .checked_sub(amount)
-        .ok_or_else(|| VNetworkError::Validation("token total_supply underflow on drain".to_string()))?;
+    t.total_supply = t.total_supply.checked_sub(amount).ok_or_else(|| {
+        VNetworkError::Validation("token total_supply underflow on drain".to_string())
+    })?;
     t.version = t
         .version
         .checked_add(1)
@@ -650,19 +651,22 @@ pub fn apply_adjust_non_transferable_dimensions(
 
     if actor_pubkey != token.authority_pubkey {
         return Err(VNetworkError::Authorization(
-            "only token authority may adjust non-transferable dimensions"
-                .to_string(),
+            "only token authority may adjust non-transferable dimensions".to_string(),
         ));
     }
 
     let key = NetworkLedgerState::balance_key(&token.token_id, &target_wallet_id);
-    let before = state.balances.get(&key).cloned().unwrap_or(TokenBalanceRecord {
-        token_id: token.token_id.clone(),
-        wallet_id: target_wallet_id.clone(),
-        vector: TokenVector::zero(),
-        updated_at_ms: timestamp_ms,
-        version: 0,
-    });
+    let before = state
+        .balances
+        .get(&key)
+        .cloned()
+        .unwrap_or(TokenBalanceRecord {
+            token_id: token.token_id.clone(),
+            wallet_id: target_wallet_id.clone(),
+            vector: TokenVector::zero(),
+            updated_at_ms: timestamp_ms,
+            version: 0,
+        });
     let before_hash = blake3_hex(&canonical_json_bytes(&before)?);
 
     let mut after = before.clone();

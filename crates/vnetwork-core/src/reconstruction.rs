@@ -37,10 +37,9 @@ pub fn reconstruct_entity(
                         .find(|s| s.name.eq_ignore_ascii_case(entity_id_or_name))
                 })
                 .ok_or_else(|| VNetworkError::NotFound(format!("space `{entity_id_or_name}`")))?;
-            let rec = replayed
-                .spaces
-                .get(&live.space_id)
-                .ok_or_else(|| VNetworkError::NotFound("reconstructed space missing".to_string()))?;
+            let rec = replayed.spaces.get(&live.space_id).ok_or_else(|| {
+                VNetworkError::NotFound("reconstructed space missing".to_string())
+            })?;
             (
                 live.space_id.clone(),
                 serde_json::to_value(live)
@@ -60,10 +59,9 @@ pub fn reconstruct_entity(
                         .find(|r| r.name.eq_ignore_ascii_case(entity_id_or_name))
                 })
                 .ok_or_else(|| VNetworkError::NotFound(format!("region `{entity_id_or_name}`")))?;
-            let rec = replayed
-                .regions
-                .get(&live.region_id)
-                .ok_or_else(|| VNetworkError::NotFound("reconstructed region missing".to_string()))?;
+            let rec = replayed.regions.get(&live.region_id).ok_or_else(|| {
+                VNetworkError::NotFound("reconstructed region missing".to_string())
+            })?;
             (
                 live.region_id.clone(),
                 serde_json::to_value(live)
@@ -83,10 +81,9 @@ pub fn reconstruct_entity(
                         .find(|w| w.name.eq_ignore_ascii_case(entity_id_or_name))
                 })
                 .ok_or_else(|| VNetworkError::NotFound(format!("wallet `{entity_id_or_name}`")))?;
-            let rec = replayed
-                .wallets
-                .get(&live.wallet_id)
-                .ok_or_else(|| VNetworkError::NotFound("reconstructed wallet missing".to_string()))?;
+            let rec = replayed.wallets.get(&live.wallet_id).ok_or_else(|| {
+                VNetworkError::NotFound("reconstructed wallet missing".to_string())
+            })?;
             (
                 live.wallet_id.clone(),
                 serde_json::to_value(live)
@@ -106,10 +103,9 @@ pub fn reconstruct_entity(
                     })
                 })
                 .ok_or_else(|| VNetworkError::NotFound(format!("token `{entity_id_or_name}`")))?;
-            let rec = replayed
-                .tokens
-                .get(&live.token_id)
-                .ok_or_else(|| VNetworkError::NotFound("reconstructed token missing".to_string()))?;
+            let rec = replayed.tokens.get(&live.token_id).ok_or_else(|| {
+                VNetworkError::NotFound("reconstructed token missing".to_string())
+            })?;
             let live_bals: Vec<_> = live_state
                 .balances
                 .values()
@@ -136,13 +132,12 @@ pub fn reconstruct_entity(
                         .values()
                         .find(|c| c.name.eq_ignore_ascii_case(entity_id_or_name))
                 })
-                .ok_or_else(|| VNetworkError::NotFound(format!("contract `{entity_id_or_name}`")))?;
-            let rec = replayed
-                .contracts
-                .get(&live.contract_id)
                 .ok_or_else(|| {
-                    VNetworkError::NotFound("reconstructed contract missing".to_string())
+                    VNetworkError::NotFound(format!("contract `{entity_id_or_name}`"))
                 })?;
+            let rec = replayed.contracts.get(&live.contract_id).ok_or_else(|| {
+                VNetworkError::NotFound("reconstructed contract missing".to_string())
+            })?;
             (
                 live.contract_id.clone(),
                 serde_json::to_value(live)

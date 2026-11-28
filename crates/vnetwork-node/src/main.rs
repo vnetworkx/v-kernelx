@@ -251,7 +251,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             max_body_bytes: 2 * 1024 * 1024,
             rate_limit_per_min: 3000,
             tls_enabled: cfg.tls.enabled,
-            tls_cert_path: (!cfg.tls.cert_path.is_empty()).then(|| PathBuf::from(&cfg.tls.cert_path)),
+            tls_cert_path: (!cfg.tls.cert_path.is_empty())
+                .then(|| PathBuf::from(&cfg.tls.cert_path)),
             tls_key_path: (!cfg.tls.key_path.is_empty()).then(|| PathBuf::from(&cfg.tls.key_path)),
         };
         let backend: Arc<dyn vnetwork_api::NetworkNodeBackend> = Arc::new(handle);

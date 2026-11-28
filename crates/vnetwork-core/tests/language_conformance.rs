@@ -89,7 +89,12 @@ fn signed_scope_auth(
     auth
 }
 
-fn make_dev_engine() -> (ProtocolEngine, KeypairMaterial, KeypairMaterial, KeypairMaterial) {
+fn make_dev_engine() -> (
+    ProtocolEngine,
+    KeypairMaterial,
+    KeypairMaterial,
+    KeypairMaterial,
+) {
     let val_kp = KeypairMaterial::generate("validator");
     let genesis = GenesisConfig::for_profile(
         NetworkProfile::Development,
@@ -223,12 +228,18 @@ fn test_all_example_vx_programs_compile_cleanly() {
 
     for entry in std::fs::read_dir(&examples_dir).unwrap() {
         let path = entry.unwrap().path();
-        if matches!(path.extension().and_then(|e| e.to_str()), Some("vx") | Some("vdx")) {
+        if matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("vx") | Some("vdx")
+        ) {
             let src = std::fs::read_to_string(&path).unwrap();
             let fname = path.file_name().unwrap().to_str().unwrap();
             let compiled = compile_vx_source(&src, fname, &BTreeMap::new(), Some(&examples_dir))
                 .unwrap_or_else(|e| panic!("failed to compile {fname}: {e}"));
-            assert!(!compiled.program_hash.is_empty(), "{fname} missing program hash");
+            assert!(
+                !compiled.program_hash.is_empty(),
+                "{fname} missing program hash"
+            );
         }
     }
 }
@@ -256,17 +267,24 @@ query network;
 fn test_rejects_module_path_traversal_and_absolute_imports() {
     let base = std::env::temp_dir().join(format!("vx_trav_{}", uuid::Uuid::new_v4().simple()));
     std::fs::create_dir_all(&base).unwrap();
-    let outside = base.parent().unwrap().join(format!("outside_{}.vdx", uuid::Uuid::new_v4().simple()));
+    let outside = base
+        .parent()
+        .unwrap()
+        .join(format!("outside_{}.vdx", uuid::Uuid::new_v4().simple()));
     std::fs::write(&outside, "space create Outside { visibility = \"public\" }").unwrap();
 
     let traversal_src = format!(
         "import \"../{}\";\nquery network;\n",
         outside.file_name().unwrap().to_str().unwrap()
     );
-    let err = compile_vx_source(&traversal_src, "trav.vx", &BTreeMap::new(), Some(&base)).unwrap_err();
+    let err =
+        compile_vx_source(&traversal_src, "trav.vx", &BTreeMap::new(), Some(&base)).unwrap_err();
     assert!(err.to_string().contains("unsafe") || err.to_string().contains("escape"));
 
-    let abs_src = format!("import \"{}\";\nquery network;\n", outside.to_string_lossy());
+    let abs_src = format!(
+        "import \"{}\";\nquery network;\n",
+        outside.to_string_lossy()
+    );
     let abs_err = compile_vx_source(&abs_src, "abs.vx", &BTreeMap::new(), Some(&base)).unwrap_err();
     assert!(abs_err.to_string().contains("unsafe") || abs_err.to_string().contains("absolute"));
 
@@ -275,7 +293,8 @@ fn test_rejects_module_path_traversal_and_absolute_imports() {
         let link_path = base.join("escape.vdx");
         std::os::unix::fs::symlink(&outside, &link_path).unwrap();
         let sym_src = "import \"escape.vdx\";\nquery network;\n";
-        let sym_err = compile_vx_source(sym_src, "sym.vx", &BTreeMap::new(), Some(&base)).unwrap_err();
+        let sym_err =
+            compile_vx_source(sym_src, "sym.vx", &BTreeMap::new(), Some(&base)).unwrap_err();
         assert!(sym_err.to_string().contains("escape"));
     }
 
@@ -288,7 +307,8 @@ fn test_rejects_authratio_and_energy_direct_mutation_and_non_3d_token() {
     let vector_transfer = r#"
 transfer "TOK" from "W1" to "W2" amount [10, 5, 1];
 "#;
-    let err = compile_vx_source(vector_transfer, "bad_xfer.vx", &BTreeMap::new(), None).unwrap_err();
+    let err =
+        compile_vx_source(vector_transfer, "bad_xfer.vx", &BTreeMap::new(), None).unwrap_err();
     assert!(err.to_string().contains("AuthRatio") || err.to_string().contains("only Token"));
 
     let dim2_token = r#"
@@ -423,7 +443,9 @@ transfer "OKTOK" from "OkWalletA" to "OkWalletB" amount 250;
         "validators must reject non-canonical program and transaction identities"
     );
 
-    engine.commit_proposal_with_qc(&staged.proposal, &qc, 2_101).unwrap();
+    engine
+        .commit_proposal_with_qc(&staged.proposal, &qc, 2_101)
+        .unwrap();
     assert_eq!(engine.state.spaces.len(), 1);
     assert_eq!(engine.state.tokens.len(), 1);
     assert!(engine.verify_replay().unwrap().valid);
@@ -478,7 +500,10 @@ fn test_open_join_cannot_self_escalate_scope() {
         .stage_participant_join(&join_req, "val_1", |b| val_kp.sign(b), 3_001)
         .unwrap();
     assert_eq!(participant.scope.levels.len(), 1);
-    assert!(participant.scope.levels.contains(&ParticipationLevel::Network));
+    assert!(participant
+        .scope
+        .levels
+        .contains(&ParticipationLevel::Network));
     let qc = single_val_qc(&prop, &val_kp, "qc_rogue", 3_002);
     engine.commit_proposal_with_qc(&prop, &qc, 3_002).unwrap();
 
@@ -515,7 +540,9 @@ fn test_wallet_pop_multisig_and_loan_collateral_escrow_conservation() {
         .stage_signed_operation(&env1, &space_op, "val_1", |b| val_kp.sign(b), 4_000)
         .unwrap();
     let qc1 = single_val_qc(&b1.proposal, &val_kp, "qc_m1", 4_001);
-    engine.commit_proposal_with_qc(&b1.proposal, &qc1, 4_001).unwrap();
+    engine
+        .commit_proposal_with_qc(&b1.proposal, &qc1, 4_001)
+        .unwrap();
     let space_id = b1.created_entities[0].id.clone();
 
     let reg_op = NetworkOperation::CreateRegion {
@@ -532,7 +559,9 @@ fn test_wallet_pop_multisig_and_loan_collateral_escrow_conservation() {
         .stage_signed_operation(&env2, &reg_op, "val_1", |b| val_kp.sign(b), 4_002)
         .unwrap();
     let qc2 = single_val_qc(&b2.proposal, &val_kp, "qc_m2", 4_003);
-    engine.commit_proposal_with_qc(&b2.proposal, &qc2, 4_003).unwrap();
+    engine
+        .commit_proposal_with_qc(&b2.proposal, &qc2, 4_003)
+        .unwrap();
     let region_id = b2.created_entities[0].id.clone();
 
     // 2. Create 2-of-2 multisig wallet and borrower wallet
@@ -547,7 +576,9 @@ fn test_wallet_pop_multisig_and_loan_collateral_escrow_conservation() {
         .stage_signed_operation(&env3, &w_a, "val_1", |b| val_kp.sign(b), 4_004)
         .unwrap();
     let qc3 = single_val_qc(&b3.proposal, &val_kp, "qc_m3", 4_005);
-    engine.commit_proposal_with_qc(&b3.proposal, &qc3, 4_005).unwrap();
+    engine
+        .commit_proposal_with_qc(&b3.proposal, &qc3, 4_005)
+        .unwrap();
     let vault_id = b3.created_entities[0].id.clone();
 
     let w_b = NetworkOperation::CreateWallet {
@@ -561,7 +592,9 @@ fn test_wallet_pop_multisig_and_loan_collateral_escrow_conservation() {
         .stage_signed_operation(&env4, &w_b, "val_1", |b| val_kp.sign(b), 4_006)
         .unwrap();
     let qc4 = single_val_qc(&b4.proposal, &val_kp, "qc_m4", 4_007);
-    engine.commit_proposal_with_qc(&b4.proposal, &qc4, 4_007).unwrap();
+    engine
+        .commit_proposal_with_qc(&b4.proposal, &qc4, 4_007)
+        .unwrap();
     let borrower_id = b4.created_entities[0].id.clone();
 
     // 3. Invalid PoP fails; valid PoP succeeds
@@ -577,7 +610,14 @@ fn test_wallet_pop_multisig_and_loan_collateral_escrow_conservation() {
         pop_signature: Some("deadbeef".to_string()),
         participant_identity: None,
     };
-    let env_bad = sign_operation(&actor_kp, "vector-devnet-1", 5, "op_5_bad", 4_008, &bad_auth);
+    let env_bad = sign_operation(
+        &actor_kp,
+        "vector-devnet-1",
+        5,
+        "op_5_bad",
+        4_008,
+        &bad_auth,
+    );
     assert!(engine
         .stage_signed_operation(&env_bad, &bad_auth, "val_1", |b| val_kp.sign(b), 4_008)
         .is_err());
@@ -612,7 +652,9 @@ fn test_wallet_pop_multisig_and_loan_collateral_escrow_conservation() {
         .stage_signed_operation(&env5, &good_auth, "val_1", |b| val_kp.sign(b), 4_009)
         .unwrap();
     let qc5 = single_val_qc(&b5.proposal, &val_kp, "qc_m5", 4_010);
-    engine.commit_proposal_with_qc(&b5.proposal, &qc5, 4_010).unwrap();
+    engine
+        .commit_proposal_with_qc(&b5.proposal, &qc5, 4_010)
+        .unwrap();
 
     // 4. Mint token in MultiVault and test 2-of-2 multisig transfer
     let tok_op = NetworkOperation::CreateToken {
@@ -634,7 +676,9 @@ fn test_wallet_pop_multisig_and_loan_collateral_escrow_conservation() {
         .stage_signed_operation(&env6, &tok_op, "val_1", |b| val_kp.sign(b), 4_011)
         .unwrap();
     let qc6 = single_val_qc(&b6.proposal, &val_kp, "qc_m6", 4_012);
-    engine.commit_proposal_with_qc(&b6.proposal, &qc6, 4_012).unwrap();
+    engine
+        .commit_proposal_with_qc(&b6.proposal, &qc6, 4_012)
+        .unwrap();
     let token_id = b6.created_entities[0].id.clone();
 
     let solo_xfer = NetworkOperation::TransferToken {
@@ -644,7 +688,14 @@ fn test_wallet_pop_multisig_and_loan_collateral_escrow_conservation() {
         amount: 5_000,
         cosignatures: vec![],
     };
-    let env_solo = sign_operation(&actor_kp, "vector-devnet-1", 7, "op_7_solo", 4_013, &solo_xfer);
+    let env_solo = sign_operation(
+        &actor_kp,
+        "vector-devnet-1",
+        7,
+        "op_7_solo",
+        4_013,
+        &solo_xfer,
+    );
     assert!(engine
         .stage_signed_operation(&env_solo, &solo_xfer, "val_1", |b| val_kp.sign(b), 4_013)
         .is_err());
@@ -671,10 +722,16 @@ fn test_wallet_pop_multisig_and_loan_collateral_escrow_conservation() {
         .stage_signed_operation(&env7, &multi_xfer, "val_1", |b| val_kp.sign(b), 4_014)
         .unwrap();
     let qc7 = single_val_qc(&b7.proposal, &val_kp, "qc_m7", 4_015);
-    engine.commit_proposal_with_qc(&b7.proposal, &qc7, 4_015).unwrap();
+    engine
+        .commit_proposal_with_qc(&b7.proposal, &qc7, 4_015)
+        .unwrap();
 
     // Non-transferable dimensions stay [5000, 0, 0] on recipient
-    let recipient_vec = engine.state.get_balance(&token_id, &borrower_id).unwrap().vector;
+    let recipient_vec = engine
+        .state
+        .get_balance(&token_id, &borrower_id)
+        .unwrap()
+        .vector;
     assert_eq!(recipient_vec, TokenVector::new(5_000, 0, 0));
 
     // 5. Collateralized loan create -> escrow locks collateral -> repay -> escrow releases -> replay verifies!
@@ -693,9 +750,16 @@ fn test_wallet_pop_multisig_and_loan_collateral_escrow_conservation() {
         .stage_signed_operation(&env8, &loan_op, "val_1", |b| val_kp.sign(b), 4_016)
         .unwrap();
     let qc8 = single_val_qc(&b8.proposal, &val_kp, "qc_m8", 4_017);
-    engine.commit_proposal_with_qc(&b8.proposal, &qc8, 4_017).unwrap();
+    engine
+        .commit_proposal_with_qc(&b8.proposal, &qc8, 4_017)
+        .unwrap();
     assert_eq!(
-        engine.state.get_balance(&token_id, &borrower_id).unwrap().vector.token,
+        engine
+            .state
+            .get_balance(&token_id, &borrower_id)
+            .unwrap()
+            .vector
+            .token,
         2_000
     );
     assert!(engine.verify_replay().unwrap().valid);
@@ -834,7 +898,10 @@ drain token "GhostTokNet" amount 250;
     assert!(tok.ghost);
     assert!(tok.wallet_id.is_empty());
     assert_eq!(tok.total_supply, 4_750);
-    assert!(vnetwork_core::supply::verify_token_supply_conservation(&engine.state, &tok.token_id).unwrap());
+    assert!(
+        vnetwork_core::supply::verify_token_supply_conservation(&engine.state, &tok.token_id)
+            .unwrap()
+    );
 
     let assessment = vnetwork_core::ghost::inspect_ghost_entities(&engine.state).unwrap();
     assert_eq!(assessment.total_ghost_entities, 3);
@@ -842,6 +909,16 @@ drain token "GhostTokNet" amount 250;
     assert_eq!(assessment.parentless_wallets.len(), 1);
     assert_eq!(assessment.parentless_tokens.len(), 1);
     assert!(engine.verify_replay().unwrap().valid);
-    assert!(engine.reconstruct_entity("region", &reg.region_id).unwrap().verified);
-    assert!(engine.reconstruct_entity("token", &tok.token_id).unwrap().verified);
+    assert!(
+        engine
+            .reconstruct_entity("region", &reg.region_id)
+            .unwrap()
+            .verified
+    );
+    assert!(
+        engine
+            .reconstruct_entity("token", &tok.token_id)
+            .unwrap()
+            .verified
+    );
 }

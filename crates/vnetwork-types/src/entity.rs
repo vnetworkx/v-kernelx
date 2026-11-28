@@ -149,7 +149,9 @@ impl WalletKeyBinding {
 pub enum WalletReceivePolicy {
     #[default]
     Open,
-    Restricted { allowed_senders: BTreeSet<String> },
+    Restricted {
+        allowed_senders: BTreeSet<String>,
+    },
     Frozen,
 }
 
