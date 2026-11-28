@@ -305,6 +305,10 @@ pub struct ProgramSourceBundle {
     pub compiler_version: String,
     #[serde(default)]
     pub execution_params: BTreeMap<String, serde_json::Value>,
+    // Optional for wire compatibility with historical proposals; new proposals
+    // must carry the actor's signature and bind it into the proposal digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submitter_signature: Option<String>,
 }
 
 impl ProgramSourceBundle {
@@ -313,7 +317,7 @@ impl ProgramSourceBundle {
         for (path, src) in &self.resolved_module_sources {
             module_hashes.insert(path.clone(), blake3_hex(src.as_bytes()));
         }
-        Ok(serde_json::json!({
+        let mut commitment = serde_json::json!({
             "compiler_version": self.compiler_version,
             "compiled_program_hash": self.compiled_program_hash,
             "execution_params": self.execution_params,
@@ -321,7 +325,11 @@ impl ProgramSourceBundle {
             "language_version": self.language_version,
             "module_hashes": module_hashes,
             "source_hash": self.source_hash,
-        }))
+        });
+        if let Some(signature) = &self.submitter_signature {
+            commitment["submitter_signature"] = serde_json::Value::String(signature.clone());
+        }
+        Ok(commitment)
     }
 }
 
