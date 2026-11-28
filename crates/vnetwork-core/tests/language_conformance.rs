@@ -150,11 +150,8 @@ fn make_dev_engine() -> (
         &scopes,
     )
     .unwrap();
-    let governance_auth = signed_genesis_governance_auth(
-        &val_kp,
-        &participant_kp.public_key_hex,
-        "vector-devnet-1",
-    );
+    let governance_auth =
+        signed_genesis_governance_auth(&val_kp, &participant_kp.public_key_hex, "vector-devnet-1");
     let scope_auth = signed_scope_auth(
         &val_kp,
         &participant_kp.public_key_hex,
@@ -825,11 +822,8 @@ fn test_production_profile_disallows_atlas_bootstrap() {
         &scopes,
     )
     .unwrap();
-    let scope_auth = signed_genesis_governance_auth(
-        &val_kp,
-        &actor_kp.public_key_hex,
-        "vector-main",
-    );
+    let scope_auth =
+        signed_genesis_governance_auth(&val_kp, &actor_kp.public_key_hex, "vector-main");
     let (_, _, prop, _) = engine
         .stage_participant_join(
             &JoinNetworkRequest {
@@ -874,9 +868,9 @@ fn test_production_profile_disallows_atlas_bootstrap() {
 fn test_parentless_ghost_entities_and_certify_execute_and_replay_cleanly() {
     let (mut engine, val_kp, actor_kp, _) = make_dev_engine();
     let ghost_src = r#"
-region ghost create GhostRegNet { prefix = "GRN"; visibility = "private"; section = 1; }
-wallet ghost create GhostWalNet { name = "GhostWalNet"; }
-token ghost create GhostTokNet {
+ghost region create GhostRegNet { prefix = "GRN"; visibility = "private"; section = 1; }
+ghost wallet create GhostWalNet { name = "GhostWalNet"; }
+ghost token create GhostTokNet {
     name = "Ghost Token";
     symbol = "GTOK";
     dimensions = 3;
