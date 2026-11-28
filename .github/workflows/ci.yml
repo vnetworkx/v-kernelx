@@ -62,6 +62,13 @@ jobs:
       - name: Check
         run: cargo check --workspace --all-targets --all-features
 
+      # VectorSpace is pinned vendored source and intentionally excluded from
+      # workspace formatting; validate its own targets/tests explicitly.
+      - name: Check and test pinned VectorSpace
+        run: |
+          cargo check --manifest-path vendor/vectorspace/Cargo.toml --all-targets
+          cargo test --manifest-path vendor/vectorspace/Cargo.toml
+
       - name: Test
         run: cargo test --workspace --all-features
 
