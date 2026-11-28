@@ -409,6 +409,20 @@ transfer "OKTOK" from "OkWalletA" to "OkWalletB" amount 250;
         "validators must reject program bundles with no submitter signature"
     );
 
+    let mut wrong_program_id_proposal = staged.proposal.clone();
+    wrong_program_id_proposal.program_id = Some("prg_forged".to_string());
+    assert!(
+        vnetwork_core::language::validator_verify_program_bundle(
+            &engine.state,
+            &engine.genesis,
+            staged.proposal.program_source_bundle.as_ref().unwrap(),
+            &wrong_program_id_proposal,
+            &actor_kp.public_key_hex,
+        )
+        .is_err(),
+        "validators must reject non-canonical program and transaction identities"
+    );
+
     engine.commit_proposal_with_qc(&staged.proposal, &qc, 2_101).unwrap();
     assert_eq!(engine.state.spaces.len(), 1);
     assert_eq!(engine.state.tokens.len(), 1);
