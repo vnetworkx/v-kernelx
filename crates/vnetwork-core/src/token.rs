@@ -464,12 +464,6 @@ fn execute_transfer_internal(
         state.tokens.insert(t.token_id.clone(), t);
     }
 
-    if !verify_token_supply_conservation(state, &token.token_id)? {
-        return Err(VNetworkError::Validation(
-            "token supply conservation check failed".to_string(),
-        ));
-    }
-
     state.logical_clock = state
         .logical_clock
         .checked_add(1)
@@ -505,7 +499,15 @@ fn execute_transfer_internal(
         before_hash,
         after_hash,
     )?;
+    // Supply reduction from a scoped drain is reconciled against the
+    // TOKEN_TRANSFER event's drain_fee. Verify only after the event has been
+    // appended to the staged state, otherwise the reduction appears unmatched.
     state.events.push(event.clone());
+    if !verify_token_supply_conservation(state, &token.token_id)? {
+        return Err(VNetworkError::Validation(
+            "token supply conservation check failed".to_string(),
+        ));
+    }
     Ok((after_from, after_to, drain_fee, event))
 }
 
