@@ -524,14 +524,20 @@ pub fn apply_drain_token(
             "drain amount must be positive".to_string(),
         ));
     }
-    let token = verify_token_exists(state, token_ref)?.clone();
+
+    // Stage the balance, supply, and event together. Conservation derives the
+    // drained amount from TOKEN_DRAIN events, so validate only after the event
+    // is present in the staged ledger. Commit the clone only when all checks
+    // pass, preserving atomicity on every failure path.
+    let mut staged = state.clone();
+    let token = verify_token_exists(&staged, token_ref)?.clone();
     let expected_ghost_custody = format!("ghost_custody::{}", token.token_id);
     let drain_wallet_id = if token.ghost
         && token.wallet_id.is_empty()
         && (wallet_ref.trim().is_empty() || wallet_ref == expected_ghost_custody)
     {
         require_participant_scope_at(
-            state,
+            &staged,
             actor_pubkey,
             ParticipationLevel::Network,
             None,
@@ -544,7 +550,7 @@ pub fn apply_drain_token(
         }
         expected_ghost_custody
     } else {
-        let wallet = verify_wallet_exists(state, wallet_ref)?.clone();
+        let wallet = verify_wallet_exists(&staged, wallet_ref)?.clone();
         wallet.verify_permission(
             actor_pubkey,
             WalletPermission::Drain,
@@ -556,7 +562,7 @@ pub fn apply_drain_token(
     };
 
     let key = NetworkLedgerState::balance_key(&token.token_id, &drain_wallet_id);
-    let before = state.balances.get(&key).cloned().ok_or_else(|| {
+    let before = staged.balances.get(&key).cloned().ok_or_else(|| {
         VNetworkError::InsufficientBalance("wallet balance not found".to_string())
     })?;
     let before_hash = blake3_hex(&canonical_json_bytes(&before)?);
@@ -568,45 +574,41 @@ pub fn apply_drain_token(
         .version
         .checked_add(1)
         .ok_or_else(|| VNetworkError::Validation("balance version overflow".to_string()))?;
-    state.balances.insert(key, after.clone());
+    staged.balances.insert(key, after.clone());
 
-    let mut t = token;
-    t.total_supply = t.total_supply.checked_sub(amount).ok_or_else(|| {
+    let mut updated_token = token;
+    updated_token.total_supply = updated_token.total_supply.checked_sub(amount).ok_or_else(|| {
         VNetworkError::Validation("token total_supply underflow on drain".to_string())
     })?;
-    t.version = t
+    updated_token.version = updated_token
         .version
         .checked_add(1)
         .ok_or_else(|| VNetworkError::Validation("token version overflow".to_string()))?;
-    state.tokens.insert(t.token_id.clone(), t.clone());
+    staged
+        .tokens
+        .insert(updated_token.token_id.clone(), updated_token.clone());
 
-    if !verify_token_supply_conservation(state, &t.token_id)? {
-        return Err(VNetworkError::Validation(
-            "token supply conservation check failed after drain".to_string(),
-        ));
-    }
-
-    state.logical_clock = state
+    staged.logical_clock = staged
         .logical_clock
         .checked_add(1)
         .ok_or_else(|| VNetworkError::Validation("logical_clock overflow".to_string()))?;
-    let sequence = (state.events.len() as u64)
+    let sequence = (staged.events.len() as u64)
         .checked_add(1)
         .ok_or_else(|| VNetworkError::Validation("event sequence overflow".to_string()))?;
-    let parents = state.latest_event_hash().into_iter().collect();
+    let parents = staged.latest_event_hash().into_iter().collect();
     let after_hash = blake3_hex(&canonical_json_bytes(&after)?);
     let event = LedgerEvent::build(
         sequence,
         parents,
-        &state.network_id,
+        &staged.network_id,
         "token_drain",
-        &t.token_id,
+        &updated_token.token_id,
         "TOKEN_DRAIN",
         actor_pubkey,
-        state.logical_clock,
+        staged.logical_clock,
         timestamp_ms,
         serde_json::json!({
-            "token_id": t.token_id,
+            "token_id": updated_token.token_id,
             "wallet_id": drain_wallet_id,
             "amount": amount.to_string(),
             "vector_after": after.vector.as_array(),
@@ -614,7 +616,15 @@ pub fn apply_drain_token(
         before_hash,
         after_hash,
     )?;
-    state.events.push(event.clone());
+    staged.events.push(event.clone());
+
+    if !verify_token_supply_conservation(&staged, &updated_token.token_id)? {
+        return Err(VNetworkError::Validation(
+            "token supply conservation check failed after drain".to_string(),
+        ));
+    }
+
+    *state = staged;
     Ok((after, event))
 }
 
