@@ -11,10 +11,10 @@ on:
 permissions:
   contents: read
 
-# Every PR push creates a new head. Cancel obsolete queued/running matrices so
-# the newest source revision, not a backlog of superseded commits, is verified.
+# Isolate each source revision so an obsolete queued run cannot block
+# validation of the current head. Retries of the same commit still cancel each other.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
