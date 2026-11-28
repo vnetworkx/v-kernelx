@@ -212,7 +212,15 @@ fn sign_operation(
         payload_hash,
         signature: String::new(),
     };
-    let bytes = env.canonical_signing_bytes().unwrap();
+    let bytes = SignedRequestEnvelope::canonical_signing_bytes(
+        network_id,
+        request_id,
+        &actor.public_key_hex,
+        nonce,
+        ts,
+        &env.payload_hash,
+    )
+    .unwrap();
     env.signature = actor.sign(&bytes).unwrap();
     env
 }
