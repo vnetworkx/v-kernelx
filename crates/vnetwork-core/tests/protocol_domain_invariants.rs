@@ -200,7 +200,7 @@ fn setup_test_engine() -> (ProtocolEngine, KeypairMaterial, KeypairMaterial) {
         ],
         target_id: None,
         expires_at_ms: None,
-        authorization_basis: "genesis_test".to_string(),
+        authorization_basis: "genesis_validator_delegation".to_string(),
         signature: String::new(),
     };
     auth.signature = val_kp
