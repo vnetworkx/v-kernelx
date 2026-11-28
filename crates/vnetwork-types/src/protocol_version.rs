@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 pub const PROTOCOL_VERSION: &str = "vector-network/1.0.0";
 pub const LANGUAGE_VERSION: &str = "v-langx/1.2.0";
 pub const COMPILER_VERSION: &str = "vectorspace-compiler/1.2.0";
-pub const PROPOSAL_VERSION: u16 = 1;
+// Version 2 requires every program proposal to carry an actor-authenticated submitter signature.
+pub const PROPOSAL_VERSION: u16 = 2;
 pub const CHECKPOINT_VERSION: u16 = 1;
 
 // Explicit cryptographic domain separation tags
