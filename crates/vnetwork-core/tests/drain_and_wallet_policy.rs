@@ -120,13 +120,10 @@ fn bootstrap_engine(policy: DrainPolicy) -> (ProtocolEngine, KeypairMaterial, Ke
     let actor_kp = KeypairMaterial::generate("participant");
     let node_kp = KeypairMaterial::generate("node");
     let ch = engine.issue_challenge(100);
-    let scopes = vec![
-        ParticipationLevel::Network,
-        ParticipationLevel::Space,
-        ParticipationLevel::Region,
-        ParticipationLevel::Wallet,
-        ParticipationLevel::Token,
-    ];
+    // Genesis bootstrap grants only explicit Network governance. Further
+    // Space/Region/Wallet/Token scopes must be delegated by their authorized
+    // owners after those entities exist.
+    let scopes = vec![ParticipationLevel::Network];
     let join_bytes = canonical_join_signing_bytes(
         &ch,
         &actor_kp.public_key_hex,
@@ -137,15 +134,10 @@ fn bootstrap_engine(policy: DrainPolicy) -> (ProtocolEngine, KeypairMaterial, Ke
     let mut auth = SignedScopeAuthorization {
         target_participant_pubkey: actor_kp.public_key_hex.clone(),
         grantor_pubkey: val_kp.public_key_hex.clone(),
-        scopes: vec![
-            ParticipationLevel::Space,
-            ParticipationLevel::Region,
-            ParticipationLevel::Wallet,
-            ParticipationLevel::Token,
-        ],
+        scopes: vec![ParticipationLevel::Network],
         target_id: None,
         expires_at_ms: None,
-        authorization_basis: "genesis".to_string(),
+        authorization_basis: "genesis_governance".to_string(),
         signature: String::new(),
     };
     auth.signature = val_kp
