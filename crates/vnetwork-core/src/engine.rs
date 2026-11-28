@@ -243,6 +243,7 @@ impl ProtocolEngine {
             language_version: compiled.language_version.clone(),
             compiler_version: compiled.compiler_version.clone(),
             execution_params: req.execution_params.clone(),
+            submitter_signature: Some(req.signature.clone()),
         };
 
         let mut proposal = ConsensusProposal {
