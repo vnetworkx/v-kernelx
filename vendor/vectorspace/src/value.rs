@@ -36,9 +36,7 @@ pub struct Context {
 
 impl Context {
     pub fn new() -> Self {
-        Self {
-            fields: BTreeMap::new(),
-        }
+        Self { fields: BTreeMap::new() }
     }
 
     pub fn with(mut self, key: impl Into<String>, value: Value) -> Self {
@@ -50,6 +48,7 @@ impl Context {
         self.fields.get(key)
     }
 }
+
 
 impl Default for Context {
     fn default() -> Self {
