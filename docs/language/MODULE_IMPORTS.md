@@ -3,7 +3,7 @@
 Every `.vdx` import in a `.vx` program must pin the exact content digest:
 
 ```vx
-import "policies.vdx" blake3 "7f9b854da3cf09f093932bc845a5cc08ed02589f77ceaf27317c20e97490c501";
+import "policies.vdx" blake3 "966291d89c2ee18ea047ea983f4c8fb18f53bf856b2bed9391224772a985e0d1";
 import "shared-wallet.vdx" blake3 "b4320f1c14ff3c41c180e93e57e8cea2cb9ea7e6d30b8bf6044d0ecb08e3c5ab";
 ```
 
