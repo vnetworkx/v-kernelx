@@ -104,11 +104,13 @@ impl NetworkState {
     }
 }
 
+
 impl Default for NetworkState {
     fn default() -> Self {
         Self::new()
     }
 }
+
 
 #[cfg(test)]
 mod checked_state_regressions {
