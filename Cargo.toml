@@ -6,7 +6,6 @@ edition = "2021"
 [workspace]
 members = [
     ".",
-    "vendor/vectorspace",
     "crates/vnetwork-types",
     "crates/vnetwork-core",
     "crates/vnetwork-storage",
@@ -16,6 +15,7 @@ members = [
     "crates/vnetwork-cli",
     "sdks/rust",
 ]
+exclude = ["vendor/vectorspace"]
 resolver = "2"
 
 [lib]
