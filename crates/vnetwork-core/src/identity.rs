@@ -239,15 +239,20 @@ fn grantor_can_delegate_level(
             let Some(space_id) = target_id else {
                 return false;
             };
-            state.participants.values().any(|participant| {
-                participant.public_key_hex == grantor_pubkey
-                    && participant.status == ParticipationStatus::Active
-                    && participant.scope.has_active_scope(
-                        ParticipationLevel::Space,
-                        Some(space_id),
-                        now_ms,
-                    )
-            })
+            // Network governance can issue the first scoped grant for an
+            // existing space. Once a participant has that scope, it can be
+            // delegated within the same space by the existing scope holder.
+            state.spaces.contains_key(space_id)
+                && (has_network_governance_authority(state, grantor_pubkey, now_ms)
+                    || state.participants.values().any(|participant| {
+                        participant.public_key_hex == grantor_pubkey
+                            && participant.status == ParticipationStatus::Active
+                            && participant.scope.has_active_scope(
+                                ParticipationLevel::Space,
+                                Some(space_id),
+                                now_ms,
+                            )
+                    }))
         }
         ParticipationLevel::Region => {
             let Some(space_id) = target_id else {
