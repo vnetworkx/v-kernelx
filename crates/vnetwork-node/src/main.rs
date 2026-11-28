@@ -213,7 +213,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if nid.trim().is_empty() {
             return Err(Box::new(VNetworkError::Validation(
                 "--network-id cannot be empty".to_string(),
-            )));
+            ))
+                as Box<dyn std::error::Error + Send + Sync>);
         }
         cfg.network_id = nid;
     }
