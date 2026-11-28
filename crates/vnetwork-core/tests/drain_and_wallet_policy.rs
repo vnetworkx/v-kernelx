@@ -86,7 +86,16 @@ fn sign_operation(
         payload_hash,
         signature: String::new(),
     };
-    env.signature = actor.sign(&env.canonical_signing_bytes().unwrap()).unwrap();
+    let signing_bytes = SignedRequestEnvelope::canonical_signing_bytes(
+        network_id,
+        request_id,
+        &actor.public_key_hex,
+        nonce,
+        ts,
+        &env.payload_hash,
+    )
+    .unwrap();
+    env.signature = actor.sign(&signing_bytes).unwrap();
     env
 }
 
