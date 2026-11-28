@@ -961,6 +961,12 @@ impl VectorNetworkClient {
         interest_bps: u64,
         maturity_at_ms: Option<u64>,
     ) -> VResult<serde_json::Value> {
+        let interest_bps = u16::try_from(interest_bps).map_err(|_| {
+            VNetworkError::Validation(format!(
+                "interest_bps exceeds the protocol limit of {} basis points",
+                u16::MAX
+            ))
+        })?;
         self.submit_operation(NetworkOperation::CreateLoan {
             name: name.to_string(),
             token_id: token_id.to_string(),
