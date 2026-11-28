@@ -209,6 +209,20 @@ fn network_governance_can_delegate_initial_scope_for_an_existing_space() {
 #[test]
 fn targeted_revoke_preserves_unscoped_legacy_baseline_grant() {
     let (mut state, _, authority, _) = state_with_participants();
+    let space_id = "space-a".to_string();
+    state.spaces.insert(
+        space_id.clone(),
+        SpaceEntity {
+            space_id: space_id.clone(),
+            name: "Space A".to_string(),
+            visibility: Visibility::Public,
+            ghost: false,
+            owner_pubkey: authority.clone(),
+            created_at_ms: 1,
+            version: 1,
+            metadata: Default::default(),
+        },
+    );
     let target_id = state
         .participants
         .values()
@@ -228,7 +242,7 @@ fn targeted_revoke_preserves_unscoped_legacy_baseline_grant() {
     });
     participant.scope.grants.push(ScopeGrant {
         level: ParticipationLevel::Space,
-        target_id: Some("space-a".to_string()),
+        target_id: Some(space_id.clone()),
         granted_at_ms: 3,
         grantor_pubkey: authority.clone(),
         expires_at_ms: None,
@@ -241,7 +255,7 @@ fn targeted_revoke_preserves_unscoped_legacy_baseline_grant() {
         &mut state,
         &target_id,
         "SPACE",
-        Some("space-a"),
+        Some(&space_id),
         &authority,
         30,
     )
@@ -253,7 +267,7 @@ fn targeted_revoke_preserves_unscoped_legacy_baseline_grant() {
     }));
     assert!(grants.iter().any(|grant| {
         grant.level == ParticipationLevel::Space
-            && grant.target_id.as_deref() == Some("space-a")
+            && grant.target_id.as_deref() == Some(space_id.as_str())
             && grant.revoked
     }));
 }
