@@ -152,6 +152,61 @@ fn only_explicit_network_authority_can_remove_membership_and_removal_is_recorded
 }
 
 #[test]
+fn network_governance_can_delegate_initial_scope_for_an_existing_space() {
+    let (mut state, ordinary, authority, _) = state_with_participants();
+    let space_id = "spc_existing".to_string();
+    state.spaces.insert(
+        space_id.clone(),
+        SpaceEntity {
+            space_id: space_id.clone(),
+            name: "Existing space".to_string(),
+            visibility: Visibility::Public,
+            ghost: false,
+            owner_pubkey: authority.clone(),
+            created_at_ms: 1,
+            version: 1,
+            metadata: Default::default(),
+        },
+    );
+    let target_id = state
+        .participants
+        .values()
+        .find(|participant| participant.public_key_hex == ordinary)
+        .unwrap()
+        .participant_id
+        .clone();
+
+    let (granted, event) = apply_grant_participant_scope(
+        &mut state,
+        &target_id,
+        "SPACE",
+        Some(space_id.clone()),
+        None,
+        &authority,
+        20,
+    )
+    .expect("explicit Network governance can issue the first scope for an existing space");
+
+    assert_eq!(event.operation, "PARTICIPANT_SCOPE_GRANT");
+    assert!(granted
+        .scope
+        .has_active_scope(ParticipationLevel::Space, Some(&space_id), 20));
+
+    assert!(matches!(
+        apply_grant_participant_scope(
+            &mut state,
+            &target_id,
+            "SPACE",
+            Some("spc_missing".to_string()),
+            None,
+            &authority,
+            21,
+        ),
+        Err(VNetworkError::Authorization(_))
+    ));
+}
+
+#[test]
 fn targeted_revoke_preserves_unscoped_legacy_baseline_grant() {
     let (mut state, _, authority, _) = state_with_participants();
     let target_id = state
