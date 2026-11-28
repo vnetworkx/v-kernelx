@@ -372,6 +372,43 @@ transfer "OKTOK" from "OkWalletA" to "OkWalletB" amount 250;
     )
     .expect("validator verification of .vx source & execution should succeed");
 
+    // The proposer signature does not replace the actor's authorization of
+    // the program submission. Tampering with the carried actor signature must
+    // invalidate the proposal commitment and fail independent verification.
+    let mut tampered_bundle = staged.proposal.program_source_bundle.clone().unwrap();
+    tampered_bundle.submitter_signature = Some("00".repeat(64));
+    let mut tampered_proposal = staged.proposal.clone();
+    tampered_proposal.program_source_bundle = Some(tampered_bundle.clone());
+    assert_ne!(
+        tampered_proposal.compute_expected_digest().unwrap(),
+        staged.proposal.proposal_digest
+    );
+    assert!(
+        vnetwork_core::language::validator_verify_program_bundle(
+            &engine.state,
+            &engine.genesis,
+            &tampered_bundle,
+            &tampered_proposal,
+            &actor_kp.public_key_hex,
+        )
+        .is_err(),
+        "validators must reject program bundles without a valid submitter signature"
+    );
+
+    let mut missing_signature_bundle = staged.proposal.program_source_bundle.clone().unwrap();
+    missing_signature_bundle.submitter_signature = None;
+    assert!(
+        vnetwork_core::language::validator_verify_program_bundle(
+            &engine.state,
+            &engine.genesis,
+            &missing_signature_bundle,
+            &staged.proposal,
+            &actor_kp.public_key_hex,
+        )
+        .is_err(),
+        "validators must reject program bundles with no submitter signature"
+    );
+
     engine.commit_proposal_with_qc(&staged.proposal, &qc, 2_101).unwrap();
     assert_eq!(engine.state.spaces.len(), 1);
     assert_eq!(engine.state.tokens.len(), 1);
