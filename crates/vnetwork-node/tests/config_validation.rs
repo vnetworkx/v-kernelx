@@ -250,7 +250,7 @@ fn test_peer_dial_multiaddr_ssrf_guard() {
         );
     }
 
-    let pub_ip: Multiaddr = "/ip4/198.51.100.12/tcp/7001".parse().unwrap();
+    let pub_ip: Multiaddr = "/ip4/8.8.8.8/tcp/7001".parse().unwrap();
     validate_peer_dial_multiaddr(&pub_ip, NetworkProfile::Production, false).unwrap();
 
     let pub_dns: Multiaddr = "/dns4/bootnode1.vectornetwork.example/tcp/7001"
