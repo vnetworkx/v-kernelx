@@ -341,7 +341,7 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
     // Freeze receiver wallet -> transfer MUST fail
     commit_op(
         &mut engine,
-        9,
+        7,
         NetworkOperation::UpdateWalletReceivePolicy {
             wallet_id: w_b.clone(),
             mode: "FROZEN".to_string(),
@@ -370,7 +370,7 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
     // Restrict receiver wallet to an unrelated sender -> transfer from w_a MUST fail
     commit_op(
         &mut engine,
-        7,
+        8,
         NetworkOperation::UpdateWalletReceivePolicy {
             wallet_id: w_b.clone(),
             mode: "RESTRICTED".to_string(),
@@ -392,7 +392,7 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
     // Allow w_a -> transfer succeeds and deducts exact scope drain (25 bps of 1000 = 2)
     commit_op(
         &mut engine,
-        8,
+        9,
         NetworkOperation::UpdateWalletReceivePolicy {
             wallet_id: w_b.clone(),
             mode: "RESTRICTED".to_string(),
