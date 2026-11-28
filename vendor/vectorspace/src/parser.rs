@@ -312,10 +312,7 @@ impl Parser {
         while !self.kind_eq(&TokenKind::RBrace) {
             let span = self.current_span();
             let name = self.take_ident_or_kw()?;
-            self.expect_kind(
-                |k| k == &TokenKind::Eq || k == &TokenKind::Colon,
-                "`=` or `:`",
-            )?;
+            self.expect_kind(|k| k == &TokenKind::Eq || k == &TokenKind::Colon, "`=` or `:`")?;
             let value = self.parse_expr()?;
             if self.kind_eq(&TokenKind::Semi) || self.kind_eq(&TokenKind::Comma) {
                 self.advance();
