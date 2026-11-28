@@ -1,9 +1,9 @@
-use crate::ast::*;
 use crate::compiler::compile_program;
 use crate::error::{RuntimeError, RuntimeErrorKind};
 use crate::kernel::{execute_kernel_op, KernelOp};
 use crate::parser::parse;
 use crate::state::NetworkState;
+use crate::ast::*;
 
 #[derive(Debug, Clone)]
 pub struct ExecutionReport {
@@ -19,17 +19,11 @@ pub struct Runtime {
 
 impl Runtime {
     pub fn new() -> Self {
-        Self {
-            state: NetworkState::new(),
-        }
+        Self { state: NetworkState::new() }
     }
 
     pub fn parse(&self, source: &str) -> Result<Program, RuntimeError> {
-        parse(source).map_err(|e| {
-            RuntimeError::new(RuntimeErrorKind::Parse(
-                crate::error::ParseErrorKind::Message(e.to_string()),
-            ))
-        })
+        parse(source).map_err(|e| RuntimeError::new(RuntimeErrorKind::Parse(crate::error::ParseErrorKind::Message(e.to_string()))))
     }
 
     pub fn compile(&self, program: &Program) -> Result<Vec<KernelOp>, RuntimeError> {
@@ -56,16 +50,12 @@ impl Runtime {
         for op in ops {
             match op {
                 KernelOp::Query { expr } => {
-                    let view = Runtime {
-                        state: working_state.clone(),
-                    };
+                    let view = Runtime { state: working_state.clone() };
                     let resolved = view.resolve_query(&expr)?;
                     outputs.push(format!("{expr} => {resolved}"));
                 }
                 KernelOp::Record { expr } => {
-                    let view = Runtime {
-                        state: working_state.clone(),
-                    };
+                    let view = Runtime { state: working_state.clone() };
                     let resolved = view.resolve_record(&expr)?;
                     outputs.push(format!("{expr} => {resolved}"));
                 }
@@ -92,9 +82,7 @@ impl Runtime {
     pub fn resolve_query(&self, expr: &str) -> Result<String, RuntimeError> {
         let parts: Vec<&str> = expr.split('.').collect();
         if parts.is_empty() {
-            return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation(
-                "empty query".to_string(),
-            )));
+            return Err(RuntimeError::new(RuntimeErrorKind::InvalidOperation("empty query".to_string())));
         }
         let head = parts[0];
         let tail = &parts[1..];
@@ -109,15 +97,9 @@ impl Runtime {
             return Ok(resolve_projection_query(proj, tail));
         }
         if let Some(contract) = self.state.contracts.get(head) {
-            return Ok(format!(
-                "contract {} with {} actions",
-                contract.name,
-                contract.actions.len()
-            ));
+            return Ok(format!("contract {} with {} actions", contract.name, contract.actions.len()));
         }
-        Err(RuntimeError::new(RuntimeErrorKind::UnknownSymbol(
-            head.to_string(),
-        )))
+        Err(RuntimeError::new(RuntimeErrorKind::UnknownSymbol(head.to_string())))
     }
 
     pub fn resolve_record(&self, expr: &str) -> Result<String, RuntimeError> {
@@ -126,28 +108,16 @@ impl Runtime {
             if let Some(event) = self.state.events.last() {
                 return Ok(format!("{event}"));
             }
-            return Err(RuntimeError::new(RuntimeErrorKind::RecordMissing(
-                query.to_string(),
-            )));
+            return Err(RuntimeError::new(RuntimeErrorKind::RecordMissing(query.to_string())));
         }
-        if let Some(event) = self
-            .state
-            .events
-            .iter()
-            .find(|event| event.eid == query || event.event_hash == query)
-        {
+        if let Some(event) = self.state.events.iter().find(|event| event.eid == query || event.event_hash == query) {
             return Ok(format!("{event}"));
         }
-        Err(RuntimeError::new(RuntimeErrorKind::RecordMissing(
-            query.to_string(),
-        )))
+        Err(RuntimeError::new(RuntimeErrorKind::RecordMissing(query.to_string())))
     }
 }
 
-fn resolve_vector_query(
-    vector: &crate::state::VectorState,
-    tail: &[&str],
-) -> Result<String, RuntimeError> {
+fn resolve_vector_query(vector: &crate::state::VectorState, tail: &[&str]) -> Result<String, RuntimeError> {
     match tail {
         [] => Ok(format!(
             "{}:{} {} certification={:?} auth_ratio={}",
@@ -162,10 +132,7 @@ fn resolve_vector_query(
         ["magnitude"] => Ok(vector.magnitude()?.to_string()),
         ["certification"] => Ok(format!("{:?}", vector.certification)),
         ["auth_ratio"] => Ok(vector.auth_ratio.clone()),
-        ["owner"] => Ok(vector
-            .owner
-            .clone()
-            .unwrap_or_else(|| "unbound".to_string())),
+        ["owner"] => Ok(vector.owner.clone().unwrap_or_else(|| "unbound".to_string())),
         _ => Ok(format!(
             "{}:{} {}",
             vector.name,
@@ -204,11 +171,13 @@ pub fn render_query_output(query: &str, value: &str) -> String {
     format!("{query} => {value}")
 }
 
+
 impl Default for Runtime {
     fn default() -> Self {
         Self::new()
     }
 }
+
 
 #[cfg(test)]
 mod checked_magnitude_query_regressions {
