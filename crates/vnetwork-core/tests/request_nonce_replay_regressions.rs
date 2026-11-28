@@ -12,7 +12,7 @@ fn genesis_and_state() -> (GenesisConfig, NetworkLedgerState) {
         vec![ConsensusValidator {
             validator_id: "validator-1".to_string(),
             node_id: "node-1".to_string(),
-            validator_pubkey_hex: validator.public_key_hex,
+            validator_pubkey_hex: validator.public_key_hex.clone(),
             weight: 100,
             active: true,
             joined_epoch: 1,
