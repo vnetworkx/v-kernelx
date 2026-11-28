@@ -29,7 +29,22 @@ jobs:
         with:
           components: rustfmt
       - name: Format check
-        run: cargo fmt --all --check
+        run: |
+          # --all also formats local path dependencies, including the pinned
+          # vendor/vectorspace snapshot. Check each first-party workspace package
+          # explicitly so vendored source remains byte-for-byte pinned.
+          for package in \
+            vnetworkx \
+            vnetwork-types \
+            vnetwork-core \
+            vnetwork-storage \
+            vnetwork-consensus \
+            vnetwork-api \
+            vnetwork-node \
+            vnetwork-cli \
+            vnetwork-sdk; do
+            cargo fmt --check --package "$package"
+          done
 
   rust:
     name: Rust checks (${{ matrix.os }})
