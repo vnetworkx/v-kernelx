@@ -8,11 +8,12 @@ protocol_version = "vector-network/1.0.0"
 quorum_threshold_bps = 6667
 allow_bootstrap_atlas = false
 
-# Publicly reachable bootstrap seeds (replace with real DNS/IP + PeerId before production launch)
+# Publicly reachable bootstrap seeds. These DNS/TCP multiaddrs are parseable as-is;
+# append /p2p/<PeerId> after each seed identity has been provisioned.
 bootstrap_peers = [
-  "/dns4/seed-us-east.vectornetwork.example/tcp/7001/p2p/<PEER_ID_1>",
-  "/dns4/seed-eu-west.vectornetwork.example/tcp/7001/p2p/<PEER_ID_2>",
-  "/dns4/seed-ap-south.vectornetwork.example/tcp/7001/p2p/<PEER_ID_3>"
+  "/dns4/seed-us-east.vectornetwork.example/tcp/7001",
+  "/dns4/seed-eu-west.vectornetwork.example/tcp/7001",
+  "/dns4/seed-ap-south.vectornetwork.example/tcp/7001"
 ]
 
 public_api_endpoints = [
