@@ -304,7 +304,7 @@ fn test_genesis_commitment_covers_all_consensus_critical_fields() {
     assert_ne!(diff_drain.commitment_hash().unwrap(), h_base);
 
     let mut diff_atlas = base.clone();
-    diff_atlas.allow_bootstrap_atlas = true;
+    diff_atlas.allow_bootstrap_atlas = !diff_atlas.allow_bootstrap_atlas;
     assert_ne!(diff_atlas.commitment_hash().unwrap(), h_base);
 
     let mut diff_epoch = base.clone();
