@@ -211,6 +211,23 @@ fn setup_test_engine() -> (ProtocolEngine, KeypairMaterial, KeypairMaterial) {
         )
         .unwrap();
 
+    let mut governance_auth = SignedScopeAuthorization {
+        target_participant_pubkey: owner_kp.public_key_hex.clone(),
+        grantor_pubkey: val_kp.public_key_hex.clone(),
+        scopes: vec![ParticipationLevel::Network],
+        target_id: None,
+        expires_at_ms: None,
+        authorization_basis: "genesis_governance".to_string(),
+        signature: String::new(),
+    };
+    governance_auth.signature = val_kp
+        .sign(
+            &governance_auth
+                .canonical_signing_bytes("vector-devnet-invariants")
+                .unwrap(),
+        )
+        .unwrap();
+
     let (_, _, prop, _) = engine
         .stage_participant_join(
             &JoinNetworkRequest {
@@ -223,7 +240,7 @@ fn setup_test_engine() -> (ProtocolEngine, KeypairMaterial, KeypairMaterial) {
                 advertised_addresses: vec![],
                 participant_signature: owner_kp.sign(&join_bytes).unwrap(),
                 node_signature: node_kp.sign(&join_bytes).unwrap(),
-                scope_authorizations: vec![auth],
+                scope_authorizations: vec![governance_auth, auth],
             },
             "val_1",
             |b| val_kp.sign(b),
