@@ -159,10 +159,15 @@ pub fn execute_script<S: KernelStore>(
                 let from_id = param_str(&ins.params, &["from"], "");
                 let to_id = param_str(&ins.params, &["to"], "");
                 let amount = param_u128_vec(&ins.params, &["amount"]);
-                let drain_bps = param_u16(&ins.params, &["drain_bps", "basis_points", "basisPoints"], 0);
+                let drain_bps = param_u16(
+                    &ins.params,
+                    &["drain_bps", "basis_points", "basisPoints"],
+                    0,
+                );
 
                 if drain_bps > 0 {
-                    let (a, b, dist) = engine.transfer_with_drain(from_id, to_id, amount, drain_bps)?;
+                    let (a, b, dist) =
+                        engine.transfer_with_drain(from_id, to_id, amount, drain_bps)?;
                     format!(
                         "transfer:{}->{}:{}|{} (drain_bps={})",
                         from_id,
@@ -184,18 +189,18 @@ pub fn execute_script<S: KernelStore>(
             }
             Opcode::Drain => {
                 let vector_id = param_str(&ins.params, &["vector_id", "vectorId"], "");
-                let basis_points =
-                    param_u16(&ins.params, &["basis_points", "basisPoints"], 0);
+                let basis_points = param_u16(&ins.params, &["basis_points", "basisPoints"], 0);
 
                 let state = engine.drain(vector_id, basis_points)?;
                 format!("drain:{}", state.vector_id)
             }
             Opcode::Project => {
                 let vector_id = param_str(&ins.params, &["vector_id", "vectorId"], "");
-                let projected_components =
-                    param_u128_vec(&ins.params, &["projected_components", "projectedComponents"]);
-                let escrow_id =
-                    param_str(&ins.params, &["escrow_id", "escrowId"], "escrow");
+                let projected_components = param_u128_vec(
+                    &ins.params,
+                    &["projected_components", "projectedComponents"],
+                );
+                let escrow_id = param_str(&ins.params, &["escrow_id", "escrowId"], "escrow");
 
                 let state =
                     engine.project(vector_id, projected_components, escrow_id.to_string())?;

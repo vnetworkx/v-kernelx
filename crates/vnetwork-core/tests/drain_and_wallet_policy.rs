@@ -36,7 +36,9 @@ fn single_val_qc(
         timestamp_ms: ts,
         signature: String::new(),
     };
-    vote.signature = val_kp.sign(&vote.canonical_signing_bytes().unwrap()).unwrap();
+    vote.signature = val_kp
+        .sign(&vote.canonical_signing_bytes().unwrap())
+        .unwrap();
     let mut qc = QuorumCertificate {
         certificate_id: String::new(),
         proposal_id: prop.proposal_id.clone(),
@@ -84,7 +86,16 @@ fn sign_operation(
         payload_hash,
         signature: String::new(),
     };
-    env.signature = actor.sign(&env.canonical_signing_bytes().unwrap()).unwrap();
+    let signing_bytes = SignedRequestEnvelope::canonical_signing_bytes(
+        network_id,
+        request_id,
+        &actor.public_key_hex,
+        nonce,
+        ts,
+        &env.payload_hash,
+    )
+    .unwrap();
+    env.signature = actor.sign(&signing_bytes).unwrap();
     env
 }
 
@@ -109,13 +120,10 @@ fn bootstrap_engine(policy: DrainPolicy) -> (ProtocolEngine, KeypairMaterial, Ke
     let actor_kp = KeypairMaterial::generate("participant");
     let node_kp = KeypairMaterial::generate("node");
     let ch = engine.issue_challenge(100);
-    let scopes = vec![
-        ParticipationLevel::Network,
-        ParticipationLevel::Space,
-        ParticipationLevel::Region,
-        ParticipationLevel::Wallet,
-        ParticipationLevel::Token,
-    ];
+    // Genesis bootstrap grants only explicit Network governance. Further
+    // Space/Region/Wallet/Token scopes must be delegated by their authorized
+    // owners after those entities exist.
+    let scopes = vec![ParticipationLevel::Network];
     let join_bytes = canonical_join_signing_bytes(
         &ch,
         &actor_kp.public_key_hex,
@@ -126,15 +134,10 @@ fn bootstrap_engine(policy: DrainPolicy) -> (ProtocolEngine, KeypairMaterial, Ke
     let mut auth = SignedScopeAuthorization {
         target_participant_pubkey: actor_kp.public_key_hex.clone(),
         grantor_pubkey: val_kp.public_key_hex.clone(),
-        scopes: vec![
-            ParticipationLevel::Space,
-            ParticipationLevel::Region,
-            ParticipationLevel::Wallet,
-            ParticipationLevel::Token,
-        ],
+        scopes: vec![ParticipationLevel::Network],
         target_id: None,
         expires_at_ms: None,
-        authorization_basis: "genesis".to_string(),
+        authorization_basis: "genesis_governance".to_string(),
         signature: String::new(),
     };
     auth.signature = val_kp
@@ -205,24 +208,24 @@ fn test_scope_drain_unconfigured_fails_closed_and_hierarchy_derives_exact_rates(
     .unwrap();
 
     let (s0, bps0, fee0, net0) = compute_scope_drain(&policy, &w_a, &w_a, 10_000).unwrap();
-    assert_eq!((s0, bps0, fee0, net0), (TransferScope::SameWallet, 0, 0, 10_000));
+    assert_eq!(
+        (s0, bps0, fee0, net0),
+        (TransferScope::SameWallet, 0, 0, 10_000)
+    );
 
-    let (s1, bps1, fee1, net1) =
-        compute_scope_drain(&policy, &w_a, &w_b_same_reg, 10_000).unwrap();
+    let (s1, bps1, fee1, net1) = compute_scope_drain(&policy, &w_a, &w_b_same_reg, 10_000).unwrap();
     assert_eq!(
         (s1, bps1, fee1, net1),
         (TransferScope::DifferentWalletsSameRegion, 10, 10, 9_990)
     );
 
-    let (s2, bps2, fee2, net2) =
-        compute_scope_drain(&policy, &w_a, &w_c_diff_reg, 10_000).unwrap();
+    let (s2, bps2, fee2, net2) = compute_scope_drain(&policy, &w_a, &w_c_diff_reg, 10_000).unwrap();
     assert_eq!(
         (s2, bps2, fee2, net2),
         (TransferScope::DifferentRegionsSameSpace, 50, 50, 9_950)
     );
 
-    let (s3, bps3, fee3, net3) =
-        compute_scope_drain(&policy, &w_a, &w_d_diff_spc, 10_000).unwrap();
+    let (s3, bps3, fee3, net3) = compute_scope_drain(&policy, &w_a, &w_d_diff_spc, 10_000).unwrap();
     assert_eq!(
         (s3, bps3, fee3, net3),
         (TransferScope::DifferentSpaces, 150, 150, 9_850)
@@ -241,12 +244,21 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
     let (mut engine, val_kp, actor_kp) = bootstrap_engine(policy);
 
     let commit_op = |engine: &mut ProtocolEngine, nonce: u64, op: NetworkOperation| -> String {
-        let env = sign_operation(&actor_kp, "vector-devnet-1", nonce, &format!("req_{nonce}"), 200 + nonce, &op);
+        let env = sign_operation(
+            &actor_kp,
+            "vector-devnet-1",
+            nonce,
+            &format!("req_{nonce}"),
+            200 + nonce,
+            &op,
+        );
         let b = engine
             .stage_signed_operation(&env, &op, "val_1", |bytes| val_kp.sign(bytes), 200 + nonce)
             .unwrap();
         let qc = single_val_qc(&b.proposal, &val_kp, &format!("qc_{nonce}"), 200 + nonce);
-        engine.commit_proposal_with_qc(&b.proposal, &qc, 200 + nonce).unwrap();
+        engine
+            .commit_proposal_with_qc(&b.proposal, &qc, 200 + nonce)
+            .unwrap();
         b.created_entities
             .first()
             .map(|e| e.id.clone())
@@ -262,9 +274,21 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
             ghost: false,
         },
     );
-    let reg_id = commit_op(
+    // Network governance explicitly delegates the first Space scope before
+    // the participant creates a Region within that space.
+    commit_op(
         &mut engine,
         2,
+        NetworkOperation::GrantParticipantScope {
+            target_participant_id: derive_participant_id(&actor_kp.public_key_hex),
+            level: "SPACE".to_string(),
+            target_id: Some(spc_id.clone()),
+            expires_at_ms: None,
+        },
+    );
+    let reg_id = commit_op(
+        &mut engine,
+        3,
         NetworkOperation::CreateRegion {
             space_id: spc_id,
             name: "PolicyRegion".to_string(),
@@ -277,7 +301,7 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
     );
     let w_a = commit_op(
         &mut engine,
-        3,
+        4,
         NetworkOperation::CreateWallet {
             region_id: reg_id.clone(),
             name: "SenderWallet".to_string(),
@@ -287,7 +311,7 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
     );
     let w_b = commit_op(
         &mut engine,
-        4,
+        5,
         NetworkOperation::CreateWallet {
             region_id: reg_id,
             name: "ReceiverWallet".to_string(),
@@ -297,7 +321,7 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
     );
     let tok_id = commit_op(
         &mut engine,
-        5,
+        6,
         NetworkOperation::CreateToken {
             wallet_id: w_a.clone(),
             name: "Policy Token".to_string(),
@@ -317,7 +341,7 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
     // Freeze receiver wallet -> transfer MUST fail
     commit_op(
         &mut engine,
-        6,
+        7,
         NetworkOperation::UpdateWalletReceivePolicy {
             wallet_id: w_b.clone(),
             mode: "FROZEN".to_string(),
@@ -331,7 +355,14 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
         amount: 1_000,
         cosignatures: vec![],
     };
-    let env_f = sign_operation(&actor_kp, "vector-devnet-1", 7, "req_frozen", 300, &frozen_xfer);
+    let env_f = sign_operation(
+        &actor_kp,
+        "vector-devnet-1",
+        8,
+        "req_frozen",
+        300,
+        &frozen_xfer,
+    );
     assert!(engine
         .stage_signed_operation(&env_f, &frozen_xfer, "val_1", |b| val_kp.sign(b), 300)
         .is_err());
@@ -339,14 +370,21 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
     // Restrict receiver wallet to an unrelated sender -> transfer from w_a MUST fail
     commit_op(
         &mut engine,
-        7,
+        8,
         NetworkOperation::UpdateWalletReceivePolicy {
             wallet_id: w_b.clone(),
             mode: "RESTRICTED".to_string(),
             allowed_senders: vec!["wal_unrelated".to_string()],
         },
     );
-    let env_r = sign_operation(&actor_kp, "vector-devnet-1", 8, "req_restricted", 301, &frozen_xfer);
+    let env_r = sign_operation(
+        &actor_kp,
+        "vector-devnet-1",
+        9,
+        "req_restricted",
+        301,
+        &frozen_xfer,
+    );
     assert!(engine
         .stage_signed_operation(&env_r, &frozen_xfer, "val_1", |b| val_kp.sign(b), 301)
         .is_err());
@@ -354,21 +392,29 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
     // Allow w_a -> transfer succeeds and deducts exact scope drain (25 bps of 1000 = 2)
     commit_op(
         &mut engine,
-        8,
+        9,
         NetworkOperation::UpdateWalletReceivePolicy {
             wallet_id: w_b.clone(),
             mode: "RESTRICTED".to_string(),
             allowed_senders: vec![w_a.clone()],
         },
     );
-    commit_op(&mut engine, 9, frozen_xfer);
-    assert_eq!(engine.state.get_balance(&tok_id, &w_b).unwrap().vector.token, 998);
+    commit_op(&mut engine, 10, frozen_xfer);
+    assert_eq!(
+        engine
+            .state
+            .get_balance(&tok_id, &w_b)
+            .unwrap()
+            .vector
+            .token,
+        998
+    );
     assert!(verify_token_supply_conservation(&engine.state, &tok_id).unwrap());
 
     // Collateralized loan fund + repay uses protocol settlement transfer without Send permission issues
     let loan_id = commit_op(
         &mut engine,
-        10,
+        11,
         NetworkOperation::CreateLoan {
             name: "SettlementLoan".to_string(),
             token_id: tok_id.clone(),
@@ -380,9 +426,23 @@ fn test_wallet_receive_policy_blocks_frozen_and_unlisted_senders() {
             maturity_at_ms: None,
         },
     );
-    apply_execute_loan(&mut engine.state, &loan_id, "fund", 500, &actor_kp.public_key_hex, 500)
-        .unwrap();
-    apply_execute_loan(&mut engine.state, &loan_id, "repay", 500, &actor_kp.public_key_hex, 501)
-        .unwrap();
+    apply_execute_loan(
+        &mut engine.state,
+        &loan_id,
+        "fund",
+        500,
+        &actor_kp.public_key_hex,
+        500,
+    )
+    .unwrap();
+    apply_execute_loan(
+        &mut engine.state,
+        &loan_id,
+        "repay",
+        500,
+        &actor_kp.public_key_hex,
+        501,
+    )
+    .unwrap();
     assert!(verify_token_supply_conservation(&engine.state, &tok_id).unwrap());
 }

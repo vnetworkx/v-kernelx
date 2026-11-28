@@ -42,8 +42,7 @@ pub fn verify_quorum_certificate_strict(
             qc.network_id, ctx.network_id
         )));
     }
-    if qc.genesis_commitment.trim().is_empty() || qc.genesis_commitment != ctx.genesis_commitment
-    {
+    if qc.genesis_commitment.trim().is_empty() || qc.genesis_commitment != ctx.genesis_commitment {
         return Err(VNetworkError::ProfileMismatch(format!(
             "QC genesis_commitment `{}` != expected `{}`",
             qc.genesis_commitment, ctx.genesis_commitment
@@ -177,9 +176,9 @@ pub fn verify_quorum_certificate_strict(
             )));
         }
         vote.verify(val)?;
-        verified_weight = verified_weight
-            .checked_add(val.weight)
-            .ok_or_else(|| VNetworkError::Consensus("verified quorum weight overflow".to_string()))?;
+        verified_weight = verified_weight.checked_add(val.weight).ok_or_else(|| {
+            VNetworkError::Consensus("verified quorum weight overflow".to_string())
+        })?;
     }
 
     if qc.approving_weight != verified_weight {
@@ -276,7 +275,11 @@ pub fn verify_membership_chain_from_genesis(
         }
 
         let epoch_ctx = ctx.for_epoch(current_epoch)?;
-        verify_quorum_certificate_strict(&tr.transition_certificate, &current_validators, &epoch_ctx)?;
+        verify_quorum_certificate_strict(
+            &tr.transition_certificate,
+            &current_validators,
+            &epoch_ctx,
+        )?;
 
         let qc = &tr.transition_certificate;
         let bound_to_transition = qc.post_state_root == tr.transition_payload_digest
@@ -467,7 +470,11 @@ pub fn commit_verified_proposal(
             }
         }
         None => {
-            if proposal.events.iter().any(|event| event.operation == "REQUEST_NONCE_COMMIT") {
+            if proposal
+                .events
+                .iter()
+                .any(|event| event.operation == "REQUEST_NONCE_COMMIT")
+            {
                 return Err(VNetworkError::Consensus(
                     "proposal contains a request nonce event without a nonce binding".to_string(),
                 ));
@@ -492,7 +499,11 @@ pub fn commit_verified_proposal(
     Ok(computed_post)
 }
 
-type ValidatorEpochReplay = (u64, Vec<ConsensusValidator>, BTreeMap<u64, Vec<ConsensusValidator>>);
+type ValidatorEpochReplay = (
+    u64,
+    Vec<ConsensusValidator>,
+    BTreeMap<u64, Vec<ConsensusValidator>>,
+);
 
 pub fn replay_validator_epoch_history(
     genesis_validators: &[ConsensusValidator],

@@ -2,8 +2,7 @@ use crate::transport::{P2pSyncRequest, P2pSyncResponse};
 use async_trait::async_trait;
 use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use libp2p::{
-    autonat, gossipsub, identify, kad, relay, request_response,
-    swarm::NetworkBehaviour,
+    autonat, gossipsub, identify, kad, relay, request_response, swarm::NetworkBehaviour,
     StreamProtocol,
 };
 use std::io;
@@ -25,7 +24,11 @@ impl request_response::Codec for VNetworkSyncCodec {
         read_length_prefixed_json(io).await
     }
 
-    async fn read_response<T>(&mut self, _: &Self::Protocol, io: &mut T) -> io::Result<Self::Response>
+    async fn read_response<T>(
+        &mut self,
+        _: &Self::Protocol,
+        io: &mut T,
+    ) -> io::Result<Self::Response>
     where
         T: AsyncRead + Unpin + Send,
     {

@@ -24,7 +24,9 @@ pub async fn get_token(
             })
         })
         .cloned()
-        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "TOKEN_NOT_FOUND", "token not found"))?;
+        .ok_or_else(|| {
+            ApiError::new(StatusCode::NOT_FOUND, "TOKEN_NOT_FOUND", "token not found")
+        })?;
     let balances: Vec<_> = state
         .balances
         .values()

@@ -127,11 +127,17 @@ impl NetworkNodeBackend for DetachedApiBackend {
         Err(Self::detached_err())
     }
 
-    async fn join_participant(&self, _req: JoinNetworkRequest) -> Result<serde_json::Value, ApiError> {
+    async fn join_participant(
+        &self,
+        _req: JoinNetworkRequest,
+    ) -> Result<serde_json::Value, ApiError> {
         Err(Self::detached_err())
     }
 
-    async fn submit_program(&self, _req: SubmitProgramRequest) -> Result<ProgramSubmission, ApiError> {
+    async fn submit_program(
+        &self,
+        _req: SubmitProgramRequest,
+    ) -> Result<ProgramSubmission, ApiError> {
         Err(Self::detached_err())
     }
 
@@ -197,12 +203,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             args.profile
         ))
     })?;
-    if profile == NetworkProfile::Production && args.network_id.to_ascii_lowercase().contains("devnet") {
+    if profile == NetworkProfile::Production
+        && args.network_id.to_ascii_lowercase().contains("devnet")
+    {
         return Err(Box::new(VNetworkError::ProfileMismatch(
             "PRODUCTION profile cannot use a devnet network_id".to_string(),
-        )));
+        )) as Box<dyn std::error::Error + Send + Sync>);
     }
-    let genesis = GenesisConfig::for_profile(profile, &args.network_id, "Vector Network", Vec::new());
+    let genesis =
+        GenesisConfig::for_profile(profile, &args.network_id, "Vector Network", Vec::new());
     let (ws_tx, _) = broadcast::channel(64);
     let backend: Arc<dyn NetworkNodeBackend> = Arc::new(DetachedApiBackend {
         network_id: args.network_id,

@@ -15,7 +15,9 @@ pub fn verify_non_replay(
         )));
     }
     if request_id.trim().is_empty() {
-        return Err(VNetworkError::Validation("request_id cannot be empty".to_string()));
+        return Err(VNetworkError::Validation(
+            "request_id cannot be empty".to_string(),
+        ));
     }
     if state.seen_request_ids.contains(request_id) {
         return Err(VNetworkError::ReplayRejected(format!(
@@ -59,7 +61,6 @@ pub fn validate_signed_envelope(
         &envelope.network_id,
     )
 }
-
 
 /// Bind the original actor-signed operation to the proposal event stream.
 /// Validators use this intent event to re-run authorization and semantic
@@ -109,7 +110,6 @@ pub fn commit_signed_operation_intent_event(
     state.events.push(event.clone());
     Ok(event)
 }
-
 
 /// Commit an accepted actor nonce as an event so replay reconstructs anti-replay
 /// indexes from the ledger rather than trusting mutable live-state indexes.

@@ -77,7 +77,12 @@ impl ProtocolEngine {
         proposer_validator_id: &str,
         proposer_signing_fn: impl FnOnce(&[u8]) -> VResult<String>,
         timestamp_ms: u64,
-    ) -> VResult<(ParticipantRecord, NodeRecord, ConsensusProposal, TransactionReceipt)> {
+    ) -> VResult<(
+        ParticipantRecord,
+        NodeRecord,
+        ConsensusProposal,
+        TransactionReceipt,
+    )> {
         let mut staged = self.state.clone();
         let pre_root = staged.compute_state_root()?;
         let parent_commitment = self.state.expected_parent_commitment();
@@ -87,9 +92,13 @@ impl ProtocolEngine {
             .checked_add(1)
             .ok_or_else(|| VNetworkError::Validation("height overflow".to_string()))?;
         let vset_hash = self.validator_set_hash()?;
-        let challenge = staged.challenges.get(&req.challenge_id).cloned().ok_or_else(|| {
-            VNetworkError::Authorization("unknown or already used challenge_id".to_string())
-        })?;
+        let challenge = staged
+            .challenges
+            .get(&req.challenge_id)
+            .cloned()
+            .ok_or_else(|| {
+                VNetworkError::Authorization("unknown or already used challenge_id".to_string())
+            })?;
         let intent_event =
             commit_participant_join_intent_event(&mut staged, &challenge, req, timestamp_ms)?;
         let (participant, node, event) =
@@ -98,7 +107,8 @@ impl ProtocolEngine {
         let post_root = staged.compute_state_root()?;
         let tx_id = format!(
             "tx_join_{}",
-            &blake3_hex(format!("{}:{}", participant.participant_id, timestamp_ms).as_bytes())[..20]
+            &blake3_hex(format!("{}:{}", participant.participant_id, timestamp_ms).as_bytes())
+                [..20]
         );
 
         let mut proposal = ConsensusProposal {
@@ -168,25 +178,23 @@ impl ProtocolEngine {
         )?;
 
         // 2. Compile via real VectorSpace Rust frontend
-        let compiled = match compile_vx_source(
-            &req.source_bytes,
-            &req.file_name,
-            &req.modules,
-            fs_base_dir,
-        ) {
-            Ok(c) => c,
-            Err(err) => {
-                let mut sub = build_program_submission(
-                    req,
-                    None,
-                    ProgramLifecycleStatus::Failed,
-                    timestamp_ms,
-                );
-                sub.error_message = Some(err.to_string());
-                self.state.programs.insert(sub.program_id.clone(), sub.clone());
-                return Ok(Err(sub));
-            }
-        };
+        let compiled =
+            match compile_vx_source(&req.source_bytes, &req.file_name, &req.modules, fs_base_dir) {
+                Ok(c) => c,
+                Err(err) => {
+                    let mut sub = build_program_submission(
+                        req,
+                        None,
+                        ProgramLifecycleStatus::Failed,
+                        timestamp_ms,
+                    );
+                    sub.error_message = Some(err.to_string());
+                    self.state
+                        .programs
+                        .insert(sub.program_id.clone(), sub.clone());
+                    return Ok(Err(sub));
+                }
+            };
 
         let mut sub = build_program_submission(
             req,
@@ -202,7 +210,11 @@ impl ProtocolEngine {
             &compiled,
             &req.actor_pubkey,
             timestamp_ms,
-            Some((req.actor_pubkey.as_str(), req.request_id.as_str(), req.nonce)),
+            Some((
+                req.actor_pubkey.as_str(),
+                req.request_id.as_str(),
+                req.nonce,
+            )),
         ) {
             Ok(ok) => ok,
             Err(fail) => {
@@ -210,7 +222,9 @@ impl ProtocolEngine {
                 sub.failed_operation_index = Some(fail.failed_operation_index);
                 sub.error_message = Some(fail.error.to_string());
                 sub.final_state_root = Some(self.state.compute_state_root()?);
-                self.state.programs.insert(sub.program_id.clone(), sub.clone());
+                self.state
+                    .programs
+                    .insert(sub.program_id.clone(), sub.clone());
                 return Ok(Err(sub));
             }
         };
@@ -243,6 +257,7 @@ impl ProtocolEngine {
             language_version: compiled.language_version.clone(),
             compiler_version: compiled.compiler_version.clone(),
             execution_params: req.execution_params.clone(),
+            submitter_signature: Some(req.signature.clone()),
         };
 
         let mut proposal = ConsensusProposal {
@@ -266,11 +281,7 @@ impl ProtocolEngine {
             program_id: Some(sub.program_id.clone()),
             tx_id: Some(tx_id.clone()),
             program_source_bundle: Some(bundle),
-            nonce_binding: Some((
-                req.actor_pubkey.clone(),
-                req.request_id.clone(),
-                req.nonce,
-            )),
+            nonce_binding: Some((req.actor_pubkey.clone(), req.request_id.clone(), req.nonce)),
             execution_params: req.execution_params.clone(),
             timestamp_ms,
             proposer_signature: String::new(),
@@ -292,7 +303,9 @@ impl ProtocolEngine {
             timestamp_ms,
         };
 
-        self.state.programs.insert(sub.program_id.clone(), sub.clone());
+        self.state
+            .programs
+            .insert(sub.program_id.clone(), sub.clone());
         self.state.transactions.insert(tx_id, receipt.clone());
 
         Ok(Ok(StagedProposalBundle {
@@ -330,12 +343,8 @@ impl ProtocolEngine {
             .checked_add(1)
             .ok_or_else(|| VNetworkError::Validation("height overflow".to_string()))?;
         let vset_hash = self.validator_set_hash()?;
-        let intent_event = commit_signed_operation_intent_event(
-            &mut staged,
-            envelope,
-            op,
-            timestamp_ms,
-        )?;
+        let intent_event =
+            commit_signed_operation_intent_event(&mut staged, envelope, op, timestamp_ms)?;
         let mut outcome = apply_network_operation_with_genesis(
             &mut staged,
             &self.genesis,
@@ -429,8 +438,7 @@ impl ProtocolEngine {
         qc: &QuorumCertificate,
         timestamp_ms: u64,
     ) -> VResult<String> {
-        let post_root =
-            commit_verified_proposal(&mut self.state, proposal, qc, &self.validators)?;
+        let post_root = commit_verified_proposal(&mut self.state, proposal, qc, &self.validators)?;
 
         if let Some(pid) = &proposal.program_id {
             if let Some(sub) = self.state.programs.get_mut(pid) {
@@ -439,10 +447,12 @@ impl ProtocolEngine {
                 sub.final_state_root = Some(post_root.clone());
                 sub.updated_at_ms = timestamp_ms;
             } else if let Some(bundle) = &proposal.program_source_bundle {
-                let (actor_pubkey, request_id, nonce) = proposal
-                    .nonce_binding
-                    .clone()
-                    .ok_or_else(|| VNetworkError::Consensus("committed program proposal missing nonce_binding".to_string()))?;
+                let (actor_pubkey, request_id, nonce) =
+                    proposal.nonce_binding.clone().ok_or_else(|| {
+                        VNetworkError::Consensus(
+                            "committed program proposal missing nonce_binding".to_string(),
+                        )
+                    })?;
                 let imported_modules: Vec<ModuleCommitment> = bundle
                     .resolved_module_sources
                     .iter()
@@ -477,7 +487,11 @@ impl ProtocolEngine {
                     status: ProgramLifecycleStatus::Committed,
                     failed_operation_index: None,
                     error_message: None,
-                    resulting_event_ids: proposal.events.iter().map(|e| e.event_id.clone()).collect(),
+                    resulting_event_ids: proposal
+                        .events
+                        .iter()
+                        .map(|e| e.event_id.clone())
+                        .collect(),
                     consensus_certificate: Some(qc.clone()),
                     final_state_root: Some(post_root.clone()),
                     created_entities: Vec::new(),
@@ -494,10 +508,8 @@ impl ProtocolEngine {
                 tx.certificate_id = Some(qc.certificate_id.clone());
                 tx.state_root = post_root.clone();
             } else {
-                let (actor_pubkey, request_id, _) = proposal
-                    .nonce_binding
-                    .clone()
-                    .unwrap_or_else(|| {
+                let (actor_pubkey, request_id, _) =
+                    proposal.nonce_binding.clone().unwrap_or_else(|| {
                         let ev_actor = proposal
                             .events
                             .first()

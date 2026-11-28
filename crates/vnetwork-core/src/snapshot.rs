@@ -1,11 +1,16 @@
-use crate::consensus_gate::{verify_membership_chain_from_genesis, verify_quorum_certificate_strict};
+use crate::consensus_gate::{
+    verify_membership_chain_from_genesis, verify_quorum_certificate_strict,
+};
 use crate::events::verify_event_chain;
 use crate::state::{GenesisConfig, NetworkLedgerState, StateSnapshot, ValidatorEpochTransition};
 use crate::supply::verify_token_supply_conservation;
 use serde::{Deserialize, Serialize};
 use vnetwork_types::*;
 
-pub fn create_snapshot(state: &mut NetworkLedgerState, timestamp_ms: u64) -> VResult<StateSnapshot> {
+pub fn create_snapshot(
+    state: &mut NetworkLedgerState,
+    timestamp_ms: u64,
+) -> VResult<StateSnapshot> {
     let state_root = state.compute_state_root()?;
     let replay_hash = state.compute_replay_hash();
     let seed = format!(
@@ -163,7 +168,9 @@ impl CertifiedCheckpoint {
                 self.genesis_commitment
             )));
         }
-        if self.network_id != genesis.network_id || self.protocol_version != genesis.protocol_version {
+        if self.network_id != genesis.network_id
+            || self.protocol_version != genesis.protocol_version
+        {
             return Err(VNetworkError::ProfileMismatch(
                 "checkpoint network_id or protocol_version does not match genesis".to_string(),
             ));
@@ -239,11 +246,7 @@ impl CertifiedCheckpoint {
         )?;
 
         // Verify QuorumCertificate against proven epoch validators and checkpoint commitments
-        verify_quorum_certificate_strict(
-            &self.quorum_certificate,
-            &proven_validators,
-            &ctx,
-        )?;
+        verify_quorum_certificate_strict(&self.quorum_certificate, &proven_validators, &ctx)?;
 
         let qc = &self.quorum_certificate;
         if qc.height != self.height

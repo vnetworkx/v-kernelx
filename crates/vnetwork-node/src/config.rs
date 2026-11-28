@@ -143,8 +143,9 @@ impl NodeConfig {
     pub fn from_toml_file(path: &Path) -> VResult<Self> {
         let raw = std::fs::read_to_string(path)
             .map_err(|e| VNetworkError::Storage(format!("read config {:?} failed: {e}", path)))?;
-        let mut cfg: Self = toml::from_str(&raw)
-            .map_err(|e| VNetworkError::Validation(format!("parse config {:?} failed: {e}", path)))?;
+        let mut cfg: Self = toml::from_str(&raw).map_err(|e| {
+            VNetworkError::Validation(format!("parse config {:?} failed: {e}", path))
+        })?;
         cfg.apply_env_overrides()?;
         Ok(cfg)
     }
@@ -206,8 +207,8 @@ impl NodeConfig {
         {
             self.advertised_addresses = split_csv(&v);
         }
-        if let Ok(v) = std::env::var("NETWORK_PUBLIC_API")
-            .or_else(|_| std::env::var("NETWORK_PUBLIC_API_URL"))
+        if let Ok(v) =
+            std::env::var("NETWORK_PUBLIC_API").or_else(|_| std::env::var("NETWORK_PUBLIC_API_URL"))
         {
             let trimmed = v.trim();
             if trimmed.is_empty() {
@@ -272,8 +273,8 @@ impl NodeConfig {
             validate_discovery_mode(trimmed)?;
             self.discovery_mode = trimmed.to_string();
         }
-        if let Ok(v) = std::env::var("NETWORK_GENESIS_FILE")
-            .or_else(|_| std::env::var("NETWORK_GENESIS_PATH"))
+        if let Ok(v) =
+            std::env::var("NETWORK_GENESIS_FILE").or_else(|_| std::env::var("NETWORK_GENESIS_PATH"))
         {
             let trimmed = v.trim();
             if trimmed.is_empty() {
@@ -374,9 +375,7 @@ impl NodeConfig {
         }
         if let Ok(v) = std::env::var("NETWORK_TLS_CONFIGURATION") {
             let tls = serde_json::from_str::<TlsConfig>(&v).map_err(|e| {
-                VNetworkError::Validation(format!(
-                    "invalid NETWORK_TLS_CONFIGURATION JSON: {e}"
-                ))
+                VNetworkError::Validation(format!("invalid NETWORK_TLS_CONFIGURATION JSON: {e}"))
             })?;
             self.tls = tls;
         }
@@ -411,13 +410,19 @@ impl NodeConfig {
 
     pub fn validate(&self) -> VResult<()> {
         if self.network_id.trim().is_empty() {
-            return Err(VNetworkError::Validation("NETWORK_ID cannot be empty".to_string()));
+            return Err(VNetworkError::Validation(
+                "NETWORK_ID cannot be empty".to_string(),
+            ));
         }
         if self.network_name.trim().is_empty() {
-            return Err(VNetworkError::Validation("network_name cannot be empty".to_string()));
+            return Err(VNetworkError::Validation(
+                "network_name cannot be empty".to_string(),
+            ));
         }
         if self.node_name.trim().is_empty() {
-            return Err(VNetworkError::Validation("node_name cannot be empty".to_string()));
+            return Err(VNetworkError::Validation(
+                "node_name cannot be empty".to_string(),
+            ));
         }
         if self.protocol_version != PROTOCOL_VERSION {
             return Err(VNetworkError::ProfileMismatch(format!(
@@ -425,7 +430,8 @@ impl NodeConfig {
                 self.protocol_version
             )));
         }
-        if self.quorum_threshold_bps < DEFAULT_BFT_QUORUM_BPS || self.quorum_threshold_bps > 10_000 {
+        if self.quorum_threshold_bps < DEFAULT_BFT_QUORUM_BPS || self.quorum_threshold_bps > 10_000
+        {
             return Err(VNetworkError::Validation(format!(
                 "quorum_threshold_bps `{}` must be between {DEFAULT_BFT_QUORUM_BPS} and 10000",
                 self.quorum_threshold_bps

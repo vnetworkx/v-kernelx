@@ -12,7 +12,7 @@ fn state_with_participants() -> (NetworkLedgerState, String, String, String) {
         vec![ConsensusValidator {
             validator_id: "validator-1".to_string(),
             node_id: "node-validator-1".to_string(),
-            validator_pubkey_hex: validator.public_key_hex,
+            validator_pubkey_hex: validator.public_key_hex.clone(),
             weight: 100,
             active: true,
             joined_epoch: 1,
@@ -23,7 +23,12 @@ fn state_with_participants() -> (NetworkLedgerState, String, String, String) {
     let authority = KeypairMaterial::generate("network-authority");
     let outsider = KeypairMaterial::generate("outsider");
 
-    insert_participant(&mut state, &ordinary, vec![baseline_network_grant()], ParticipationStatus::Active);
+    insert_participant(
+        &mut state,
+        &ordinary,
+        vec![baseline_network_grant()],
+        ParticipationStatus::Active,
+    );
     insert_participant(
         &mut state,
         &authority,
@@ -38,12 +43,17 @@ fn state_with_participants() -> (NetworkLedgerState, String, String, String) {
         }],
         ParticipationStatus::Active,
     );
-    insert_participant(&mut state, &outsider, vec![baseline_network_grant()], ParticipationStatus::Active);
+    insert_participant(
+        &mut state,
+        &outsider,
+        vec![baseline_network_grant()],
+        ParticipationStatus::Active,
+    );
     (
         state,
-        ordinary.public_key_hex,
-        authority.public_key_hex,
-        outsider.public_key_hex,
+        ordinary.public_key_hex.clone(),
+        authority.public_key_hex.clone(),
+        outsider.public_key_hex.clone(),
     )
 }
 
@@ -106,15 +116,8 @@ fn insert_participant(
 fn ordinary_network_membership_is_not_network_governance() {
     let (mut state, ordinary, _, _) = state_with_participants();
     let target_id = state.participants.keys().next().unwrap().clone();
-    let result = apply_grant_participant_scope(
-        &mut state,
-        &target_id,
-        "NETWORK",
-        None,
-        None,
-        &ordinary,
-        20,
-    );
+    let result =
+        apply_grant_participant_scope(&mut state, &target_id, "NETWORK", None, None, &ordinary, 20);
     assert!(matches!(result, Err(VNetworkError::Authorization(_))));
 }
 
@@ -130,27 +133,18 @@ fn only_explicit_network_authority_can_remove_membership_and_removal_is_recorded
         .clone();
     let before_events = state.events.len();
 
-    let denied = apply_revoke_participant_scope(
-        &mut state,
-        &ordinary_id,
-        "NETWORK",
-        None,
-        &ordinary,
-        20,
-    );
+    let denied =
+        apply_revoke_participant_scope(&mut state, &ordinary_id, "NETWORK", None, &ordinary, 20);
     assert!(matches!(denied, Err(VNetworkError::Authorization(_))));
-    assert_eq!(state.participants[&ordinary_id].status, ParticipationStatus::Active);
+    assert_eq!(
+        state.participants[&ordinary_id].status,
+        ParticipationStatus::Active
+    );
     assert_eq!(state.events.len(), before_events);
 
-    let (removed, event) = apply_revoke_participant_scope(
-        &mut state,
-        &ordinary_id,
-        "NETWORK",
-        None,
-        &authority,
-        21,
-    )
-    .expect("governance authority can remove a member");
+    let (removed, event) =
+        apply_revoke_participant_scope(&mut state, &ordinary_id, "NETWORK", None, &authority, 21)
+            .expect("governance authority can remove a member");
     assert_eq!(removed.status, ParticipationStatus::Revoked);
     assert_eq!(state.events.len(), before_events + 1);
     assert_eq!(event.operation, "PARTICIPANT_SCOPE_REVOKE");
@@ -158,8 +152,77 @@ fn only_explicit_network_authority_can_remove_membership_and_removal_is_recorded
 }
 
 #[test]
+fn network_governance_can_delegate_initial_scope_for_an_existing_space() {
+    let (mut state, ordinary, authority, _) = state_with_participants();
+    let space_id = "spc_existing".to_string();
+    state.spaces.insert(
+        space_id.clone(),
+        SpaceEntity {
+            space_id: space_id.clone(),
+            name: "Existing space".to_string(),
+            visibility: Visibility::Public,
+            ghost: false,
+            owner_pubkey: authority.clone(),
+            created_at_ms: 1,
+            version: 1,
+            metadata: Default::default(),
+        },
+    );
+    let target_id = state
+        .participants
+        .values()
+        .find(|participant| participant.public_key_hex == ordinary)
+        .unwrap()
+        .participant_id
+        .clone();
+
+    let (granted, event) = apply_grant_participant_scope(
+        &mut state,
+        &target_id,
+        "SPACE",
+        Some(space_id.clone()),
+        None,
+        &authority,
+        20,
+    )
+    .expect("explicit Network governance can issue the first scope for an existing space");
+
+    assert_eq!(event.operation, "PARTICIPANT_SCOPE_GRANT");
+    assert!(granted
+        .scope
+        .has_active_scope(ParticipationLevel::Space, Some(&space_id), 20));
+
+    assert!(matches!(
+        apply_grant_participant_scope(
+            &mut state,
+            &target_id,
+            "SPACE",
+            Some("spc_missing".to_string()),
+            None,
+            &authority,
+            21,
+        ),
+        Err(VNetworkError::Authorization(_))
+    ));
+}
+
+#[test]
 fn targeted_revoke_preserves_unscoped_legacy_baseline_grant() {
     let (mut state, _, authority, _) = state_with_participants();
+    let space_id = "space-a".to_string();
+    state.spaces.insert(
+        space_id.clone(),
+        SpaceEntity {
+            space_id: space_id.clone(),
+            name: "Space A".to_string(),
+            visibility: Visibility::Public,
+            ghost: false,
+            owner_pubkey: authority.clone(),
+            created_at_ms: 1,
+            version: 1,
+            metadata: Default::default(),
+        },
+    );
     let target_id = state
         .participants
         .values()
@@ -179,7 +242,7 @@ fn targeted_revoke_preserves_unscoped_legacy_baseline_grant() {
     });
     participant.scope.grants.push(ScopeGrant {
         level: ParticipationLevel::Space,
-        target_id: Some("space-a".to_string()),
+        target_id: Some(space_id.clone()),
         granted_at_ms: 3,
         grantor_pubkey: authority.clone(),
         expires_at_ms: None,
@@ -192,7 +255,7 @@ fn targeted_revoke_preserves_unscoped_legacy_baseline_grant() {
         &mut state,
         &target_id,
         "SPACE",
-        Some("space-a"),
+        Some(&space_id),
         &authority,
         30,
     )
@@ -204,7 +267,7 @@ fn targeted_revoke_preserves_unscoped_legacy_baseline_grant() {
     }));
     assert!(grants.iter().any(|grant| {
         grant.level == ParticipationLevel::Space
-            && grant.target_id.as_deref() == Some("space-a")
+            && grant.target_id.as_deref() == Some(space_id.as_str())
             && grant.revoked
     }));
 }
@@ -214,15 +277,7 @@ fn validators_and_unknown_or_revoked_authorities_cannot_delegate_network_scope()
     let (mut state, _, _, outsider) = state_with_participants();
     let target_id = state.participants.keys().next().unwrap().clone();
     assert!(matches!(
-        apply_grant_participant_scope(
-            &mut state,
-            &target_id,
-            "NETWORK",
-            None,
-            None,
-            &outsider,
-            20,
-        ),
+        apply_grant_participant_scope(&mut state, &target_id, "NETWORK", None, None, &outsider, 20,),
         Err(VNetworkError::Authorization(_))
     ));
 
@@ -230,9 +285,11 @@ fn validators_and_unknown_or_revoked_authorities_cannot_delegate_network_scope()
         .participants
         .values()
         .find(|participant| {
-            participant.scope.grants.iter().any(|grant| {
-                grant.authorization_basis == "genesis_governance"
-            })
+            participant
+                .scope
+                .grants
+                .iter()
+                .any(|grant| grant.authorization_basis == "genesis_governance")
         })
         .unwrap()
         .participant_id
@@ -240,6 +297,7 @@ fn validators_and_unknown_or_revoked_authorities_cannot_delegate_network_scope()
     let authority = state.participants.get_mut(&authority_id).unwrap();
     authority.scope.grants[0].revoked = true;
     authority.scope.recompute_levels(20);
+    let authority_pubkey = authority.public_key_hex.clone();
     assert!(matches!(
         apply_grant_participant_scope(
             &mut state,
@@ -247,7 +305,7 @@ fn validators_and_unknown_or_revoked_authorities_cannot_delegate_network_scope()
             "NETWORK",
             None,
             None,
-            &authority.public_key_hex,
+            &authority_pubkey,
             21,
         ),
         Err(VNetworkError::Authorization(_))

@@ -39,7 +39,12 @@ pub async fn get_loan(
     let l = state
         .loans
         .get(&loan_id)
-        .or_else(|| state.loans.values().find(|l| l.name.eq_ignore_ascii_case(&loan_id)))
+        .or_else(|| {
+            state
+                .loans
+                .values()
+                .find(|l| l.name.eq_ignore_ascii_case(&loan_id))
+        })
         .cloned()
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "LOAN_NOT_FOUND", "loan not found"))?;
     serde_json::to_value(l).map(Json).map_err(|e| {

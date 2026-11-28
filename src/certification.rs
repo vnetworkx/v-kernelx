@@ -60,9 +60,8 @@ pub fn certify_vector_with_actor(
     let ownership_verified = signature_verified
         && !actor_public_key.trim().is_empty()
         && actor_public_key == state.owner_pubkey;
-    let structure_verified = !state.components.is_empty()
-        && !state.vector_id.is_empty()
-        && !state.space_id.is_empty();
+    let structure_verified =
+        !state.components.is_empty() && !state.vector_id.is_empty() && !state.space_id.is_empty();
     certify_state(state, ownership_verified, structure_verified)
 }
 

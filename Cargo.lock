@@ -3997,6 +3997,7 @@ dependencies = [
  "hex",
  "serde",
  "serde_json",
+ "uuid",
  "v-langx",
  "vnetwork-types",
 ]

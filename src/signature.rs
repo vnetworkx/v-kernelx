@@ -1,4 +1,4 @@
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 
 fn hex_encode(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
@@ -69,7 +69,8 @@ pub fn verifying_key_from_hex(public_key_hex: &str) -> Result<VerifyingKey, Stri
     let key_bytes: [u8; 32] = bytes
         .try_into()
         .map_err(|_| "ed25519 verifying key must be 32 bytes".to_string())?;
-    let vk = VerifyingKey::from_bytes(&key_bytes).map_err(|e| format!("public key parse error: {e}"))?;
+    let vk =
+        VerifyingKey::from_bytes(&key_bytes).map_err(|e| format!("public key parse error: {e}"))?;
     let canonical = vk.to_bytes();
     if canonical != key_bytes
         || canonical == [0u8; 32]

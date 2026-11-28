@@ -16,9 +16,11 @@ enable_relay_server = false
 # Public & P2P addresses
 p2p_listen_addresses = ["/ip4/0.0.0.0/tcp/7001"]
 advertised_addresses = ["/dns4/node1.vectornetwork.example/tcp/7001"]
+# These bare multiaddrs are valid configuration examples. Append /p2p/<PeerId>
+# to each address after the corresponding seed node identity has been provisioned.
 bootstrap_peers = [
-  "/dns4/seed1.vectornetwork.example/tcp/7001/p2p/<SEED_PEER_ID>",
-  "/dns4/seed2.vectornetwork.example/tcp/7001/p2p/<SEED_PEER_ID>"
+  "/dns4/seed1.vectornetwork.example/tcp/7001",
+  "/dns4/seed2.vectornetwork.example/tcp/7001"
 ]
 discovery_mode = "hybrid" # kademlia | bootstrap | hybrid
 

@@ -1,0 +1,4 @@
+# Keep text modules byte-identical across Windows, macOS, and Linux.
+# Their BLAKE3 digests are pinned by importing Vector Language programs.
+*.vdx text eol=lf
+*.vx text eol=lf

@@ -17,10 +17,8 @@ pub struct SignedOperationHttpRequest {
 
 impl SignedOperationHttpRequest {
     pub fn verify_and_extract_envelope(&self) -> Result<SignedRequestEnvelope, ApiError> {
-        let payload_hash = blake3_hex(
-            &canonical_json_bytes(&self.operation)
-                .map_err(ApiError::from)?,
-        );
+        let payload_hash =
+            blake3_hex(&canonical_json_bytes(&self.operation).map_err(ApiError::from)?);
         let env = SignedRequestEnvelope {
             request_id: self.request_id.clone(),
             network_id: self.network_id.clone(),
@@ -147,4 +145,3 @@ mod tests {
         assert_eq!(extract_admin_token(&h), Some("tok-header-2"));
     }
 }
-

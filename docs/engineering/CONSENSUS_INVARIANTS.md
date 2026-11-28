@@ -6,14 +6,16 @@ Tracks 2, 3, and 4 establish fail-closed BFT safety and equivocation invariants 
 
 ## 1. Canonical Proposal & Vote Binding (`vnetwork/proposal-digest/v1`)
 
+**Proposal version 2 is a coordinated consensus upgrade.** Validators reject version 1 proposals; older binaries reject version 2. Upgrade the validator set as a coordinated change before resuming consensus. Version 2 requires actor-authenticated `.vx` submission signatures in the program-source commitment.
+
 1. Every `ConsensusProposal` MUST compute its 64-hex BLAKE3 `proposal_digest` over canonical JSON (`sort_json_value`) binding:
    - `domain` (`vnetwork/proposal-digest/v1`), `proposal_version`, `protocol_version`
    - `network_id`, `genesis_commitment`, `height`, `round`, `epoch`, `validator_set_hash`, `proposer_validator_id`
    - `parent_commitment`, `pre_state_root`, `post_state_root`, `operation_scope`
    - Ordered `event_ids` and `event_hashes` (exact permutation-sensitive array equality)
-   - `program_id`, `tx_id`, `program_source_commitment` (source hash + sorted `.vdx` module hashes + language/compiler versions), `nonce_binding`, `execution_params`, and `timestamp_ms`.
+   - `program_id`, `tx_id`, `program_source_commitment` (source hash + sorted `.vdx` module hashes + language/compiler versions + submitter signature), `nonce_binding`, `execution_params`, and `timestamp_ms`.
 2. `proposal_id` is deterministically derived as `prop_{height}_{proposal_digest}`.
-3. Validators independently verify metadata, `genesis_commitment`, active epoch, `validator_set_hash`, proposer eligibility and signature, sequential height (`state.height + 1`), `parent_commitment`, `.vx` source compilation/execution parity, and `post_state_root` before signing any `ConsensusVote`.
+3. Validators independently verify metadata, `genesis_commitment`, active epoch, `validator_set_hash`, proposer eligibility and signature, sequential height (`state.height + 1`), `parent_commitment`, `.vx` submitter-signature verification, source compilation/execution parity, and `post_state_root` before signing any `ConsensusVote`.
 
 ---
 

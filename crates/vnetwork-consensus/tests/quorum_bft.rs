@@ -5,7 +5,9 @@ use vnetwork_types::*;
 
 #[test]
 fn test_bft_supermajority_quorum_and_equivocation() {
-    let keys: Vec<KeypairMaterial> = (0..4).map(|_| KeypairMaterial::generate("validator")).collect();
+    let keys: Vec<KeypairMaterial> = (0..4)
+        .map(|_| KeypairMaterial::generate("validator"))
+        .collect();
     let validators: Vec<ConsensusValidator> = keys
         .iter()
         .enumerate()
@@ -19,7 +21,8 @@ fn test_bft_supermajority_quorum_and_equivocation() {
         })
         .collect();
 
-    let membership = ValidatorMembership::try_new(validators.clone(), DEFAULT_BFT_QUORUM_BPS).unwrap();
+    let membership =
+        ValidatorMembership::try_new(validators.clone(), DEFAULT_BFT_QUORUM_BPS).unwrap();
     assert_eq!(membership.total_active_weight().unwrap(), 400);
     // ceil(400 * 6667 / 10000) = 267 -> 3 validators (weight 300) required; 2 (200) insufficient!
     assert_eq!(membership.required_weight().unwrap(), 267);
@@ -74,9 +77,15 @@ fn test_bft_supermajority_quorum_and_equivocation() {
     let v2 = sign_consensus_vote(&proposal, &validators[1], &keys[1], true, 1_002).unwrap();
     let v3 = sign_consensus_vote(&proposal, &validators[2], &keys[2], true, 1_003).unwrap();
 
-    assert!(tracker.record_vote(&membership, v1, 1_001).unwrap().is_none());
+    assert!(tracker
+        .record_vote(&membership, v1, 1_001)
+        .unwrap()
+        .is_none());
     // 2/4 = 200 < 267 -> still no QC
-    assert!(tracker.record_vote(&membership, v2, 1_002).unwrap().is_none());
+    assert!(tracker
+        .record_vote(&membership, v2, 1_002)
+        .unwrap()
+        .is_none());
     // 3/4 = 300 >= 267 -> QC formed!
     let qc = tracker
         .record_vote(&membership, v3, 1_003)

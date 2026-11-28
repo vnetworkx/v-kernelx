@@ -18,9 +18,20 @@ pub async fn get_region(
     let reg = state
         .regions
         .get(&region_id)
-        .or_else(|| state.regions.values().find(|r| r.name.eq_ignore_ascii_case(&region_id)))
+        .or_else(|| {
+            state
+                .regions
+                .values()
+                .find(|r| r.name.eq_ignore_ascii_case(&region_id))
+        })
         .cloned()
-        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "REGION_NOT_FOUND", "region not found"))?;
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "REGION_NOT_FOUND",
+                "region not found",
+            )
+        })?;
     serde_json::to_value(reg).map(Json).map_err(|e| {
         ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,

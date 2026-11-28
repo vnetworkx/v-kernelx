@@ -36,25 +36,24 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
         "PARTICIPANT_JOIN_INTENT" => {
             if ev.network_id != state.network_id || ev.entity_kind != "request" {
                 return Err(VNetworkError::ProfileMismatch(
-                    "participant join intent belongs to a different network or entity kind".to_string(),
+                    "participant join intent belongs to a different network or entity kind"
+                        .to_string(),
                 ));
             }
-            let challenge: ParticipantChallenge = serde_json::from_value(
-                ev.payload.get("challenge").cloned().ok_or_else(|| {
+            let challenge: ParticipantChallenge =
+                serde_json::from_value(ev.payload.get("challenge").cloned().ok_or_else(|| {
                     VNetworkError::Serialization(
                         "missing challenge in PARTICIPANT_JOIN_INTENT".to_string(),
                     )
-                })?,
-            )
-            .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
-            let request: JoinNetworkRequest = serde_json::from_value(
-                ev.payload.get("request").cloned().ok_or_else(|| {
+                })?)
+                .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
+            let request: JoinNetworkRequest =
+                serde_json::from_value(ev.payload.get("request").cloned().ok_or_else(|| {
                     VNetworkError::Serialization(
                         "missing request in PARTICIPANT_JOIN_INTENT".to_string(),
                     )
-                })?,
-            )
-            .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
+                })?)
+                .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
             if challenge.challenge_id != ev.entity_id
                 || request.participant_pubkey != ev.actor_pubkey
             {
@@ -62,31 +61,29 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
                     "participant join intent does not match its ledger event envelope".to_string(),
                 ));
             }
-            verify_participant_join_intent(
-                &challenge,
-                &request,
-                &ev.network_id,
-                ev.timestamp_ms,
-            )?;
+            verify_participant_join_intent(&challenge, &request, &ev.network_id, ev.timestamp_ms)?;
         }
         "SIGNED_OPERATION_INTENT" => {
             if ev.network_id != state.network_id || ev.entity_kind != "request" {
                 return Err(VNetworkError::ProfileMismatch(
-                    "signed operation intent belongs to a different network or entity kind".to_string(),
+                    "signed operation intent belongs to a different network or entity kind"
+                        .to_string(),
                 ));
             }
-            let envelope: SignedRequestEnvelope = serde_json::from_value(
-                ev.payload.get("envelope").cloned().ok_or_else(|| {
-                    VNetworkError::Serialization("missing envelope in SIGNED_OPERATION_INTENT".to_string())
-                })?,
-            )
-            .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
-            let operation: NetworkOperation = serde_json::from_value(
-                ev.payload.get("operation").cloned().ok_or_else(|| {
-                    VNetworkError::Serialization("missing operation in SIGNED_OPERATION_INTENT".to_string())
-                })?,
-            )
-            .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
+            let envelope: SignedRequestEnvelope =
+                serde_json::from_value(ev.payload.get("envelope").cloned().ok_or_else(|| {
+                    VNetworkError::Serialization(
+                        "missing envelope in SIGNED_OPERATION_INTENT".to_string(),
+                    )
+                })?)
+                .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
+            let operation: NetworkOperation =
+                serde_json::from_value(ev.payload.get("operation").cloned().ok_or_else(|| {
+                    VNetworkError::Serialization(
+                        "missing operation in SIGNED_OPERATION_INTENT".to_string(),
+                    )
+                })?)
+                .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
             envelope.verify()?;
             let operation_hash = blake3_hex(&canonical_json_bytes(&operation)?);
             if envelope.network_id != ev.network_id
@@ -95,7 +92,8 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
                 || envelope.payload_hash != operation_hash
             {
                 return Err(VNetworkError::Validation(
-                    "signed operation intent does not match its authenticated event envelope".to_string(),
+                    "signed operation intent does not match its authenticated event envelope"
+                        .to_string(),
                 ));
             }
         }
@@ -109,24 +107,33 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
                 .payload
                 .get("actor_pubkey")
                 .and_then(|value| value.as_str())
-                .ok_or_else(|| VNetworkError::Serialization(
-                    "missing actor_pubkey in REQUEST_NONCE_COMMIT".to_string(),
-                ))?;
+                .ok_or_else(|| {
+                    VNetworkError::Serialization(
+                        "missing actor_pubkey in REQUEST_NONCE_COMMIT".to_string(),
+                    )
+                })?;
             let request_id = ev
                 .payload
                 .get("request_id")
                 .and_then(|value| value.as_str())
-                .ok_or_else(|| VNetworkError::Serialization(
-                    "missing request_id in REQUEST_NONCE_COMMIT".to_string(),
-                ))?;
+                .ok_or_else(|| {
+                    VNetworkError::Serialization(
+                        "missing request_id in REQUEST_NONCE_COMMIT".to_string(),
+                    )
+                })?;
             let nonce = ev
                 .payload
                 .get("nonce")
                 .and_then(|value| value.as_u64())
-                .ok_or_else(|| VNetworkError::Serialization(
-                    "missing or invalid nonce in REQUEST_NONCE_COMMIT".to_string(),
-                ))?;
-            if actor_pubkey != ev.actor_pubkey || request_id != ev.entity_id || request_id.trim().is_empty() {
+                .ok_or_else(|| {
+                    VNetworkError::Serialization(
+                        "missing or invalid nonce in REQUEST_NONCE_COMMIT".to_string(),
+                    )
+                })?;
+            if actor_pubkey != ev.actor_pubkey
+                || request_id != ev.entity_id
+                || request_id.trim().is_empty()
+            {
                 return Err(VNetworkError::Validation(
                     "request nonce event payload does not match its event envelope".to_string(),
                 ));
@@ -134,7 +141,9 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
             verify_non_replay(state, request_id, actor_pubkey, nonce, &ev.network_id)?;
             record_nonce_and_request(state, request_id, actor_pubkey, nonce);
         }
-        "PARTICIPANT_JOIN" | "PARTICIPANT_SCOPE_GRANT" | "PARTICIPANT_SCOPE_REVOKE"
+        "PARTICIPANT_JOIN"
+        | "PARTICIPANT_SCOPE_GRANT"
+        | "PARTICIPANT_SCOPE_REVOKE"
         | "PARTICIPANT_REINSTATE" => {
             if let Some(p_val) = ev.payload.get("participant") {
                 let participant: ParticipantRecord = serde_json::from_value(p_val.clone())
@@ -161,8 +170,12 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
                 .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
             state.regions.insert(region.region_id.clone(), region);
         }
-        "WALLET_CREATE" | "GHOST_WALLET_CREATE" | "WALLET_KEY_AUTHORIZE"
-        | "WALLET_KEY_REVOKE" | "WALLET_KEY_ROTATE" | "WALLET_RECEIVE_POLICY_UPDATE" => {
+        "WALLET_CREATE"
+        | "GHOST_WALLET_CREATE"
+        | "WALLET_KEY_AUTHORIZE"
+        | "WALLET_KEY_REVOKE"
+        | "WALLET_KEY_ROTATE"
+        | "WALLET_RECEIVE_POLICY_UPDATE" => {
             let wallet: WalletEntity = serde_json::from_value(ev.payload.clone())
                 .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
             for binding in wallet.authorized_keys.values() {
@@ -204,7 +217,9 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
                 .payload
                 .get("from_wallet_id")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| VNetworkError::Serialization("missing from_wallet_id".to_string()))?;
+                .ok_or_else(|| {
+                    VNetworkError::Serialization("missing from_wallet_id".to_string())
+                })?;
             let to_wallet_id = ev
                 .payload
                 .get("to_wallet_id")
@@ -220,9 +235,13 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
                 None | Some(serde_json::Value::Null) => 0,
                 Some(v) => v
                     .as_str()
-                    .ok_or_else(|| VNetworkError::Serialization("invalid drain_fee type".to_string()))?
+                    .ok_or_else(|| {
+                        VNetworkError::Serialization("invalid drain_fee type".to_string())
+                    })?
                     .parse()
-                    .map_err(|_| VNetworkError::Serialization("invalid drain_fee u128".to_string()))?,
+                    .map_err(|_| {
+                        VNetworkError::Serialization("invalid drain_fee u128".to_string())
+                    })?,
             };
             let net_received = amount.checked_sub(drain_fee).ok_or_else(|| {
                 VNetworkError::Validation("drain_fee exceeds transfer amount in event".to_string())
@@ -231,11 +250,9 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
             let from_key = NetworkLedgerState::balance_key(token_id, from_wallet_id);
             let to_key = NetworkLedgerState::balance_key(token_id, to_wallet_id);
 
-            let mut from_bal = state
-                .balances
-                .get(&from_key)
-                .cloned()
-                .ok_or_else(|| VNetworkError::InsufficientBalance("missing from balance".to_string()))?;
+            let mut from_bal = state.balances.get(&from_key).cloned().ok_or_else(|| {
+                VNetworkError::InsufficientBalance("missing from balance".to_string())
+            })?;
 
             if from_wallet_id == to_wallet_id {
                 from_bal.vector = from_bal
@@ -243,48 +260,51 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
                     .checked_sub_token(amount)?
                     .checked_add_token(net_received)?;
                 from_bal.updated_at_ms = ev.timestamp_ms;
-                from_bal.version = from_bal
-                    .version
-                    .checked_add(1)
-                    .ok_or_else(|| VNetworkError::Validation("balance version overflow".to_string()))?;
+                from_bal.version = from_bal.version.checked_add(1).ok_or_else(|| {
+                    VNetworkError::Validation("balance version overflow".to_string())
+                })?;
                 state.balances.insert(from_key, from_bal);
             } else {
-                let mut to_bal = state.balances.get(&to_key).cloned().unwrap_or(TokenBalanceRecord {
-                    token_id: token_id.to_string(),
-                    wallet_id: to_wallet_id.to_string(),
-                    vector: TokenVector::zero(),
-                    updated_at_ms: ev.timestamp_ms,
-                    version: 0,
-                });
+                let mut to_bal =
+                    state
+                        .balances
+                        .get(&to_key)
+                        .cloned()
+                        .unwrap_or(TokenBalanceRecord {
+                            token_id: token_id.to_string(),
+                            wallet_id: to_wallet_id.to_string(),
+                            vector: TokenVector::zero(),
+                            updated_at_ms: ev.timestamp_ms,
+                            version: 0,
+                        });
 
                 from_bal.vector = from_bal.vector.checked_sub_token(amount)?;
                 from_bal.updated_at_ms = ev.timestamp_ms;
-                from_bal.version = from_bal
-                    .version
-                    .checked_add(1)
-                    .ok_or_else(|| VNetworkError::Validation("balance version overflow".to_string()))?;
+                from_bal.version = from_bal.version.checked_add(1).ok_or_else(|| {
+                    VNetworkError::Validation("balance version overflow".to_string())
+                })?;
 
                 to_bal.vector = to_bal.vector.checked_add_token(net_received)?;
                 to_bal.updated_at_ms = ev.timestamp_ms;
-                to_bal.version = to_bal
-                    .version
-                    .checked_add(1)
-                    .ok_or_else(|| VNetworkError::Validation("balance version overflow".to_string()))?;
+                to_bal.version = to_bal.version.checked_add(1).ok_or_else(|| {
+                    VNetworkError::Validation("balance version overflow".to_string())
+                })?;
 
                 state.balances.insert(from_key, from_bal);
                 state.balances.insert(to_key, to_bal);
             }
             if drain_fee > 0 {
                 let t = state.tokens.get_mut(token_id).ok_or_else(|| {
-                    VNetworkError::NotFound(format!("token `{token_id}` missing during transfer replay"))
+                    VNetworkError::NotFound(format!(
+                        "token `{token_id}` missing during transfer replay"
+                    ))
                 })?;
                 t.total_supply = t.total_supply.checked_sub(drain_fee).ok_or_else(|| {
                     VNetworkError::Validation("total_supply underflow on replay".to_string())
                 })?;
-                t.version = t
-                    .version
-                    .checked_add(1)
-                    .ok_or_else(|| VNetworkError::Validation("token version overflow".to_string()))?;
+                t.version = t.version.checked_add(1).ok_or_else(|| {
+                    VNetworkError::Validation("token version overflow".to_string())
+                })?;
             }
         }
         "TOKEN_DRAIN" => {
@@ -305,10 +325,9 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
                 .and_then(|s| s.parse().ok())
                 .ok_or_else(|| VNetworkError::Serialization("missing amount".to_string()))?;
             let key = NetworkLedgerState::balance_key(token_id, wallet_id);
-            let bal = state
-                .balances
-                .get_mut(&key)
-                .ok_or_else(|| VNetworkError::InsufficientBalance("missing drain balance".to_string()))?;
+            let bal = state.balances.get_mut(&key).ok_or_else(|| {
+                VNetworkError::InsufficientBalance("missing drain balance".to_string())
+            })?;
             bal.vector = bal.vector.checked_sub_token(amount)?;
             bal.updated_at_ms = ev.timestamp_ms;
             bal.version = bal
@@ -328,7 +347,9 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
         }
         "TOKEN_DIMENSIONS_ADJUST" => {
             let bal_val = ev.payload.get("balance").ok_or_else(|| {
-                VNetworkError::Serialization("missing balance in TOKEN_DIMENSIONS_ADJUST".to_string())
+                VNetworkError::Serialization(
+                    "missing balance in TOKEN_DIMENSIONS_ADJUST".to_string(),
+                )
             })?;
             let bal: TokenBalanceRecord = serde_json::from_value(bal_val.clone())
                 .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
@@ -338,26 +359,34 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
         "CONTRACT_CREATE" => {
             let contract: VContractEntity = serde_json::from_value(ev.payload.clone())
                 .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
-            state.contracts.insert(contract.contract_id.clone(), contract);
+            state
+                .contracts
+                .insert(contract.contract_id.clone(), contract);
         }
         "CONTRACT_EXECUTE" => {
             if let Some(moves) = ev.payload.get("escrow_moves").and_then(|v| v.as_array()) {
                 for m in moves {
                     let token_id = m.get("token_id").and_then(|v| v.as_str()).ok_or_else(|| {
-                        VNetworkError::Serialization("missing token_id in contract escrow move".to_string())
+                        VNetworkError::Serialization(
+                            "missing token_id in contract escrow move".to_string(),
+                        )
                     })?;
-                    let from_wallet_id =
-                        m.get("from_wallet_id").and_then(|v| v.as_str()).ok_or_else(|| {
+                    let from_wallet_id = m
+                        .get("from_wallet_id")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
                             VNetworkError::Serialization(
                                 "missing from_wallet_id in contract escrow move".to_string(),
                             )
                         })?;
                     let to_wallet_id =
-                        m.get("to_wallet_id").and_then(|v| v.as_str()).ok_or_else(|| {
-                            VNetworkError::Serialization(
-                                "missing to_wallet_id in contract escrow move".to_string(),
-                            )
-                        })?;
+                        m.get("to_wallet_id")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                VNetworkError::Serialization(
+                                    "missing to_wallet_id in contract escrow move".to_string(),
+                                )
+                            })?;
                     let amount: u128 = m
                         .get("amount")
                         .and_then(|v| v.as_str())
@@ -380,21 +409,25 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
             if let Some(c_val) = ev.payload.get("contract") {
                 let contract: VContractEntity = serde_json::from_value(c_val.clone())
                     .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
-                state.contracts.insert(contract.contract_id.clone(), contract);
+                state
+                    .contracts
+                    .insert(contract.contract_id.clone(), contract);
             } else if let Some(c) = state.contracts.get_mut(&ev.entity_id) {
                 c.execution_count = match ev.payload.get("execution_count") {
-                    None | Some(serde_json::Value::Null) => c
-                        .execution_count
-                        .checked_add(1)
-                        .ok_or_else(|| VNetworkError::Validation("contract execution_count overflow".to_string()))?,
+                    None | Some(serde_json::Value::Null) => {
+                        c.execution_count.checked_add(1).ok_or_else(|| {
+                            VNetworkError::Validation(
+                                "contract execution_count overflow".to_string(),
+                            )
+                        })?
+                    }
                     Some(v) => v.as_u64().ok_or_else(|| {
                         VNetworkError::Serialization("invalid contract execution_count".to_string())
                     })?,
                 };
-                c.version = c
-                    .version
-                    .checked_add(1)
-                    .ok_or_else(|| VNetworkError::Validation("contract version overflow".to_string()))?;
+                c.version = c.version.checked_add(1).ok_or_else(|| {
+                    VNetworkError::Validation("contract version overflow".to_string())
+                })?;
             }
         }
         "LOAN_CREATE" | "LOAN_FUND" | "LOAN_DRAW" | "LOAN_REPAY" | "LOAN_DEFAULT"
@@ -469,7 +502,9 @@ pub fn apply_event_to_state(state: &mut NetworkLedgerState, ev: &LedgerEvent) ->
                 .get("entity_kind")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| {
-                    VNetworkError::Serialization("missing entity_kind in ENTITY_CERTIFY".to_string())
+                    VNetworkError::Serialization(
+                        "missing entity_kind in ENTITY_CERTIFY".to_string(),
+                    )
                 })?;
             let ent_val = ev.payload.get("entity").ok_or_else(|| {
                 VNetworkError::Serialization("missing entity in ENTITY_CERTIFY".to_string())

@@ -3,10 +3,10 @@ use crate::membership::ValidatorMembership;
 use vnetwork_core::authorization::{
     commit_request_nonce_event, commit_signed_operation_intent_event, validate_signed_envelope,
 };
-use vnetwork_core::language::validator_verify_program_bundle;
 use vnetwork_core::identity::{
     commit_participant_join_intent_event, verify_and_register_participant, JoinNetworkRequest,
 };
+use vnetwork_core::language::validator_verify_program_bundle;
 use vnetwork_core::replay::apply_event_to_state;
 use vnetwork_core::state::{GenesisConfig, NetworkLedgerState};
 use vnetwork_core::transition::apply_network_operation_with_genesis;
@@ -130,22 +130,20 @@ pub fn validate_proposal_against_state(
             ));
         }
         let intent = intent_events[0];
-        let challenge: ParticipantChallenge = serde_json::from_value(
-            intent.payload.get("challenge").cloned().ok_or_else(|| {
+        let challenge: ParticipantChallenge =
+            serde_json::from_value(intent.payload.get("challenge").cloned().ok_or_else(|| {
                 VNetworkError::Serialization(
                     "missing challenge in PARTICIPANT_JOIN_INTENT".to_string(),
                 )
-            })?,
-        )
-        .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
-        let request: JoinNetworkRequest = serde_json::from_value(
-            intent.payload.get("request").cloned().ok_or_else(|| {
+            })?)
+            .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
+        let request: JoinNetworkRequest =
+            serde_json::from_value(intent.payload.get("request").cloned().ok_or_else(|| {
                 VNetworkError::Serialization(
                     "missing request in PARTICIPANT_JOIN_INTENT".to_string(),
                 )
-            })?,
-        )
-        .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
+            })?)
+            .map_err(|e| VNetworkError::Serialization(e.to_string()))?;
         if intent.network_id != state.network_id
             || intent.entity_id != challenge.challenge_id
             || intent.actor_pubkey != request.participant_pubkey
@@ -202,6 +200,15 @@ pub fn validate_proposal_against_state(
             )));
         }
         return Ok(());
+    }
+
+    // A participant join is the only unsigned-binding exception and was
+    // independently authenticated and re-executed above. Every other proposal
+    // must carry an actor-authenticated operation (or a verified .vx bundle).
+    if proposal.nonce_binding.is_none() && proposal.program_source_bundle.is_none() {
+        return Err(VNetworkError::Consensus(
+            "proposal is missing an authenticated operation binding".to_string(),
+        ));
     }
 
     if let Some((bound_actor, bound_request, bound_nonce)) = proposal.nonce_binding.as_ref() {
@@ -265,7 +272,8 @@ pub fn validate_proposal_against_state(
                 .to_string();
             if operation_scope != proposal.operation_scope {
                 return Err(VNetworkError::Consensus(
-                    "signed operation discriminator does not match proposal operation_scope".to_string(),
+                    "signed operation discriminator does not match proposal operation_scope"
+                        .to_string(),
                 ));
             }
 
@@ -346,7 +354,8 @@ pub fn validate_proposal_against_state(
             }
             let event = nonce_events[0];
             if event.payload.get("actor_pubkey").and_then(|v| v.as_str()) != Some(actor.as_str())
-                || event.payload.get("request_id").and_then(|v| v.as_str()) != Some(request_id.as_str())
+                || event.payload.get("request_id").and_then(|v| v.as_str())
+                    != Some(request_id.as_str())
                 || event.payload.get("nonce").and_then(|v| v.as_u64()) != Some(*nonce)
                 || staged.actor_nonces.get(actor) != Some(nonce)
                 || !staged.seen_request_ids.contains(request_id)
@@ -357,15 +366,9 @@ pub fn validate_proposal_against_state(
             }
         }
         None => {
-            if proposal.events.iter().any(|event| {
-                event.operation == "REQUEST_NONCE_COMMIT"
-                    || event.operation == "SIGNED_OPERATION_INTENT"
-                    || event.operation == "PARTICIPANT_JOIN_INTENT"
-            }) {
-                return Err(VNetworkError::Consensus(
-                    "proposal contains a signed-request event without its required binding".to_string(),
-                ));
-            }
+            return Err(VNetworkError::Consensus(
+                "proposal is missing an authenticated operation binding".to_string(),
+            ));
         }
     }
     staged.height = proposal.height;

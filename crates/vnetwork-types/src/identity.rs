@@ -216,8 +216,8 @@ pub fn canonical_ed25519_pubkey_bytes(public_key_hex: &str) -> VResult<[u8; 32]>
     const KNOWN_SMALL_ORDER: [[u8; 32]; 2] = [
         [0u8; 32],
         [
-            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0,
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0,
         ],
     ];
     if KNOWN_SMALL_ORDER.iter().any(|bad| bad == &canonical) {
@@ -406,7 +406,9 @@ impl EncryptedKeyEnvelope {
         let mut derived = Zeroizing::new([0u8; 32]);
         argon2
             .hash_password_into(passphrase.as_bytes(), salt, derived.as_mut())
-            .map_err(|e| VNetworkError::Signature(format!("Argon2id key derivation failed: {e}")))?;
+            .map_err(|e| {
+                VNetworkError::Signature(format!("Argon2id key derivation failed: {e}"))
+            })?;
         Ok(derived)
     }
 }
@@ -821,7 +823,8 @@ impl KeypairMaterial {
     }
 
     pub fn from_private_hex(role: &str, private_hex: &str) -> VResult<Self> {
-        Ok(ProtectedSigningKey::from_private_hex(role, private_hex)?.to_keypair_material_in_memory())
+        Ok(ProtectedSigningKey::from_private_hex(role, private_hex)?
+            .to_keypair_material_in_memory())
     }
 
     pub fn to_protected(&self) -> VResult<ProtectedSigningKey> {

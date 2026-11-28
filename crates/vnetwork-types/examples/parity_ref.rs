@@ -11,7 +11,8 @@ fn main() {
         "nil": serde_json::Value::Null,
         "html": "<a>&",
         "a": { "z": true, "m": [3, 1, 2] }
-    })).unwrap();
+    }))
+    .unwrap();
     let sig = pk.sign(&canon).unwrap();
 
     let submit_canon = canonical_json_bytes(&serde_json::json!({
@@ -27,7 +28,8 @@ fn main() {
         "protocol_version": PROTOCOL_VERSION,
         "request_id": "req_0001",
         "source_hash": blake3_hex(b"Wallet Main;"),
-    })).unwrap();
+    }))
+    .unwrap();
     let submit_sig = pk.sign(&submit_canon).unwrap();
 
     let pop_canon = canonical_json_bytes(&serde_json::json!({
@@ -39,7 +41,8 @@ fn main() {
         "protocol_version": PROTOCOL_VERSION,
         "purpose": "wallet_key_authorization",
         "wallet_id": "wal_demo",
-    })).unwrap();
+    }))
+    .unwrap();
     let pop_sig = nk.sign(&pop_canon).unwrap();
 
     let xfer_canon = canonical_json_bytes(&serde_json::json!({
@@ -50,7 +53,8 @@ fn main() {
         "protocol_version": PROTOCOL_VERSION,
         "to_wallet_id": "wal_b",
         "token_id": "tok_atlas",
-    })).unwrap();
+    }))
+    .unwrap();
     let xfer_sig = pk.sign(&xfer_canon).unwrap();
 
     let out = serde_json::json!({

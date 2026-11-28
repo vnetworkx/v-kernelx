@@ -89,7 +89,9 @@ impl ValidatorMembership {
             .checked_mul(bps)
             .and_then(|v| v.checked_add(9_999))
             .map(|v| v / 10_000)
-            .ok_or_else(|| VNetworkError::Consensus("required quorum weight overflow".to_string()))?;
+            .ok_or_else(|| {
+                VNetworkError::Consensus("required quorum weight overflow".to_string())
+            })?;
         u64::try_from(weighted)
             .map_err(|_| VNetworkError::Consensus("required quorum weight exceeds u64".to_string()))
     }
@@ -105,9 +107,9 @@ impl ValidatorMembership {
 
     pub fn deactivate_validator(&mut self, validator_id: &str) -> VResult<()> {
         let mut next = self.validators.clone();
-        let v = next.get_mut(validator_id).ok_or_else(|| {
-            VNetworkError::NotFound(format!("validator `{validator_id}`"))
-        })?;
+        let v = next
+            .get_mut(validator_id)
+            .ok_or_else(|| VNetworkError::NotFound(format!("validator `{validator_id}`")))?;
         v.active = false;
         let list: Vec<ConsensusValidator> = next.values().cloned().collect();
         validate_validator_set(&list)?;

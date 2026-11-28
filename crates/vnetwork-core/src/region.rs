@@ -60,7 +60,9 @@ pub fn apply_create_region(
 
     let clean_name = name.trim();
     if clean_name.is_empty() {
-        return Err(VNetworkError::Validation("region name cannot be empty".to_string()));
+        return Err(VNetworkError::Validation(
+            "region name cannot be empty".to_string(),
+        ));
     }
     if clean_name.eq_ignore_ascii_case("ATLAS") && !state.profile.allows_dev_atlas_fixture() {
         return Err(VNetworkError::ProfileMismatch(
@@ -116,7 +118,11 @@ pub fn apply_create_region(
         &state.network_id,
         "region",
         &region_id,
-        if ghost { "GHOST_REGION_CREATE" } else { "REGION_CREATE" },
+        if ghost {
+            "GHOST_REGION_CREATE"
+        } else {
+            "REGION_CREATE"
+        },
         actor_pubkey,
         state.logical_clock,
         timestamp_ms,

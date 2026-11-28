@@ -1,6 +1,4 @@
-use vnetwork_consensus::{
-    validate_proposal_against_state, EquivocationStore, ValidatorMembership,
-};
+use vnetwork_consensus::{validate_proposal_against_state, EquivocationStore, ValidatorMembership};
 use vnetwork_core::state::{GenesisConfig, NetworkLedgerState};
 use vnetwork_types::*;
 

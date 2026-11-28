@@ -34,7 +34,9 @@ fn single_val_qc(
         timestamp_ms: ts,
         signature: String::new(),
     };
-    vote.signature = val_kp.sign(&vote.canonical_signing_bytes().unwrap()).unwrap();
+    vote.signature = val_kp
+        .sign(&vote.canonical_signing_bytes().unwrap())
+        .unwrap();
     let mut qc = QuorumCertificate {
         certificate_id: String::new(),
         proposal_id: prop.proposal_id.clone(),
@@ -116,13 +118,9 @@ fn test_wal_persistence_crash_recovery_and_profile_guard() {
     let n_kp = KeypairMaterial::generate("node");
     let ch = engine.issue_challenge(100);
     let scopes = vec![ParticipationLevel::Network];
-    let join_bytes = canonical_join_signing_bytes(
-        &ch,
-        &p_kp.public_key_hex,
-        &n_kp.public_key_hex,
-        &scopes,
-    )
-    .unwrap();
+    let join_bytes =
+        canonical_join_signing_bytes(&ch, &p_kp.public_key_hex, &n_kp.public_key_hex, &scopes)
+            .unwrap();
     let req = JoinNetworkRequest {
         challenge_id: ch.challenge_id,
         participant_pubkey: p_kp.public_key_hex.clone(),
@@ -204,7 +202,8 @@ fn test_wal_persistence_crash_recovery_and_profile_guard() {
             .append(true)
             .open(dir.join("events.wal"))
             .unwrap();
-        f.write_all(b"{\"partial_corrupt_tail_without_newline").unwrap();
+        f.write_all(b"{\"partial_corrupt_tail_without_newline")
+            .unwrap();
     }
     let (db5, state5, rep5) = StorageDatabase::open_and_recover(&dir, &genesis).unwrap();
     assert_eq!(state5.height, 1);

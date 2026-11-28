@@ -18,9 +18,16 @@ pub async fn get_space(
     let space = state
         .spaces
         .get(&space_id)
-        .or_else(|| state.spaces.values().find(|s| s.name.eq_ignore_ascii_case(&space_id)))
+        .or_else(|| {
+            state
+                .spaces
+                .values()
+                .find(|s| s.name.eq_ignore_ascii_case(&space_id))
+        })
         .cloned()
-        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "SPACE_NOT_FOUND", "space not found"))?;
+        .ok_or_else(|| {
+            ApiError::new(StatusCode::NOT_FOUND, "SPACE_NOT_FOUND", "space not found")
+        })?;
     serde_json::to_value(space).map(Json).map_err(|e| {
         ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,

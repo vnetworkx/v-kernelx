@@ -233,22 +233,26 @@ fn grantor_can_delegate_level(
         ParticipationLevel::Network => {
             // Network membership is intentionally insufficient. Only an explicit,
             // active governance grant confers authority over membership transitions.
-            target_id.is_none()
-                && has_network_governance_authority(state, grantor_pubkey, now_ms)
+            target_id.is_none() && has_network_governance_authority(state, grantor_pubkey, now_ms)
         }
         ParticipationLevel::Space => {
             let Some(space_id) = target_id else {
                 return false;
             };
-            state.participants.values().any(|participant| {
-                participant.public_key_hex == grantor_pubkey
-                    && participant.status == ParticipationStatus::Active
-                    && participant.scope.has_active_scope(
-                        ParticipationLevel::Space,
-                        Some(space_id),
-                        now_ms,
-                    )
-            })
+            // Network governance can issue the first scoped grant for an
+            // existing space. Once a participant has that scope, it can be
+            // delegated within the same space by the existing scope holder.
+            state.spaces.contains_key(space_id)
+                && (has_network_governance_authority(state, grantor_pubkey, now_ms)
+                    || state.participants.values().any(|participant| {
+                        participant.public_key_hex == grantor_pubkey
+                            && participant.status == ParticipationStatus::Active
+                            && participant.scope.has_active_scope(
+                                ParticipationLevel::Space,
+                                Some(space_id),
+                                now_ms,
+                            )
+                    }))
         }
         ParticipationLevel::Region => {
             let Some(space_id) = target_id else {
@@ -296,19 +300,35 @@ fn can_authorize_join_scope(
         return true;
     }
 
-    // Preserve the existing genesis onboarding path, but never treat validator
-    // status alone as ongoing authority. Genesis authorization is an explicit,
-    // signed, one-time join grant and remains subject to consensus commitment.
-    level == ParticipationLevel::Network
-        && state.height == 0
+    // Genesis delegation is a one-time, signed bootstrap exception. It is
+    // available only before the first participant exists and never turns
+    // validator status into ongoing delegation authority.
+    let is_empty_genesis = state.height == 0
         && state.participants.is_empty()
         && auth.target_id.is_none()
-        && auth.authorization_basis.eq_ignore_ascii_case("genesis_governance")
         && state.validators.iter().any(|validator| {
             validator.active
                 && validator.joined_epoch == state.validator_epoch
                 && validator.validator_pubkey_hex == auth.grantor_pubkey
-        })
+        });
+    if !is_empty_genesis {
+        return false;
+    }
+
+    match level {
+        // Only an explicit genesis_governance grant confers Network admin.
+        ParticipationLevel::Network => auth
+            .authorization_basis
+            .eq_ignore_ascii_case("genesis_governance"),
+        // Explicit genesis_validator_delegation may assign the initial
+        // wildcard hierarchy scopes to the first participant only.
+        ParticipationLevel::Space
+        | ParticipationLevel::Region
+        | ParticipationLevel::Wallet
+        | ParticipationLevel::Token => auth
+            .authorization_basis
+            .eq_ignore_ascii_case("genesis_validator_delegation"),
+    }
 }
 
 pub fn verify_and_register_participant(
@@ -316,13 +336,14 @@ pub fn verify_and_register_participant(
     req: &JoinNetworkRequest,
     timestamp_ms: u64,
 ) -> VResult<(ParticipantRecord, NodeRecord, LedgerEvent)> {
-    let challenge = state
-        .challenges
-        .remove(&req.challenge_id)
-        .ok_or_else(|| VNetworkError::Authorization("unknown or already used challenge_id".to_string()))?;
+    let challenge = state.challenges.remove(&req.challenge_id).ok_or_else(|| {
+        VNetworkError::Authorization("unknown or already used challenge_id".to_string())
+    })?;
 
     if timestamp_ms > challenge.expires_at_ms {
-        return Err(VNetworkError::Authorization("participant challenge expired".to_string()));
+        return Err(VNetworkError::Authorization(
+            "participant challenge expired".to_string(),
+        ));
     }
 
     verify_participant_join_intent(&challenge, req, &state.network_id, timestamp_ms)?;
@@ -435,7 +456,9 @@ pub fn verify_and_register_participant(
         last_seen_ms: timestamp_ms,
     };
 
-    state.participants.insert(participant_id.clone(), participant.clone());
+    state
+        .participants
+        .insert(participant_id.clone(), participant.clone());
     state.nodes.insert(node_id.clone(), node.clone());
 
     state.logical_clock = state
@@ -488,7 +511,13 @@ pub fn apply_grant_participant_scope(
             ));
         }
     }
-    if !grantor_can_delegate_level(state, actor_pubkey, level, target_id.as_deref(), timestamp_ms) {
+    if !grantor_can_delegate_level(
+        state,
+        actor_pubkey,
+        level,
+        target_id.as_deref(),
+        timestamp_ms,
+    ) {
         return Err(VNetworkError::Authorization(format!(
             "actor `{actor_pubkey}` is not authorized to grant `{}` scope for the requested target",
             level.as_str()
@@ -686,9 +715,7 @@ pub fn apply_reinstate_participant(
         })
         .cloned()
         .ok_or_else(|| {
-            VNetworkError::NotFound(format!(
-                "participant `{target_participant_ref}` not found"
-            ))
+            VNetworkError::NotFound(format!("participant `{target_participant_ref}` not found"))
         })?;
 
     if participant.status != ParticipationStatus::Revoked {
@@ -772,7 +799,9 @@ pub fn apply_reinstate_participant(
     )?;
 
     state.logical_clock = next_clock;
-    state.participants.insert(participant.participant_id.clone(), participant.clone());
+    state
+        .participants
+        .insert(participant.participant_id.clone(), participant.clone());
     state.nodes.insert(node.node_id.clone(), node.clone());
     state.events.push(event.clone());
 
@@ -820,15 +849,14 @@ pub fn require_participant_scope(
     require_participant_scope_at(state, actor_pubkey, required_level, None, 0)
 }
 
-
 #[cfg(test)]
 mod onboarding_regressions {
-    use std::collections::BTreeSet;
     use super::{
         can_authorize_join_scope, canonical_join_signing_bytes, issue_participant_challenge,
         verify_and_register_participant, JoinNetworkRequest, SignedScopeAuthorization,
     };
     use crate::state::{GenesisConfig, NetworkLedgerState};
+    use std::collections::BTreeSet;
     use vnetwork_types::*;
 
     fn test_state() -> (NetworkLedgerState, KeypairMaterial) {
@@ -846,7 +874,10 @@ mod onboarding_regressions {
                 joined_epoch: 1,
             }],
         );
-        (NetworkLedgerState::try_new(&genesis).expect("valid genesis"), validator)
+        (
+            NetworkLedgerState::try_new(&genesis).expect("valid genesis"),
+            validator,
+        )
     }
 
     fn join_request(
@@ -872,7 +903,9 @@ mod onboarding_regressions {
             node_kind: NodeKind::FullNode,
             requested_scopes,
             advertised_addresses: Vec::new(),
-            participant_signature: participant.sign(&message).expect("participant test signature"),
+            participant_signature: participant
+                .sign(&message)
+                .expect("participant test signature"),
             node_signature: node.sign(&message).expect("node test signature"),
             scope_authorizations: Vec::new(),
         }
@@ -883,7 +916,7 @@ mod onboarding_regressions {
         let (mut state, validator) = test_state();
         let authorization = SignedScopeAuthorization {
             target_participant_pubkey: "participant".to_string(),
-            grantor_pubkey: validator.public_key_hex,
+            grantor_pubkey: validator.public_key_hex.clone(),
             scopes: vec![ParticipationLevel::Network],
             target_id: None,
             expires_at_ms: None,
@@ -916,6 +949,73 @@ mod onboarding_regressions {
             &state,
             &authorization,
             ParticipationLevel::Network,
+            1,
+        ));
+    }
+
+    #[test]
+    fn genesis_validator_delegation_is_one_time_and_scope_limited() {
+        let (state, validator) = test_state();
+        let mut authorization = SignedScopeAuthorization {
+            target_participant_pubkey: "initial-participant".to_string(),
+            grantor_pubkey: validator.public_key_hex.clone(),
+            scopes: vec![
+                ParticipationLevel::Space,
+                ParticipationLevel::Region,
+                ParticipationLevel::Wallet,
+                ParticipationLevel::Token,
+            ],
+            target_id: None,
+            expires_at_ms: None,
+            authorization_basis: "genesis_validator_delegation".to_string(),
+            signature: String::new(),
+        };
+        for level in [
+            ParticipationLevel::Space,
+            ParticipationLevel::Region,
+            ParticipationLevel::Wallet,
+            ParticipationLevel::Token,
+        ] {
+            assert!(can_authorize_join_scope(&state, &authorization, level, 1));
+        }
+        assert!(!can_authorize_join_scope(
+            &state,
+            &authorization,
+            ParticipationLevel::Network,
+            1,
+        ));
+
+        authorization.authorization_basis = "genesis_governance".to_string();
+        assert!(can_authorize_join_scope(
+            &state,
+            &authorization,
+            ParticipationLevel::Network,
+            1,
+        ));
+        assert!(!can_authorize_join_scope(
+            &state,
+            &authorization,
+            ParticipationLevel::Space,
+            1,
+        ));
+
+        let mut occupied_state = state.clone();
+        let joined = KeypairMaterial::generate("first-genesis-participant");
+        add_governance_participant(&mut occupied_state, &joined);
+        authorization.authorization_basis = "genesis_validator_delegation".to_string();
+        assert!(!can_authorize_join_scope(
+            &occupied_state,
+            &authorization,
+            ParticipationLevel::Space,
+            1,
+        ));
+
+        let mut later_state = state.clone();
+        later_state.height = 1;
+        assert!(!can_authorize_join_scope(
+            &later_state,
+            &authorization,
+            ParticipationLevel::Space,
             1,
         ));
     }
@@ -1012,26 +1112,33 @@ mod onboarding_regressions {
         let governance_key = KeypairMaterial::generate("reinstatement-governance");
         add_governance_participant(&mut state, &governance_key);
 
-        let (restored, restored_node, event) = apply_reinstate_participant(
-            &mut state,
-            &target_id,
-            &governance_key.public_key_hex,
-            20,
-        )
-        .expect("explicit governance reinstatement");
+        let (restored, restored_node, event) =
+            apply_reinstate_participant(&mut state, &target_id, &governance_key.public_key_hex, 20)
+                .expect("explicit governance reinstatement");
         assert_eq!(restored.status, ParticipationStatus::Active);
-        assert!(restored.scope.has_active_scope(ParticipationLevel::Network, None, 20));
+        assert!(restored
+            .scope
+            .has_active_scope(ParticipationLevel::Network, None, 20));
         assert!(!restored.scope.has_active_scope(
             ParticipationLevel::Space,
             Some("previously-authorized-space"),
             20,
         ));
-        assert!(!restored.scope.has_active_scope(ParticipationLevel::Region, None, 20));
-        assert!(!restored.scope.has_active_scope(ParticipationLevel::Wallet, None, 20));
-        assert!(!restored.scope.has_active_scope(ParticipationLevel::Token, None, 20));
-        assert!(restored.scope.grants.iter().filter(|grant| {
-            grant.granted_at_ms < 20
-        }).all(|grant| grant.revoked));
+        assert!(!restored
+            .scope
+            .has_active_scope(ParticipationLevel::Region, None, 20));
+        assert!(!restored
+            .scope
+            .has_active_scope(ParticipationLevel::Wallet, None, 20));
+        assert!(!restored
+            .scope
+            .has_active_scope(ParticipationLevel::Token, None, 20));
+        assert!(restored
+            .scope
+            .grants
+            .iter()
+            .filter(|grant| { grant.granted_at_ms < 20 })
+            .all(|grant| grant.revoked));
         assert_eq!(restored.scope.levels.len(), 1);
         assert!(restored.scope.levels.contains(&ParticipationLevel::Network));
         assert!(!restored.scope.validator_eligible);
@@ -1043,15 +1150,9 @@ mod onboarding_regressions {
         let before_unauthorized = state.clone();
         let unauthorized = KeypairMaterial::generate("non-governance-reinstatement");
         assert!(matches!(
-            apply_reinstate_participant(
-                &mut state,
-                &target_id,
-                &unauthorized.public_key_hex,
-                21,
-            ),
+            apply_reinstate_participant(&mut state, &target_id, &unauthorized.public_key_hex, 21,),
             Err(VNetworkError::Authorization(_))
         ));
         assert_eq!(state, before_unauthorized);
     }
-
 }

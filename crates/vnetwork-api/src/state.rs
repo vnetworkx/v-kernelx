@@ -40,8 +40,14 @@ pub trait NetworkNodeBackend: Send + Sync {
     async fn get_node_details(&self, node_id: &str) -> Result<serde_json::Value, ApiError>;
     async fn connect_peer(&self, multiaddr: &str) -> Result<serde_json::Value, ApiError>;
     async fn issue_challenge(&self) -> Result<ParticipantChallenge, ApiError>;
-    async fn join_participant(&self, req: JoinNetworkRequest) -> Result<serde_json::Value, ApiError>;
-    async fn submit_program(&self, req: SubmitProgramRequest) -> Result<ProgramSubmission, ApiError>;
+    async fn join_participant(
+        &self,
+        req: JoinNetworkRequest,
+    ) -> Result<serde_json::Value, ApiError>;
+    async fn submit_program(
+        &self,
+        req: SubmitProgramRequest,
+    ) -> Result<ProgramSubmission, ApiError>;
     async fn submit_signed_operation(
         &self,
         req: SignedOperationHttpRequest,

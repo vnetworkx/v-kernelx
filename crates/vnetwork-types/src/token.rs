@@ -254,4 +254,3 @@ impl DrainPolicy {
         Ok((bps, fee, net))
     }
 }
-

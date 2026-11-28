@@ -43,7 +43,9 @@ impl From<VNetworkError> for ApiError {
             VNetworkError::Validation(_) => (StatusCode::BAD_REQUEST, "VALIDATION_ERROR"),
             VNetworkError::Authorization(_) => (StatusCode::FORBIDDEN, "AUTHORIZATION_ERROR"),
             VNetworkError::Signature(_) => (StatusCode::UNAUTHORIZED, "SIGNATURE_INVALID"),
-            VNetworkError::Hierarchy(_) => (StatusCode::UNPROCESSABLE_ENTITY, "HIERARCHY_VIOLATION"),
+            VNetworkError::Hierarchy(_) => {
+                (StatusCode::UNPROCESSABLE_ENTITY, "HIERARCHY_VIOLATION")
+            }
             VNetworkError::NotFound(_) => (StatusCode::NOT_FOUND, "NOT_FOUND"),
             VNetworkError::AlreadyExists(_) => (StatusCode::CONFLICT, "ALREADY_EXISTS"),
             VNetworkError::InsufficientBalance(_) => {

@@ -53,10 +53,12 @@ pub fn load_certified_checkpoint(
         return Ok(None);
     }
 
-    let raw = fs::read_to_string(&cert_path)
-        .map_err(|e| VNetworkError::Storage(format!("read {CERTIFIED_CHECKPOINT_FILE} failed: {e}")))?;
-    let ckpt: CertifiedCheckpoint = serde_json::from_str(&raw)
-        .map_err(|e| VNetworkError::Storage(format!("parse {CERTIFIED_CHECKPOINT_FILE} failed: {e}")))?;
+    let raw = fs::read_to_string(&cert_path).map_err(|e| {
+        VNetworkError::Storage(format!("read {CERTIFIED_CHECKPOINT_FILE} failed: {e}"))
+    })?;
+    let ckpt: CertifiedCheckpoint = serde_json::from_str(&raw).map_err(|e| {
+        VNetworkError::Storage(format!("parse {CERTIFIED_CHECKPOINT_FILE} failed: {e}"))
+    })?;
     ckpt.verify(expected_genesis)?;
     Ok(Some(ckpt))
 }

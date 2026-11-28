@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use vnetwork_core::apply_create_space;
 use vnetwork_core::state::{GenesisConfig, NetworkLedgerState};
+use vnetwork_core::transition::apply_network_operation_with_policy;
 use vnetwork_types::*;
 
 fn state_with_participant(basis: &str) -> (NetworkLedgerState, KeypairMaterial) {
@@ -12,7 +13,7 @@ fn state_with_participant(basis: &str) -> (NetworkLedgerState, KeypairMaterial) 
         vec![ConsensusValidator {
             validator_id: "validator-1".to_string(),
             node_id: "node-1".to_string(),
-            validator_pubkey_hex: validator.public_key_hex,
+            validator_pubkey_hex: validator.public_key_hex.clone(),
             weight: 100,
             active: true,
             joined_epoch: 1,
@@ -108,7 +109,6 @@ fn expired_or_revoked_governance_cannot_create_space() {
         assert!(state.spaces.is_empty());
     }
 }
-
 
 #[test]
 fn failed_network_transition_does_not_leak_partial_space_mutation() {

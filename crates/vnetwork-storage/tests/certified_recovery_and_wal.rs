@@ -33,7 +33,9 @@ fn single_val_qc(
         timestamp_ms: ts,
         signature: String::new(),
     };
-    vote.signature = val_kp.sign(&vote.canonical_signing_bytes().unwrap()).unwrap();
+    vote.signature = val_kp
+        .sign(&vote.canonical_signing_bytes().unwrap())
+        .unwrap();
     let mut qc = QuorumCertificate {
         certificate_id: String::new(),
         proposal_id: prop.proposal_id.clone(),
@@ -92,13 +94,9 @@ fn test_rejects_legacy_uncertified_snapshot_and_wal_divergence() {
     let n_kp = KeypairMaterial::generate("node");
     let ch = engine.issue_challenge(100);
     let scopes = vec![ParticipationLevel::Network];
-    let join_bytes = canonical_join_signing_bytes(
-        &ch,
-        &p_kp.public_key_hex,
-        &n_kp.public_key_hex,
-        &scopes,
-    )
-    .unwrap();
+    let join_bytes =
+        canonical_join_signing_bytes(&ch, &p_kp.public_key_hex, &n_kp.public_key_hex, &scopes)
+            .unwrap();
     let req = JoinNetworkRequest {
         challenge_id: ch.challenge_id,
         participant_pubkey: p_kp.public_key_hex.clone(),
@@ -142,7 +140,9 @@ fn test_rejects_legacy_uncertified_snapshot_and_wal_divergence() {
     );
 
     // Restore clean events.wal
-    EventWal::new(&dir).rewrite_all(&engine.state.events).unwrap();
+    EventWal::new(&dir)
+        .rewrite_all(&engine.state.events)
+        .unwrap();
     let (db_ok, _, rep) = StorageDatabase::open_and_recover(&dir, &genesis).unwrap();
     assert!(rep.wal_consistency_ok);
     db_ok.check_health().unwrap();
@@ -171,7 +171,9 @@ fn test_rejects_legacy_uncertified_snapshot_and_wal_divergence() {
     )
     .unwrap();
     vnetwork_storage::save_certified_checkpoint(&dir, &ckpt).unwrap();
-    let mut commits = vnetwork_storage::ConsensusWal::new(&dir).read_all().unwrap();
+    let mut commits = vnetwork_storage::ConsensusWal::new(&dir)
+        .read_all()
+        .unwrap();
     commits[0].certificate.votes[0].signature = "00".repeat(64);
     vnetwork_storage::ConsensusWal::new(&dir)
         .rewrite_all(&commits)

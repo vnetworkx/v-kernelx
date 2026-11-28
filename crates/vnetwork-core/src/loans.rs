@@ -22,11 +22,11 @@ pub fn move_loan_escrow_balance(
     let from_key = NetworkLedgerState::balance_key(token_id, from_id);
     let to_key = NetworkLedgerState::balance_key(token_id, to_id);
 
-    let mut from_bal = state
-        .balances
-        .get(&from_key)
-        .cloned()
-        .ok_or_else(|| VNetworkError::InsufficientBalance(format!("missing balance for escrow move from `{from_id}`")))?;
+    let mut from_bal = state.balances.get(&from_key).cloned().ok_or_else(|| {
+        VNetworkError::InsufficientBalance(format!(
+            "missing balance for escrow move from `{from_id}`"
+        ))
+    })?;
     from_bal.vector = from_bal.vector.checked_sub_token(amount)?;
     from_bal.updated_at_ms = timestamp_ms;
     from_bal.version = from_bal
@@ -34,13 +34,17 @@ pub fn move_loan_escrow_balance(
         .checked_add(1)
         .ok_or_else(|| VNetworkError::Validation("balance version overflow".to_string()))?;
 
-    let mut to_bal = state.balances.get(&to_key).cloned().unwrap_or(TokenBalanceRecord {
-        token_id: token_id.to_string(),
-        wallet_id: to_id.to_string(),
-        vector: TokenVector::zero(),
-        updated_at_ms: timestamp_ms,
-        version: 0,
-    });
+    let mut to_bal = state
+        .balances
+        .get(&to_key)
+        .cloned()
+        .unwrap_or(TokenBalanceRecord {
+            token_id: token_id.to_string(),
+            wallet_id: to_id.to_string(),
+            vector: TokenVector::zero(),
+            updated_at_ms: timestamp_ms,
+            version: 0,
+        });
     to_bal.vector = to_bal.vector.checked_add_token(amount)?;
     to_bal.updated_at_ms = timestamp_ms;
     to_bal.version = to_bal
@@ -68,10 +72,14 @@ pub fn apply_create_loan(
     timestamp_ms: u64,
 ) -> VResult<(VLoanEntity, LedgerEvent)> {
     if principal == 0 {
-        return Err(VNetworkError::Validation("loan principal must be > 0".to_string()));
+        return Err(VNetworkError::Validation(
+            "loan principal must be > 0".to_string(),
+        ));
     }
     if interest_bps > 10_000 {
-        return Err(VNetworkError::Validation("interest_bps must be <= 10000".to_string()));
+        return Err(VNetworkError::Validation(
+            "interest_bps must be <= 10000".to_string(),
+        ));
     }
     if let Some(mat) = maturity_at_ms {
         if timestamp_ms >= mat {
@@ -281,7 +289,10 @@ pub fn apply_execute_loan(
             loan.status = LoanStatus::Cancelled;
         }
         "fund" => {
-            if loan.maturity_at_ms.is_some_and(|maturity| timestamp_ms >= maturity) {
+            if loan
+                .maturity_at_ms
+                .is_some_and(|maturity| timestamp_ms >= maturity)
+            {
                 return Err(VNetworkError::Validation(
                     "cannot fund a loan at or after its maturity".to_string(),
                 ));
@@ -318,14 +329,17 @@ pub fn apply_execute_loan(
                 .checked_mul(loan.interest_bps as u128)
                 .ok_or_else(|| VNetworkError::Validation("loan interest overflow".to_string()))?
                 / 10_000;
-            loan.accrued_interest = loan
-                .accrued_interest
-                .checked_add(interest)
-                .ok_or_else(|| VNetworkError::Validation("accrued interest overflow".to_string()))?;
+            loan.accrued_interest =
+                loan.accrued_interest.checked_add(interest).ok_or_else(|| {
+                    VNetworkError::Validation("accrued interest overflow".to_string())
+                })?;
             loan.status = LoanStatus::Active;
         }
         "draw" => {
-            if loan.maturity_at_ms.is_some_and(|maturity| timestamp_ms >= maturity) {
+            if loan
+                .maturity_at_ms
+                .is_some_and(|maturity| timestamp_ms >= maturity)
+            {
                 return Err(VNetworkError::Validation(
                     "cannot draw against a loan at or after its maturity".to_string(),
                 ));
@@ -338,13 +352,19 @@ pub fn apply_execute_loan(
             let remaining_facility = loan
                 .principal
                 .checked_sub(loan.disbursed_amount)
-                .ok_or_else(|| VNetworkError::Validation("disbursed exceeds principal".to_string()))?;
+                .ok_or_else(|| {
+                    VNetworkError::Validation("disbursed exceeds principal".to_string())
+                })?;
             if remaining_facility == 0 {
                 return Err(VNetworkError::Validation(
                     "loan principal facility is already fully disbursed".to_string(),
                 ));
             }
-            let draw_amt = if amount == 0 { remaining_facility } else { amount };
+            let draw_amt = if amount == 0 {
+                remaining_facility
+            } else {
+                amount
+            };
             if draw_amt == 0 || draw_amt > remaining_facility {
                 return Err(VNetworkError::Validation(format!(
                     "loan draw amount `{draw_amt}` exceeds remaining authorized principal `{remaining_facility}`"
@@ -367,18 +387,18 @@ pub fn apply_execute_loan(
                 timestamp_ms,
             )?;
             events.push(tx_ev);
-            loan.disbursed_amount = loan
-                .disbursed_amount
-                .checked_add(draw_amt)
-                .ok_or_else(|| VNetworkError::Validation("disbursed_amount overflow".to_string()))?;
+            loan.disbursed_amount =
+                loan.disbursed_amount.checked_add(draw_amt).ok_or_else(|| {
+                    VNetworkError::Validation("disbursed_amount overflow".to_string())
+                })?;
             let interest = draw_amt
                 .checked_mul(loan.interest_bps as u128)
                 .ok_or_else(|| VNetworkError::Validation("loan interest overflow".to_string()))?
                 / 10_000;
-            loan.accrued_interest = loan
-                .accrued_interest
-                .checked_add(interest)
-                .ok_or_else(|| VNetworkError::Validation("accrued interest overflow".to_string()))?;
+            loan.accrued_interest =
+                loan.accrued_interest.checked_add(interest).ok_or_else(|| {
+                    VNetworkError::Validation("accrued interest overflow".to_string())
+                })?;
             loan.status = LoanStatus::Active;
         }
         "repay" => {
@@ -402,13 +422,13 @@ pub fn apply_execute_loan(
             let total_owed = base_principal
                 .checked_add(loan.accrued_interest)
                 .ok_or_else(|| VNetworkError::Validation("loan total owed overflow".to_string()))?;
-            let remaining = total_owed
-                .checked_sub(loan.repaid_amount)
-                .ok_or_else(|| {
-                    VNetworkError::Validation("loan repaid_amount exceeds total owed".to_string())
-                })?;
+            let remaining = total_owed.checked_sub(loan.repaid_amount).ok_or_else(|| {
+                VNetworkError::Validation("loan repaid_amount exceeds total owed".to_string())
+            })?;
             if remaining == 0 {
-                return Err(VNetworkError::Validation("loan is already fully repaid".to_string()));
+                return Err(VNetworkError::Validation(
+                    "loan is already fully repaid".to_string(),
+                ));
             }
             let repay_amt = if amount == 0 { remaining } else { amount };
             if repay_amt > remaining {
@@ -470,7 +490,9 @@ pub fn apply_execute_loan(
                 ));
             }
             if loan.defaulted {
-                return Err(VNetworkError::Validation("loan is already marked defaulted".to_string()));
+                return Err(VNetworkError::Validation(
+                    "loan is already marked defaulted".to_string(),
+                ));
             }
             lender.verify_permission(
                 actor_pubkey,
@@ -499,7 +521,9 @@ pub fn apply_execute_loan(
         }
         "liquidate" => {
             if loan.status != LoanStatus::Active {
-                return Err(VNetworkError::Validation("only active loans can liquidate".to_string()));
+                return Err(VNetworkError::Validation(
+                    "only active loans can liquidate".to_string(),
+                ));
             }
             lender.verify_permission(
                 actor_pubkey,
