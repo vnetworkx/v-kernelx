@@ -487,15 +487,14 @@ fn test_durable_anti_equivocation_intent_crash_lock_and_evidence_integrity() {
         finalized_at_ms: 1003,
     };
     qc.finalize_certificate_id().unwrap();
-    let ctx = ConsensusVerificationContext {
-        network_id: prop_a.network_id.clone(),
-        genesis_commitment: genesis_comm.clone(),
-        protocol_version: PROTOCOL_VERSION.to_string(),
-        validator_epoch: 1,
-        validator_set_hash: vset_hash.clone(),
-        consensus_parameters: params.clone(),
-        consensus_parameters_hash: params_hash.clone(),
-    };
+    let ctx = ConsensusVerificationContext::new(
+        prop_a.network_id.clone(),
+        genesis_comm.clone(),
+        PROTOCOL_VERSION,
+        Some(1),
+        params.clone(),
+    )
+    .unwrap();
     verify_quorum_certificate_strict(&qc, &membership.all_validators(), &ctx).unwrap();
 
     // Corrupting equivocation_evidence.wal with unsigned evidence must fail closed
