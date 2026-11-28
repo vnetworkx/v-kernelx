@@ -12,7 +12,7 @@ fn state_with_participants() -> (NetworkLedgerState, String, String, String) {
         vec![ConsensusValidator {
             validator_id: "validator-1".to_string(),
             node_id: "node-validator-1".to_string(),
-            validator_pubkey_hex: validator.public_key_hex,
+            validator_pubkey_hex: validator.public_key_hex.clone(),
             weight: 100,
             active: true,
             joined_epoch: 1,
@@ -41,9 +41,9 @@ fn state_with_participants() -> (NetworkLedgerState, String, String, String) {
     insert_participant(&mut state, &outsider, vec![baseline_network_grant()], ParticipationStatus::Active);
     (
         state,
-        ordinary.public_key_hex,
-        authority.public_key_hex,
-        outsider.public_key_hex,
+        ordinary.public_key_hex.clone(),
+        authority.public_key_hex.clone(),
+        outsider.public_key_hex.clone(),
     )
 }
 
@@ -240,6 +240,7 @@ fn validators_and_unknown_or_revoked_authorities_cannot_delegate_network_scope()
     let authority = state.participants.get_mut(&authority_id).unwrap();
     authority.scope.grants[0].revoked = true;
     authority.scope.recompute_levels(20);
+    let authority_pubkey = authority.public_key_hex.clone();
     assert!(matches!(
         apply_grant_participant_scope(
             &mut state,
@@ -247,7 +248,7 @@ fn validators_and_unknown_or_revoked_authorities_cannot_delegate_network_scope()
             "NETWORK",
             None,
             None,
-            &authority.public_key_hex,
+            &authority_pubkey,
             21,
         ),
         Err(VNetworkError::Authorization(_))
