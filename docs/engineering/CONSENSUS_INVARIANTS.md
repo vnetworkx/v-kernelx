@@ -6,6 +6,8 @@ Tracks 2, 3, and 4 establish fail-closed BFT safety and equivocation invariants 
 
 ## 1. Canonical Proposal & Vote Binding (`vnetwork/proposal-digest/v1`)
 
+**Proposal version 2 is a coordinated consensus upgrade.** Validators reject version 1 proposals; older binaries reject version 2. Upgrade the validator set as a coordinated change before resuming consensus. Version 2 requires actor-authenticated `.vx` submission signatures in the program-source commitment.
+
 1. Every `ConsensusProposal` MUST compute its 64-hex BLAKE3 `proposal_digest` over canonical JSON (`sort_json_value`) binding:
    - `domain` (`vnetwork/proposal-digest/v1`), `proposal_version`, `protocol_version`
    - `network_id`, `genesis_commitment`, `height`, `round`, `epoch`, `validator_set_hash`, `proposer_validator_id`
