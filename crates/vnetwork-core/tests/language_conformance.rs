@@ -69,6 +69,25 @@ fn single_val_qc(
     qc
 }
 
+fn signed_genesis_governance_auth(
+    grantor: &KeypairMaterial,
+    target_pubkey: &str,
+    network_id: &str,
+) -> SignedScopeAuthorization {
+    let mut auth = SignedScopeAuthorization {
+        target_participant_pubkey: target_pubkey.to_string(),
+        grantor_pubkey: grantor.public_key_hex.clone(),
+        scopes: vec![ParticipationLevel::Network],
+        target_id: None,
+        expires_at_ms: None,
+        authorization_basis: "genesis_governance".to_string(),
+        signature: String::new(),
+    };
+    let bytes = auth.canonical_signing_bytes(network_id).unwrap();
+    auth.signature = grantor.sign(&bytes).unwrap();
+    auth
+}
+
 fn signed_scope_auth(
     grantor: &KeypairMaterial,
     target_pubkey: &str,
@@ -123,13 +142,7 @@ fn make_dev_engine() -> (
     let participant_kp = KeypairMaterial::generate("participant");
     let node_kp = KeypairMaterial::generate("node");
     let ch = engine.issue_challenge(1_000);
-    let scopes = vec![
-        ParticipationLevel::Network,
-        ParticipationLevel::Space,
-        ParticipationLevel::Region,
-        ParticipationLevel::Wallet,
-        ParticipationLevel::Token,
-    ];
+    let scopes = vec![ParticipationLevel::Network];
     let join_bytes = canonical_join_signing_bytes(
         &ch,
         &participant_kp.public_key_hex,
@@ -137,6 +150,11 @@ fn make_dev_engine() -> (
         &scopes,
     )
     .unwrap();
+    let governance_auth = signed_genesis_governance_auth(
+        &val_kp,
+        &participant_kp.public_key_hex,
+        "vector-devnet-1",
+    );
     let scope_auth = signed_scope_auth(
         &val_kp,
         &participant_kp.public_key_hex,
@@ -158,7 +176,7 @@ fn make_dev_engine() -> (
         advertised_addresses: vec![],
         participant_signature: participant_kp.sign(&join_bytes).unwrap(),
         node_signature: node_kp.sign(&join_bytes).unwrap(),
-        scope_authorizations: vec![scope_auth],
+        scope_authorizations: vec![governance_auth, scope_auth],
     };
     let (_, _, prop, _) = engine
         .stage_participant_join(&join_req, "val_1", |b| val_kp.sign(b), 1_001)
@@ -807,16 +825,10 @@ fn test_production_profile_disallows_atlas_bootstrap() {
         &scopes,
     )
     .unwrap();
-    let scope_auth = signed_scope_auth(
+    let scope_auth = signed_genesis_governance_auth(
         &val_kp,
         &actor_kp.public_key_hex,
         "vector-main",
-        vec![
-            ParticipationLevel::Space,
-            ParticipationLevel::Region,
-            ParticipationLevel::Wallet,
-            ParticipationLevel::Token,
-        ],
     );
     let (_, _, prop, _) = engine
         .stage_participant_join(
